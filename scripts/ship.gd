@@ -863,11 +863,11 @@ func _draw_velocity_marker(visual_rim: float, zoom: float, line_w: float) -> voi
 	draw_line(tip - flight_direction * head_len - side, tip, vec_color, line_w, true)
 	draw_circle(tip, 1.6 / maxf(zoom, 0.000001), Color(0.65, 0.95, 1.0, 0.95), true, -1.0, true)
 
-func get_autopilot_plan(target: ProcPlanet, max_points: int = 200) -> Dictionary:
+func get_autopilot_plan(target: ProcPlanet, max_points: int = 400) -> Dictionary:
 	var result = {
 		"points": PackedVector2Array(),
 		"status": "horizon",
-		"orbit_center": Vector2.ZERO
+		"orbit_center": target.global_position if target else Vector2.ZERO
 	}
 	if not is_instance_valid(target) or not is_instance_valid(universe):
 		return result
@@ -881,11 +881,11 @@ func get_autopilot_plan(target: ProcPlanet, max_points: int = 200) -> Dictionary
 	for m in autopilot_maneuvers:
 		maneuvers.append(m)
 		
-	var dt = 5.0
-	var last_focus = null
+	var dt := 5.0
+	var last_save_p := sim_p
+	var last_save_dir := sim_v.normalized()
 	
-	# Zwiekszamy limit iteracji, zeby przeprowadzic symulacje miedzyplanetarna
-	for i in 6000:
+	for i in 8000:
 		var status = universe.orbit_status(sim_p, sim_v)
 		var focus: ProcPlanet = status["focus"]
 		var mu = universe.sun_mu()
@@ -901,15 +901,16 @@ func get_autopilot_plan(target: ProcPlanet, max_points: int = 200) -> Dictionary
 		var rel_v = sim_v - focus_vel
 		var r = rel_p.length()
 		
-		# Adaptacyjny timestep zalezny od ciala
+		# Stabilniejszy, dyskretny timestep dla Eulera (eliminuje jitter)
+		var v_mag = maxf(rel_v.length(), 1.0)
+		var ideal_dt = r / v_mag * 0.05
 		if focus == null:
-			dt = clampf(r / maxf(rel_v.length(), 1.0) * 0.05, 500.0, 40000.0)
+			dt = 5000.0 if ideal_dt > 5000.0 else 500.0
 		else:
-			dt = clampf(r / maxf(rel_v.length(), 1.0) * 0.1, 2.0, 500.0)
+			dt = 50.0 if ideal_dt > 50.0 else 5.0
 			
 		var dot_prev = rel_p.dot(rel_v)
 		
-		# Prosty integrator (Symplectic Euler)
 		var accel = -mu / (r * r * r) * rel_p
 		var next_rel_v = rel_v + accel * dt
 		var next_rel_p = rel_p + next_rel_v * dt
@@ -933,26 +934,27 @@ func get_autopilot_plan(target: ProcPlanet, max_points: int = 200) -> Dictionary
 		sim_v = next_rel_v + focus_vel
 		sim_p = next_rel_p + focus_pos
 		
-		# Collision check
 		if focus != null and r < focus.radius:
 			result["status"] = "collision"
 			pts.append(sim_p)
 			break
 			
-		# Zapisujemy rzadziej zeby nie zablokowac pamieci
-		if i % 30 == 0:
+		# Rysuj krzywa mądrze: dodawaj punkty tylko gdy zagniemy tor lotu o pewien kat 
+		# lub przelecimy spory dystans. To da idealna krzywizne i malo punktow!
+		var current_dir = sim_v.normalized()
+		if current_dir.dot(last_save_dir) < 0.995 or sim_p.distance_squared_to(last_save_p) > (r * r * 0.02):
 			pts.append(sim_p)
-			
-		# Jesli weszlismy w docelowe SOI i zrobilismy wszystkie manewry
+			last_save_p = sim_p
+			last_save_dir = current_dir
+			if pts.size() >= max_points:
+				break
+				
 		if focus == target and maneuvers.is_empty():
 			if r < target.radius + get_target_orbit_altitude(target) * 1.5:
 				result["status"] = "ok"
-				# Doczekajmy jeszcze troche zeby narysowac petle
 				
 	pts.append(sim_p)
 	result["points"] = pts
-	if target != null:
-		result["orbit_center"] = target.global_position
 	return result
 
 func get_autopilot_guidance_for_state(

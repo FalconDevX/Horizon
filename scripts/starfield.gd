@@ -6,10 +6,7 @@ func _ready() -> void:
 	add_to_group("starfield")
 	var image := TextureRect.new()
 	
-	var img = Image.load_from_file("res://bg_space.jpg")
-	if img != null:
-		var tex = ImageTexture.create_from_image(img)
-		image.texture = tex
+	image.texture = load("res://bg_space.jpg") as Texture2D
 	
 	image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
