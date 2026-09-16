@@ -1,4 +1,4 @@
-extends Node2D
+﻿extends Node2D
 
 const StarfieldScene := preload("res://scripts/starfield.gd")
 const OrbitRendererScene := preload("res://scripts/orbit_renderer.gd")
@@ -93,7 +93,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if _f_pressed or Input.is_key_pressed(KEY_F):
 			if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				get_viewport().set_input_as_handled()
+				if get_viewport(): get_viewport().set_input_as_handled()
 				var target_planet := _find_planet_under_cursor(get_global_mouse_position())
 				if target_planet == null:
 					target_planet = selected_target
@@ -114,13 +114,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				var step := maxf(selected_target.lowest_orbit_altitude() * 0.1, 500.0)
 				var new_alt := ship.adjust_target_orbit_altitude(selected_target, step)
 				hud.notify("Wysokość orbity celu %s: %s" % [selected_target.planet_name, FlightHud.format_km(new_alt)])
-				get_viewport().set_input_as_handled()
+				if get_viewport(): get_viewport().set_input_as_handled()
 				return
 			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				var step := maxf(selected_target.lowest_orbit_altitude() * 0.1, 500.0)
 				var new_alt := ship.adjust_target_orbit_altitude(selected_target, -step)
 				hud.notify("Wysokość orbity celu %s: %s" % [selected_target.planet_name, FlightHud.format_km(new_alt)])
-				get_viewport().set_input_as_handled()
+				if get_viewport(): get_viewport().set_input_as_handled()
 				return
 
 	if event is InputEventMouseMotion:

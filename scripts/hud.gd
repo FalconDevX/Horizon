@@ -115,12 +115,12 @@ func reset_map_view() -> void:
 
 func _input(event: InputEvent) -> void:
 	if _handle_warp_input(event):
-		get_viewport().set_input_as_handled()
+		if get_viewport(): get_viewport().set_input_as_handled()
 		return
 	if not map_open or pause_open or help_open:
 		return
 	if _handle_map_input(event):
-		get_viewport().set_input_as_handled()
+		if get_viewport(): get_viewport().set_input_as_handled()
 
 
 func _handle_warp_input(event: InputEvent) -> bool:
@@ -208,7 +208,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			var rect: Rect2 = button["rect"]
 			if rect.has_point(mouse):
 				_activate_pause_button(String(button["id"]))
-				get_viewport().set_input_as_handled()
+				if get_viewport(): get_viewport().set_input_as_handled()
 				return
 
 
@@ -241,6 +241,7 @@ func _on_draw() -> void:
 		_draw_minimap(vp)
 		_draw_crosshair(vp)
 		_draw_warp_indicator(vp)
+		_draw_autopilot_debug_panel(vp)
 	_draw_notifications(vp)
 	if map_open:
 		_draw_system_map(vp)
@@ -633,3 +634,48 @@ func _activate_pause_button(id: String) -> void:
 			get_tree().current_scene.call("request_regen")
 		"quit":
 			get_tree().quit()
+
+func _draw_autopilot_debug_panel(vp: Vector2) -> void:
+	if ship.autopilot_target == null:
+		return
+	var box := Rect2(24, 134, 392, 170)
+	_paint.draw_rect(box, PANEL, true)
+	_paint.draw_rect(box, Color(0.5, 0.9, 0.5, 0.5), false, 1.0)
+	
+	_paint.draw_string(_font, box.position + Vector2(12, 17), "AUTOPILOT DEBUG", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.9, 0.5))
+	
+	var state_name = "OFF"
+	match ship.autopilot_state:
+		1: state_name = "ANALYZE"
+		2: state_name = "PLAN_TRANSFER"
+		3: state_name = "ORIENT_FOR_BURN"
+		4: state_name = "COAST_TO_TRIGGER"
+		5: state_name = "EXECUTE_BURN"
+		6: state_name = "CIRCULARIZE"
+		7: state_name = "ORBIT_HOLD"
+		8: state_name = "COLLISION_AVOIDANCE"
+		
+	_paint.draw_string(_font, box.position + Vector2(12, 38), "State: " + state_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 1.0, 1.0))
+	_paint.draw_string(_font, box.position + Vector2(200, 38), "Phase: " + ship.autopilot_phase, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.8, 0.8))
+	
+	if ship.orbit_state != null:
+		var os = ship.orbit_state
+		var r_err = 0.0
+		var tgt_r = ship.autopilot_target.radius + ship.get_target_orbit_altitude(ship.autopilot_target)
+		
+		_paint.draw_string(_font, box.position + Vector2(12, 60), "Pe: %d km" % int(os.periapsis_altitude / 1000.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.9, 0.7, 0.3))
+		_paint.draw_string(_font, box.position + Vector2(12, 75), "Ap: %d km" % int(os.apoapsis_altitude / 1000.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.4, 0.8, 0.9))
+		_paint.draw_string(_font, box.position + Vector2(12, 90), "ecc: %.4f" % os.eccentricity, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.8, 0.8))
+		_paint.draw_string(_font, box.position + Vector2(12, 105), "Rad V: %+.1f m/s" % os.radial_velocity, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.8, 0.8))
+		
+		_paint.draw_string(_font, box.position + Vector2(200, 60), "Target: %d km" % int(ship.get_target_orbit_altitude(ship.autopilot_target) / 1000.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.9, 0.5))
+		
+	var err = absf(angle_difference(ship.rotation, ship._autopilot_heading))
+	_paint.draw_string(_font, box.position + Vector2(200, 90), "H-Err: %.1f deg" % rad_to_deg(err), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.9, 0.5, 0.5) if err > 0.1 else Color(0.5, 0.9, 0.5))
+	
+	if ship.autopilot_maneuver_index < ship.autopilot_maneuvers.size():
+		var m = ship.autopilot_maneuvers[ship.autopilot_maneuver_index]
+		_paint.draw_string(_font, box.position + Vector2(12, 130), "Maneuver: " + m.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.8, 0.2))
+		_paint.draw_string(_font, box.position + Vector2(12, 145), "Rem dV: %.1f m/s" % m.remaining_delta_v, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.8, 0.2))
+		
+	_paint.draw_string(_font, box.position + Vector2(200, 145), "Throttle: %d%%" % int(ship.throttle * 100.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, THRUST_COL)

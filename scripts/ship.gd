@@ -174,10 +174,10 @@ func _physics_process(delta: float) -> void:
 	var manual_input := _has_control_input()
 	if manual_input and autopilot_target != null:
 		cancel_autopilot()
-	if autopilot_target != null:
-		_update_autopilot_guidance()
-	else:
+		
+	if autopilot_target == null:
 		_throttle_input(delta)
+		
 	if landed_on != null:
 		_tick_landed(delta)
 	else:
@@ -185,17 +185,24 @@ func _physics_process(delta: float) -> void:
 		var step := delta * time_warp / float(steps)
 		for i in steps:
 			if autopilot_target != null:
+				_tick_autopilot(step)
 				_steer_to(_autopilot_heading, step)
-				_update_autopilot_guidance()
 			else:
 				_steer(step)
+			
+			var heading := Vector2.from_angle(rotation)
+			var thrust_dv := heading * ControlModel.main_acceleration(self) * throttle * step
+			
 			_apply_forces(step)
-			_consume_autopilot_maneuver(step)
+			
+			if autopilot_target != null:
+				_consume_autopilot_maneuver(step, thrust_dv)
+				
 			_move_step(step)
 			_update_energy(step)
 			if landed_on != null:
 				break
-	_update_camera(delta)
+		_update_camera(delta)
 	queue_redraw()
 
 
@@ -277,6 +284,15 @@ func _apply_forces(dt: float) -> void:
 		ControlModel.consume_rcs(self, dt)
 	if universe:
 		velocity += universe.gravity_at(global_position) * dt
+
+
+func _main_engine_delta_v(dt: float) -> Vector2:
+	if fuel <= 0.0:
+		return Vector2.ZERO
+	var main_accel := ControlModel.main_acceleration(self)
+	if absf(throttle) <= 0.01 or main_accel <= 0.0:
+		return Vector2.ZERO
+	return Vector2.from_angle(rotation) * main_accel * throttle * dt
 
 
 func mass() -> float:
@@ -475,10 +491,23 @@ func _tick_autopilot(delta: float) -> void:
 		cancel_autopilot()
 		return
 		
-	# Odśwież stan orbity
-	var rel := global_position - autopilot_target.global_position
-	var rel_v := velocity - autopilot_target.inertial_velocity()
-	orbit_state = OrbitalPhysics.calculate_state(rel, rel_v, autopilot_target.mu, autopilot_target.radius)
+	# Odsiwiez stan orbity na podstawie obecnego SOI
+	var status = universe.orbit_status(global_position, velocity)
+	var focus: ProcPlanet = status["focus"]
+	var center_pos := Vector2.ZERO
+	var center_vel := Vector2.ZERO
+	var center_mu := universe.sun_mu()
+	var center_rad := universe.sun_radius
+	
+	if focus != null:
+		center_pos = focus.global_position
+		center_vel = focus.inertial_velocity()
+		center_mu = focus.mu
+		center_rad = focus.radius
+		
+	var rel := global_position - center_pos
+	var rel_v := velocity - center_vel
+	orbit_state = OrbitalPhysics.calculate_state(rel, rel_v, center_mu, center_rad)
 	
 	match autopilot_state:
 		AutopilotState.ANALYZE:
@@ -499,21 +528,25 @@ func _tick_autopilot(delta: float) -> void:
 func _ap_analyze() -> void:
 	autopilot_phase = "analyzing"
 	
-	# Bezpieczeństwo - czy lecimy na zderzenie?
-	var safe_alt = maxf(autopilot_target.lowest_orbit_altitude() * 0.85, autopilot_target.atmosphere_height() * 1.15)
-	if orbit_state.periapsis_altitude < safe_alt and orbit_state.radial_velocity < 0.0:
-		if orbit_state.time_to_pe < 120.0 or orbit_state.altitude < safe_alt * 1.5:
-			autopilot_state = AutopilotState.COLLISION_AVOIDANCE
+	var status = universe.orbit_status(global_position, velocity)
+	var focus: ProcPlanet = status["focus"]
+	var target_parent = null # Zakladamy, ze celem jest planeta krazaca wokol Slonca
+	
+	# Bezpieczenstwo wokol obecnego ciala
+	if focus != null:
+		var safe_alt = maxf(focus.lowest_orbit_altitude() * 0.85, focus.atmosphere_height() * 1.15)
+		if status["alt"] < safe_alt and status["relative_velocity"].dot(status["relative_position"]) < 0.0:
+			if status["time_to_pe"] < 120.0 or status["alt"] < safe_alt * 1.5:
+				autopilot_state = AutopilotState.COLLISION_AVOIDANCE
+				return
+				
+	if focus == autopilot_target:
+		var desired_radius = autopilot_target.radius + get_target_orbit_altitude(autopilot_target)
+		var r_error = maxf(absf(orbit_state.periapsis_radius - desired_radius), absf(orbit_state.apoapsis_radius - desired_radius))
+		if r_error < maxf(1500.0, desired_radius * 0.02) and orbit_state.eccentricity < 0.02:
+			autopilot_state = AutopilotState.ORBIT_HOLD
 			return
 			
-	var desired_radius = autopilot_target.radius + get_target_orbit_altitude(autopilot_target)
-	
-	# Jeśli jesteśmy już na idealnej orbicie (tolerancja)
-	var r_error = maxf(absf(orbit_state.periapsis_radius - desired_radius), absf(orbit_state.apoapsis_radius - desired_radius))
-	if r_error < maxf(1500.0, desired_radius * 0.02) and orbit_state.eccentricity < 0.02:
-		autopilot_state = AutopilotState.ORBIT_HOLD
-		return
-		
 	autopilot_state = AutopilotState.PLAN_TRANSFER
 	
 func _ap_plan_transfer() -> void:
@@ -521,42 +554,91 @@ func _ap_plan_transfer() -> void:
 	autopilot_maneuvers.clear()
 	autopilot_maneuver_index = 0
 	
-	var desired_radius = autopilot_target.radius + get_target_orbit_altitude(autopilot_target)
+	var status = universe.orbit_status(global_position, velocity)
+	var focus: ProcPlanet = status["focus"]
 	
-	# Jeśli orbita bardzo eliptyczna - najpierw circularize w apsydzie
-	if orbit_state.eccentricity > 0.05:
-		if orbit_state.periapsis_radius > autopilot_target.radius + autopilot_target.lowest_orbit_altitude():
-			# Circularize at PE
-			var v_at_pe = sqrt(autopilot_target.mu * (2.0/orbit_state.periapsis_radius - 1.0/orbit_state.semi_major_axis))
-			var v_circ = OrbitalPhysics.circular_speed(autopilot_target.mu, orbit_state.periapsis_radius)
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, v_at_pe - v_circ, Maneuver.Trigger.PERIAPSIS, "circularize PE"))
-		else:
-			# Circularize at AP to avoid atmosphere
-			var v_at_ap = sqrt(autopilot_target.mu * (2.0/orbit_state.apoapsis_radius - 1.0/orbit_state.semi_major_axis))
+	# SCENARIUSZ 1: Jestesmy w docelowym SOI (lub przechwytywanie z hiperboli)
+	if focus == autopilot_target:
+		var desired_radius = autopilot_target.radius + get_target_orbit_altitude(autopilot_target)
+		if not orbit_state.is_bound or orbit_state.eccentricity > 1.0:
+			var capture_speed := OrbitalPhysics.circular_speed(autopilot_target.mu, desired_radius)
+			var pe_speed := sqrt(maxf(autopilot_target.mu * (2.0 / orbit_state.periapsis_radius - 1.0 / orbit_state.semi_major_axis), 0.0))
+			if not is_finite(orbit_state.semi_major_axis) or orbit_state.semi_major_axis <= 0:
+				pe_speed = sqrt(autopilot_target.mu * (2.0 / orbit_state.periapsis_radius) + velocity.length_squared()) # Przyblizenie hiperboliczne
+			var capture_dv := maxf(0.0, pe_speed - capture_speed)
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, maxf(capture_dv, 8.0), Maneuver.Trigger.PERIAPSIS, "capture orbit"))
+			autopilot_state = AutopilotState.ORIENT_FOR_BURN
+			return
+			
+		if orbit_state.eccentricity > 0.05:
+			var v_ap = sqrt(autopilot_target.mu * (2.0 / orbit_state.apoapsis_radius - 1.0 / orbit_state.semi_major_axis))
 			var v_circ = OrbitalPhysics.circular_speed(autopilot_target.mu, orbit_state.apoapsis_radius)
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, v_circ - v_at_ap, Maneuver.Trigger.APOAPSIS, "circularize AP"))
-	else:
-		# Hohmann transfer (orbita kołowa do kołowej)
+			var dv = v_circ - v_ap
+			if dv > 0:
+				autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, dv, Maneuver.Trigger.APOAPSIS, "circularize"))
+			else:
+				autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, -dv, Maneuver.Trigger.APOAPSIS, "circularize"))
+			autopilot_state = AutopilotState.ORIENT_FOR_BURN
+			return
+			
 		var r1 = orbit_state.semi_major_axis
 		var r2 = desired_radius
 		var v1 = OrbitalPhysics.circular_speed(autopilot_target.mu, r1)
-		var v2 = OrbitalPhysics.circular_speed(autopilot_target.mu, r2)
-		var transfer_a = (r1 + r2) * 0.5
-		var transfer_at_r1 = sqrt(autopilot_target.mu * (2.0 / r1 - 1.0 / transfer_a))
-		var transfer_at_r2 = sqrt(autopilot_target.mu * (2.0 / r2 - 1.0 / transfer_a))
+		var v_transfer_pe = sqrt(autopilot_target.mu * (2.0 / r1 - 1.0 / ((r1 + r2) / 2.0)))
+		var dv1 = v_transfer_pe - v1
+		var dv2 = OrbitalPhysics.circular_speed(autopilot_target.mu, r2) - sqrt(autopilot_target.mu * (2.0 / r2 - 1.0 / ((r1 + r2) / 2.0)))
 		
-		if r2 > r1:
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, transfer_at_r1 - v1, Maneuver.Trigger.IMMEDIATE, "transfer out"))
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, v2 - transfer_at_r2, Maneuver.Trigger.APOAPSIS, "circularize out"))
+		if dv1 > 0:
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, dv1, Maneuver.Trigger.IMMEDIATE, "hohmann 1"))
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, dv2, Maneuver.Trigger.APOAPSIS, "hohmann 2"))
 		else:
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, v1 - transfer_at_r1, Maneuver.Trigger.IMMEDIATE, "transfer in"))
-			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, transfer_at_r2 - v2, Maneuver.Trigger.PERIAPSIS, "circularize in"))
-			
-	if autopilot_maneuvers.size() > 0:
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, -dv1, Maneuver.Trigger.IMMEDIATE, "hohmann 1"))
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, -dv2, Maneuver.Trigger.PERIAPSIS, "hohmann 2"))
 		autopilot_state = AutopilotState.ORIENT_FOR_BURN
-	else:
-		autopilot_state = AutopilotState.ORBIT_HOLD
+		return
 		
+	# SCENARIUSZ 2: Jestesmy w obcym SOI (Ucieczka do Slonca)
+	if focus != null:
+		# Zeby uciec prosto w kirunku Slonca (lub zgrubnie prograde planety) - uproszczony system ucieczki:
+		# Odpalamy z calej sily PROGRADE na Periapsis az zrobimy hiperbole.
+		if orbit_state.eccentricity < 1.0:
+			var v_esc = sqrt(2.0 * focus.mu / orbit_state.periapsis_radius)
+			var v_curr_pe = sqrt(focus.mu * (2.0 / orbit_state.periapsis_radius - 1.0 / orbit_state.semi_major_axis))
+			var dv_escape = (v_esc - v_curr_pe) + 50.0 # extra 50 m/s for clean escape
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, dv_escape, Maneuver.Trigger.PERIAPSIS, "escape burn"))
+			autopilot_state = AutopilotState.ORIENT_FOR_BURN
+		else:
+			# Juz uciekamy, czekamy az wyjdziemy z SOI
+			autopilot_state = AutopilotState.COAST_TO_TRIGGER
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, 0.0, Maneuver.Trigger.IMMEDIATE, "coasting to sun"))
+		return
+		
+	# SCENARIUSZ 3: Przestrzen miedzyplanetarna (Slonce)
+	if focus == null:
+		# Upraszczamy: robimy transfer Hohmanna miedzy orbitami slonecznymi.
+		# W rzeczwistosci statki kaza na siebie dlugo czekac, zrobimy tu prosty manewr zmiany orbit.
+		var sun_mu = universe.sun_mu()
+		var r1 = orbit_state.semi_major_axis
+		var r2 = autopilot_target.orbit_radius
+		var v1 = OrbitalPhysics.circular_speed(sun_mu, r1)
+		var v_transfer_pe = sqrt(sun_mu * (2.0 / r1 - 1.0 / ((r1 + r2) / 2.0)))
+		var dv1 = v_transfer_pe - v1
+		
+		# Do celow lotu bez fazowania (gra arkadowa z faza 2D, mozna odpalic od razu by skrzyzowac orbity):
+		if orbit_state.eccentricity > 0.05:
+			# Circularize first if our solar orbit is highly eccentric
+			var v_ap = sqrt(sun_mu * (2.0 / orbit_state.apoapsis_radius - 1.0 / orbit_state.semi_major_axis))
+			var v_circ = OrbitalPhysics.circular_speed(sun_mu, orbit_state.apoapsis_radius)
+			var dv = v_circ - v_ap
+			autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE if dv > 0 else Maneuver.Direction.RETROGRADE, absf(dv), Maneuver.Trigger.APOAPSIS, "solar circularize"))
+		else:
+			if dv1 > 0:
+				autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.PROGRADE, dv1, Maneuver.Trigger.IMMEDIATE, "solar hohmann"))
+			else:
+				autopilot_maneuvers.append(Maneuver.new(Maneuver.Direction.RETROGRADE, -dv1, Maneuver.Trigger.IMMEDIATE, "solar hohmann"))
+		autopilot_state = AutopilotState.ORIENT_FOR_BURN
+		return
+
 func _ap_orient() -> void:
 	if autopilot_maneuver_index >= autopilot_maneuvers.size():
 		autopilot_state = AutopilotState.ANALYZE
@@ -780,3 +862,199 @@ func _draw_velocity_marker(visual_rim: float, zoom: float, line_w: float) -> voi
 	draw_line(tip - flight_direction * head_len + side, tip, vec_color, line_w, true)
 	draw_line(tip - flight_direction * head_len - side, tip, vec_color, line_w, true)
 	draw_circle(tip, 1.6 / maxf(zoom, 0.000001), Color(0.65, 0.95, 1.0, 0.95), true, -1.0, true)
+
+func get_autopilot_plan(target: ProcPlanet, max_points: int = 200) -> Dictionary:
+	var result = {
+		"points": PackedVector2Array(),
+		"status": "horizon",
+		"orbit_center": Vector2.ZERO
+	}
+	if not is_instance_valid(target) or not is_instance_valid(universe):
+		return result
+		
+	var pts := PackedVector2Array()
+	var sim_p := global_position
+	var sim_v := velocity
+	pts.append(sim_p)
+	
+	var maneuvers = []
+	for m in autopilot_maneuvers:
+		maneuvers.append(m)
+		
+	var dt = 5.0
+	var last_focus = null
+	
+	# Zwiekszamy limit iteracji, zeby przeprowadzic symulacje miedzyplanetarna
+	for i in 6000:
+		var status = universe.orbit_status(sim_p, sim_v)
+		var focus: ProcPlanet = status["focus"]
+		var mu = universe.sun_mu()
+		var focus_pos = Vector2.ZERO
+		var focus_vel = Vector2.ZERO
+		
+		if focus != null:
+			mu = focus.mu
+			focus_pos = focus.global_position
+			focus_vel = focus.inertial_velocity()
+			
+		var rel_p = sim_p - focus_pos
+		var rel_v = sim_v - focus_vel
+		var r = rel_p.length()
+		
+		# Adaptacyjny timestep zalezny od ciala
+		if focus == null:
+			dt = clampf(r / maxf(rel_v.length(), 1.0) * 0.05, 500.0, 40000.0)
+		else:
+			dt = clampf(r / maxf(rel_v.length(), 1.0) * 0.1, 2.0, 500.0)
+			
+		var dot_prev = rel_p.dot(rel_v)
+		
+		# Prosty integrator (Symplectic Euler)
+		var accel = -mu / (r * r * r) * rel_p
+		var next_rel_v = rel_v + accel * dt
+		var next_rel_p = rel_p + next_rel_v * dt
+		var dot_next = next_rel_p.dot(next_rel_v)
+		
+		var fire = false
+		if maneuvers.size() > 0:
+			var m = maneuvers[0]
+			if m.trigger == Maneuver.Trigger.IMMEDIATE:
+				fire = true
+			elif m.trigger == Maneuver.Trigger.PERIAPSIS and dot_prev <= 0.0 and dot_next >= 0.0:
+				fire = true
+			elif m.trigger == Maneuver.Trigger.APOAPSIS and dot_prev >= 0.0 and dot_next <= 0.0:
+				fire = true
+				
+			if fire:
+				var burn_dir = next_rel_v.normalized() if m.direction == Maneuver.Direction.PROGRADE else -next_rel_v.normalized()
+				next_rel_v += burn_dir * m.remaining_delta_v
+				maneuvers.pop_front()
+				
+		sim_v = next_rel_v + focus_vel
+		sim_p = next_rel_p + focus_pos
+		
+		# Collision check
+		if focus != null and r < focus.radius:
+			result["status"] = "collision"
+			pts.append(sim_p)
+			break
+			
+		# Zapisujemy rzadziej zeby nie zablokowac pamieci
+		if i % 30 == 0:
+			pts.append(sim_p)
+			
+		# Jesli weszlismy w docelowe SOI i zrobilismy wszystkie manewry
+		if focus == target and maneuvers.is_empty():
+			if r < target.radius + get_target_orbit_altitude(target) * 1.5:
+				result["status"] = "ok"
+				# Doczekajmy jeszcze troche zeby narysowac petle
+				
+	pts.append(sim_p)
+	result["points"] = pts
+	if target != null:
+		result["orbit_center"] = target.global_position
+	return result
+
+func get_autopilot_guidance_for_state(
+	world_position: Vector2,
+	world_velocity: Vector2,
+	target: ProcPlanet,
+	delta: float,
+	direction_hint: float = 0.0
+) -> Dictionary:
+	var result := {
+		"desired_velocity": world_velocity,
+		"desired_radius": 0.0,
+		"heading": direction_hint,
+		"throttle": 0.0,
+		"phase": "off",
+	}
+	if not is_instance_valid(target):
+		return result
+	var desired_radius := target.radius + get_target_orbit_altitude(target)
+	var rel_pos := world_position - target.global_position
+	var radius := maxf(rel_pos.length(), target.radius + hull_radius() + 1.0)
+	var radial := rel_pos / radius
+	if radial.is_zero_approx():
+		radial = Vector2.RIGHT
+	var tangent := radial.orthogonal()
+	var rel_vel := world_velocity - target.inertial_velocity()
+	if rel_vel.dot(tangent) < 0.0:
+		tangent = -tangent
+	var circular_speed := OrbitalPhysics.circular_speed(target.mu, desired_radius)
+	var local_escape := OrbitalPhysics.escape_speed(target.mu, radius)
+	var approach_speed := minf(circular_speed, local_escape * 0.82)
+	var desired_velocity := target.inertial_velocity() + tangent * approach_speed
+	result["desired_velocity"] = desired_velocity
+	result["desired_radius"] = desired_radius
+	result["heading"] = (desired_velocity - world_velocity).angle()
+	result["throttle"] = clampf((desired_velocity - world_velocity).length() / 60.0, 0.0, 1.0)
+	result["phase"] = "guidance"
+	return result
+
+
+func get_planned_autopilot_trajectory(target: ProcPlanet, max_points: int = 160) -> PackedVector2Array:
+	var path := PackedVector2Array()
+	if not is_instance_valid(target):
+		return path
+	path.append(global_position)
+	var desired_radius := target.radius + get_target_orbit_altitude(target)
+	if landed_on == target:
+		var start_dir := (global_position - target.global_position).normalized()
+		if start_dir.is_zero_approx():
+			start_dir = Vector2.RIGHT
+		var ascent_count := mini(24, maxi(2, max_points / 4))
+		for i in range(1, ascent_count + 1):
+			var t := float(i) / float(ascent_count)
+			var radius := lerpf(target.radius + hull_radius(), desired_radius, t)
+			var angle := 0.34 * t * t
+			path.append(target.global_position + start_dir.rotated(angle) * radius)
+	else:
+		var rel_pos := global_position - target.global_position
+		var rel_v := velocity - target.inertial_velocity()
+		var conic := OrbitalPhysics.sample_conic(rel_pos, rel_v, target.mu, max_points, desired_radius * 8.0)
+		for i in range(1, conic.size()):
+			var point := target.global_position + conic[i]
+			if point.distance_to(target.global_position) <= target.radius + hull_radius():
+				var dir := (point - target.global_position).normalized()
+				if dir.is_zero_approx():
+					dir = (global_position - target.global_position).normalized()
+				point = target.global_position + dir * (target.radius + hull_radius() + 2.0)
+			path.append(point)
+			if path.size() >= maxi(2, max_points):
+				break
+	if path.size() < max_points:
+		var start_dir := (path[path.size() - 1] - target.global_position).normalized()
+		if start_dir.is_zero_approx():
+			start_dir = Vector2.RIGHT
+		var remaining := max_points - path.size()
+		var loops := minf(TAU, TAU * float(remaining) / 96.0)
+		for i in range(remaining):
+			var t := float(i + 1) / float(maxi(remaining, 1))
+			path.append(target.global_position + start_dir.rotated(loops * t) * desired_radius)
+	return path
+
+
+func _is_finite(value: float) -> bool:
+	return value < INF and value > -INF and not is_nan(value)
+func get_coast_trajectory(max_points: int = 120) -> PackedVector2Array:
+	if not is_instance_valid(universe):
+		return PackedVector2Array()
+	var state := universe.orbit_status(global_position, velocity)
+	var focus: ProcPlanet = state["focus"]
+	if focus == null and state["bound"] == false:
+		state = universe.solar_orbit_status(global_position, velocity)
+	
+	var pts := OrbitalPhysics.sample_conic(
+		state["relative_position"],
+		state["relative_velocity"],
+		state["mu"],
+		max_points
+	)
+	var center: Vector2 = state["center"]
+	var world_pts := PackedVector2Array()
+	# The first point should be exactly the ship's global position.
+	world_pts.append(global_position)
+	for i in range(1, pts.size()):
+		world_pts.append(center + pts[i])
+	return world_pts

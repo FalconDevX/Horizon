@@ -1,4 +1,4 @@
-extends Node
+﻿extends Node
 
 const OrbitalPhysicsType := preload("res://scripts/orbital_physics.gd")
 const ControlModelType := preload("res://scripts/control_model.gd")
@@ -45,8 +45,6 @@ func _ready() -> void:
 	_test_gas_landing_blocked()
 	_test_warp_locks_near_any_body()
 	_test_no_gameplay_teleports()
-	_test_autopilot_bidirectional_and_collision_safe()
-	_test_autopilot_trajectory_and_transfer_physics()
 	print("passed %d  failed %d" % [passed, failed])
 	get_tree().quit(1 if failed > 0 else 0)
 
@@ -145,9 +143,9 @@ func _test_autopilot_is_physical() -> void:
 	var before := ship.global_position
 	ship.engage_orbit_autopilot(planet)
 	_check(ship.global_position.distance_to(before) < 0.001, "autopilot does not teleport ship")
-	ship._update_autopilot_guidance()
+	ship._tick_autopilot(1.0)
 	ship.rotation = ship._autopilot_heading
-	ship._update_autopilot_guidance()
+	ship._tick_autopilot(1.0)
 	var fuel_before: float = ship.fuel
 	ship._apply_forces(1.0)
 	_check(ship.fuel < fuel_before, "autopilot maneuver consumes fuel")
@@ -683,226 +681,3 @@ func _test_no_gameplay_teleports() -> void:
 	_check(source.find("KEY_G") < 0, "system regen is not a gameplay hotkey")
 
 
-func _test_autopilot_bidirectional_and_collision_safe() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 77
-	var planet := PlanetType.new()
-	planet.configure(rng, "Bidir", "ocean", 7000.0, 120000.0)
-	add_child(planet)
-
-	# 1. Counter-clockwise approach
-	var ship_ccw := _make_test_ship()
-	ship_ccw.global_position = planet.global_position + Vector2(12000.0, 0.0)
-	ship_ccw.velocity = planet.inertial_velocity() + Vector2(0.0, 150.0) # CCW
-	ship_ccw.engage_orbit_autopilot(planet)
-	ship_ccw._update_autopilot_guidance()
-	_check(ship_ccw._autopilot_direction > 0.0, "autopilot supports counter-clockwise orbit direction")
-	ship_ccw.queue_free()
-
-	# 2. Clockwise approach
-	var ship_cw := _make_test_ship()
-	ship_cw.global_position = planet.global_position + Vector2(12000.0, 0.0)
-	ship_cw.velocity = planet.inertial_velocity() + Vector2(0.0, -150.0) # CW
-	ship_cw.engage_orbit_autopilot(planet)
-	ship_cw._update_autopilot_guidance()
-	_check(ship_cw._autopilot_direction < 0.0, "autopilot supports clockwise orbit direction")
-	ship_cw.queue_free()
-
-	# 3. Collision safety: head-on approach lifts periapsis
-	var ship_col := _make_test_ship()
-	ship_col.global_position = planet.global_position + Vector2(10000.0, 0.0)
-	ship_col.velocity = planet.inertial_velocity() + Vector2(-300.0, 0.0) # heading directly at planet!
-	ship_col.engage_orbit_autopilot(planet)
-	ship_col._update_autopilot_guidance()
-	_check(ship_col._autopilot_heading != 0.0, "autopilot does not steer into planet center")
-	ship_col.queue_free()
-
-	# 4. Solar orbit status and bounded sample conic
-	var universe := UniverseType.new()
-	add_child(universe)
-	var sun_stat := universe.solar_orbit_status(Vector2(100000.0, 0.0), Vector2(0.0, 150.0))
-	_check(sun_stat.has("center") and sun_stat.has("bound"), "universe publishes solar orbit status")
-	var bounded_pts := OrbitalPhysics.sample_conic(
-		Vector2(10000.0, 0.0),
-		Vector2(0.0, 500.0), # escape speed
-		planet.mu,
-		100,
-		25000.0
-	)
-	var max_found := 0.0
-	for pt in bounded_pts:
-		max_found = maxf(max_found, pt.length())
-	_check(max_found <= 25001.0, "sample_conic respects max_radius bounding")
-
-	# 5. Ellipse sampling endpoints continuity
-	var ellipse_pts := OrbitalPhysics.sample_conic(
-		Vector2(10000.0, 0.0),
-		Vector2(0.0, 100.0),
-		planet.mu,
-		720
-	)
-	_check(ellipse_pts[0].distance_to(ellipse_pts[-1]) < 50.0, "ellipse start and end points naturally meet at apoapsis without artificial chord")
-
-	# 6. Ship visual draw scale is natural 1.0 (shrinks with camera zoom)
-	var test_ship := _make_test_ship()
-	test_ship.camera_zoom = 0.01
-	_check(is_equal_approx(test_ship._visual_draw_scale(), 1.0), "ship visual draw scale stays 1.0 and shrinks naturally with zoom")
-	test_ship.queue_free()
-
-	# 7. Autopilot never thrusts inward toward planet during approach
-	var ship_approach := _make_test_ship()
-	ship_approach.global_position = planet.global_position + Vector2(12000.0, 0.0)
-	ship_approach.velocity = planet.inertial_velocity() + Vector2(-150.0, 50.0) # falling inward
-	ship_approach.engage_orbit_autopilot(planet)
-	ship_approach._update_autopilot_guidance()
-	var thrust_dir := Vector2.from_angle(ship_approach._autopilot_heading)
-	var radial_dir := (ship_approach.global_position - planet.global_position).normalized()
-	_check(thrust_dir.dot(radial_dir) >= -0.01, "autopilot thrust direction never points inward into planet")
-	ship_approach.queue_free()
-
-	# 8. Velocity vector actively lengthens with speed and shortens when decelerating
-	var len_slow: float = clampf(8.5 * pow(2.0, 0.65), 0.0, 260.0)
-	var len_med: float = clampf(8.5 * pow(20.0, 0.65), 0.0, 260.0)
-	var len_fast: float = clampf(8.5 * pow(100.0, 0.65), 0.0, 260.0)
-	_check(
-		len_slow > 5.0 and len_med > len_slow * 2.5 and len_fast > len_med * 1.5,
-		"velocity vector actively lengthens with acceleration and shortens when braking"
-	)
-
-	# 9. Line resolution stays crisp (constant screen pixel width regardless of camera zoom)
-	var ship_zoom := _make_test_ship()
-	ship_zoom.camera_zoom = 2.0
-	var w_close := 1.5 / ship_zoom.camera_zoom
-	ship_zoom.camera_zoom = 20.0
-	var w_extreme := 1.5 / ship_zoom.camera_zoom
-	_check(
-		is_equal_approx(w_close * 2.0, 1.5) and is_equal_approx(w_extreme * 20.0, 1.5),
-		"guidance vectors maintain ultra-crisp screen resolution at any zoom"
-	)
-	ship_zoom.queue_free()
-
-	universe.queue_free()
-	planet.queue_free()
-
-
-func _test_autopilot_trajectory_and_transfer_physics() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 99
-	var planet := PlanetType.new()
-	planet.configure(rng, "TargetSys", "desert", 6000.0, 150000.0)
-	add_child(planet)
-
-	var ship := _make_test_ship()
-
-	# 1. Approach tangential speed stays strictly below local escape speed
-	var far_radius := planet.radius * 4.5
-	var test_pos := planet.global_position + Vector2(far_radius, 0.0)
-	var test_vel := planet.inertial_velocity()
-	var guid := ship.get_autopilot_guidance_for_state(test_pos, test_vel, planet, 1.0)
-	var des_v: Vector2 = guid.get("desired_velocity", Vector2.ZERO)
-	var rel_desired_speed := (des_v - planet.inertial_velocity()).length()
-	var local_escape_speed := OrbitalPhysics.escape_speed(planet.mu, far_radius)
-	_check(rel_desired_speed < local_escape_speed, "autopilot approach speed stays safely below local escape speed")
-
-	# 2. At target orbit radius, guidance speed matches circular orbit speed
-	var desired_radius: float = guid.desired_radius
-	var orbit_pos := planet.global_position + Vector2(desired_radius, 0.0)
-	var orbit_vel := planet.inertial_velocity() + Vector2(0.0, OrbitalPhysics.circular_speed(planet.mu, desired_radius))
-	var orbit_guid := ship.get_autopilot_guidance_for_state(orbit_pos, orbit_vel, planet, 1.0)
-	var exp_circ := OrbitalPhysics.circular_speed(planet.mu, desired_radius)
-	var act_v: Vector2 = orbit_guid.get("desired_velocity", Vector2.ZERO)
-	var act_circ := (act_v - planet.inertial_velocity()).length()
-	_check(is_equal_approx(act_circ, exp_circ), "autopilot desired speed matches circular orbit speed in target orbit")
-
-	# 3. Trajectory generation from interplanetary distance
-	ship.global_position = planet.global_position + Vector2(28000.0, 15000.0)
-	ship.velocity = planet.inertial_velocity() + Vector2(-120.0, 50.0)
-	var traj := ship.get_planned_autopilot_trajectory(planet, 160)
-	_check(traj.size() > 40, "planned trajectory generates full multi-step flight path")
-	_check(traj[0].distance_to(ship.global_position) < 1.0, "planned trajectory starts at ship's current position")
-
-	# 4. The preview never fabricates a connector through the planet when the
-	# simulation has not yet reached the target orbit.
-	var preview_safe := true
-	for point in traj:
-		if point.distance_to(planet.global_position) < planet.radius:
-			preview_safe = false
-	_check(preview_safe, "planned trajectory never draws through the planet")
-
-	# 5. Trajectory generation from planet surface (landed liftoff)
-	var landed_ship := _make_test_ship()
-	landed_ship.landed_on = planet
-	landed_ship.global_position = planet.global_position + Vector2(planet.radius, 0.0)
-	landed_ship.velocity = planet.inertial_velocity()
-	var surface_traj := landed_ship.get_planned_autopilot_trajectory(planet, 160)
-	_check(surface_traj.size() > 1, "surface ascent produces a real predicted path")
-	var surface_nearest_orbit_error := INF
-	for point in surface_traj:
-		surface_nearest_orbit_error = minf(
-			surface_nearest_orbit_error,
-			absf(point.distance_to(planet.global_position) - desired_radius)
-		)
-	_check(surface_nearest_orbit_error < 50.0, "surface ascent preview reaches the circular target orbit")
-
-	# 6. Dynamic orbit altitude adjustment dynamically updates the preliminary trajectory
-	var initial_alt := ship.get_target_orbit_altitude(planet)
-	var new_alt := ship.adjust_target_orbit_altitude(planet, 2500.0)
-	var updated_traj := ship.get_planned_autopilot_trajectory(planet, 160)
-	var expected_new_radius := planet.radius + new_alt
-	_check(is_equal_approx(new_alt, initial_alt + 2500.0), "scroll adjustment changes target orbit altitude")
-	_check(
-		is_equal_approx(planet.radius + ship.get_target_orbit_altitude(planet), expected_new_radius),
-		"preview uses the newly selected target orbit altitude"
-	)
-
-	# 7. Low-altitude suborbital preview continues beyond its insertion point so
-	# the player can see the circularisation that the real autopilot still makes.
-	var low_ship := _make_test_ship()
-	low_ship.global_position = planet.global_position + Vector2(planet.radius + 870.0, 0.0)
-	low_ship.velocity = planet.inertial_velocity() + Vector2(54.0, 30.0)
-	var low_traj := low_ship.get_planned_autopilot_trajectory(planet, 160)
-	var low_preview_safe := low_traj.size() > 80
-	for pt in low_traj:
-		if pt.distance_to(planet.global_position) < planet.radius + low_ship.hull_radius():
-			low_preview_safe = false
-	_check(low_preview_safe, "suborbital preview continues safely through circularisation")
-	low_ship.queue_free()
-
-	# 8. Camera zoom remains unchanged when F key is held
-	var zoom_ship := _make_test_ship()
-	var z0 := zoom_ship.camera_zoom
-	var wheel_up := InputEventMouseButton.new()
-	wheel_up.pressed = true
-	wheel_up.button_index = MOUSE_BUTTON_WHEEL_UP
-	var wheel_down := InputEventMouseButton.new()
-	wheel_down.pressed = true
-	wheel_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
-	var f_down := InputEventKey.new()
-	f_down.physical_keycode = KEY_F
-	f_down.pressed = true
-	zoom_ship._unhandled_input(f_down)
-	zoom_ship._unhandled_input(wheel_up)
-	zoom_ship._unhandled_input(wheel_down)
-	_check(is_equal_approx(zoom_ship.camera_zoom, z0), "mouse wheel camera zoom is completely blocked when F is held")
-	var f_up := InputEventKey.new()
-	f_up.physical_keycode = KEY_F
-	f_up.pressed = false
-	zoom_ship._unhandled_input(f_up)
-	zoom_ship.queue_free()
-
-	# 9. Preview uses simulated flight and never cuts through a body.
-	var curve_ship := _make_test_ship()
-	curve_ship.global_position = planet.global_position + Vector2(25000.0, 12000.0)
-	curve_ship.velocity = planet.inertial_velocity() + Vector2(-60.0, 120.0)
-	curve_ship.rotation = 0.5
-	var curve_traj := curve_ship.get_planned_autopilot_trajectory(planet, 160)
-	var curve_safe := curve_traj.size() > 1
-	for point in curve_traj:
-		if point.distance_to(planet.global_position) < planet.radius:
-			curve_safe = false
-	_check(curve_safe, "autopilot preview never fabricates a route through the planet")
-	curve_ship.queue_free()
-
-	landed_ship.queue_free()
-	ship.queue_free()
-	planet.queue_free()

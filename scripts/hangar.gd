@@ -1,4 +1,4 @@
-extends Node2D
+﻿extends Node2D
 
 const CELL := 1.0
 const ZOOM := 36.0
@@ -48,12 +48,12 @@ func _process(_delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if _handle_hud_click(_hud.get_local_mouse_position() if _hud else event.position):
-			get_viewport().set_input_as_handled()
+			if get_viewport(): get_viewport().set_input_as_handled()
 			return
 		var screen := get_viewport().get_mouse_position()
 		var view := get_viewport().get_visible_rect().size
 		if screen.x < 230.0 or (screen.x > view.x - 230.0 and screen.y > view.y - 170.0):
-			get_viewport().set_input_as_handled()
+			if get_viewport(): get_viewport().set_input_as_handled()
 			return
 		var cell := _mouse_cell()
 		if event.button_index == MOUSE_BUTTON_LEFT:
@@ -61,7 +61,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			graph.remove_at(cell)
 			status_text = ""
-		get_viewport().set_input_as_handled()
+		if get_viewport(): get_viewport().set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_R:

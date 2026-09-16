@@ -1,8 +1,8 @@
-class_name OrbitRenderer
+﻿class_name OrbitRenderer
 extends Node2D
 
 const INACTIVE := Color(0.82, 0.84, 0.88, 0.62)
-const PLANET_ORBIT := Color(0.82, 0.84, 0.88, 0.55)
+const PLANET_ORBIT := Color(0.25, 0.28, 0.35, 0.35)
 const SELECTED := Color(0.35, 0.95, 1.0, 0.92)
 const SELECTED_GLOW := Color(0.35, 0.95, 1.0, 0.22)
 const EDITED := Color(1.0, 0.72, 0.22, 0.95)
@@ -52,7 +52,7 @@ func _draw() -> void:
 	for planet in universe.planets:
 		if edit_active and planet == selected_target:
 			continue
-		_draw_body_orbit(planet, PLANET_ORBIT, px * 0.75, false)
+		_draw_body_orbit(planet, PLANET_ORBIT, px * 0.5, false)
 	if selected_target:
 		if edit_active:
 			_draw_orbit_circle(
@@ -364,4 +364,3 @@ func _cached_autopilot_plan(target: ProcPlanet) -> Dictionary:
 func _cached_planned_trajectory(target: ProcPlanet) -> PackedVector2Array:
 	var plan := _cached_autopilot_plan(target)
 	return plan.get("points", PackedVector2Array())
-
