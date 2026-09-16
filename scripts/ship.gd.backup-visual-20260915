@@ -1,0 +1,525 @@
+class_name SurveyShip
+extends CharacterBody2D
+
+const SAS_TORQUE := 1.35
+const MAX_SPIN := 1.15
+const TURN_ACCELERATION := ControlModel.TURN_ACCELERATION
+const ROTATION_DAMPING := 4.2
+const CONTROL_MAIN_ACCELERATION := ControlModel.MAIN_ACCELERATION
+const CONTROL_RCS_ACCELERATION := ControlModel.RCS_ACCELERATION
+const HULL_R := 5.0
+const MAX_SAFE_LANDING_RADIAL_SPEED := 12.0 # m/s
+const MAX_SAFE_LANDING_TANGENT_SPEED := 16.0 # m/s
+const CAMERA_ZOOM_MIN := 0.0000005
+const CAMERA_ZOOM_MAX := 12.0
+const CAMERA_ZOOM_STEP := 1.25
+const ENERGY_MAX := 100.0
+
+var graph := ModuleGraph.new()
+var throttle: float = 0.0
+var angular_velocity: float = 0.0
+var sas: bool = true
+var camera_zoom: float = 0.85
+var time_warp: float = 1.0
+var fuel: float = 0.0
+var hull: float = 100.0
+var energy: float = ENERGY_MAX
+var universe: Universe
+var spawn_point: Vector2 = Vector2.ZERO
+var landed_on: ProcPlanet = null
+var landed_angle: float = 0.0
+var surface_coordinate := SurfaceCoordinate.new()
+var surface_mode_active: bool = false
+var autopilot_target: ProcPlanet = null
+var autopilot_phase: String = "off"
+var autopilot_delta_v: float = 0.0
+var _autopilot_heading: float = 0.0
+var frozen: bool = false
+
+var _cam: Camera2D
+var _aiming: bool = false
+var _collision: CollisionShape2D
+var _circle: CircleShape2D
+
+
+func _ready() -> void:
+	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	z_index = 8
+	_circle = CircleShape2D.new()
+	_circle.radius = HULL_R
+	_collision = CollisionShape2D.new()
+	_collision.shape = _circle
+	add_child(_collision)
+	_cam = Camera2D.new()
+	_cam.enabled = true
+	_cam.top_level = true
+	_cam.position_smoothing_enabled = false
+	_cam.process_callback = Camera2D.CAMERA2D_PROCESS_IDLE
+	_cam.ignore_rotation = true
+	_cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	add_child(_cam)
+	_cam.global_position = global_position
+	_cam.make_current()
+	if graph.modules.is_empty():
+		apply_blueprint(ShipBlueprint.load_current())
+	if spawn_point != Vector2.ZERO:
+		global_position = spawn_point
+
+
+func apply_blueprint(data: Dictionary) -> void:
+	if data.is_empty() or not graph.load_blueprint(data):
+		graph = ShipBlueprint.starter_graph()
+	_sync_from_graph()
+	_update_collision()
+
+
+func hull_radius() -> float:
+	return graph.stats().radius if graph else HULL_R
+
+
+func fuel_max() -> float:
+	return maxf(graph.fuel_max(), 1.0)
+
+
+func hull_max() -> float:
+	return maxf(graph.stats().hull_max, 1.0)
+
+
+func main_thrust() -> float:
+	return graph.stats().thrust
+
+
+func _sync_from_graph() -> void:
+	var stats := graph.stats()
+	fuel = stats.fuel
+	hull = stats.hull
+	_update_collision()
+
+
+func _update_collision() -> void:
+	if _circle:
+		_circle.radius = hull_radius()
+
+
+func _process(_delta: float) -> void:
+	if _cam == null or surface_mode_active:
+		return
+	_cam.global_position = global_position
+	_cam.zoom = Vector2(camera_zoom, camera_zoom)
+
+
+func _update_camera(_delta: float) -> void:
+	if _cam == null:
+		return
+	_cam.global_position = global_position
+	_cam.zoom = Vector2(camera_zoom, camera_zoom)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if surface_mode_active or frozen:
+		return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera_zoom = clampf(camera_zoom * CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera_zoom = clampf(camera_zoom / CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.physical_keycode:
+			KEY_EQUAL, KEY_KP_ADD:
+				camera_zoom = clampf(camera_zoom * CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+			KEY_MINUS, KEY_KP_SUBTRACT:
+				camera_zoom = clampf(camera_zoom / CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+			KEY_0, KEY_KP_0:
+				var planet := universe.nearest(global_position) if universe else null
+				if planet:
+					frame_near(planet)
+			KEY_T:
+				sas = not sas
+			KEY_X:
+				throttle = 0.0
+			KEY_Z:
+				throttle = 1.0
+			KEY_PERIOD:
+				_cycle_warp()
+
+
+func _cycle_warp() -> void:
+	if time_warp < 1.5:
+		time_warp = 4.0
+	elif time_warp < 8.0:
+		time_warp = 16.0
+	else:
+		time_warp = 1.0
+	if absf(throttle) > 0.04:
+		time_warp = 1.0
+
+
+func _physics_process(delta: float) -> void:
+	if frozen:
+		queue_redraw()
+		return
+	if surface_mode_active:
+		time_warp = 1.0
+		queue_redraw()
+		return
+	var manual_input := _has_control_input()
+	if manual_input and autopilot_target != null:
+		cancel_autopilot()
+	if manual_input or (absf(throttle) > 0.04 and autopilot_target == null):
+		time_warp = 1.0
+	if autopilot_target != null:
+		time_warp = 1.0
+		_update_autopilot_guidance()
+	else:
+		_throttle_input(delta)
+	if landed_on != null:
+		_tick_landed(delta)
+	else:
+		var steps := maxi(1, int(ceil(time_warp)))
+		var step := delta * time_warp / float(steps)
+		for i in steps:
+			if autopilot_target != null:
+				_steer_to(_autopilot_heading, step)
+				_update_autopilot_guidance()
+			else:
+				_steer(step)
+			_apply_forces(step)
+			_move_step(step)
+			_update_energy(step)
+			if landed_on != null:
+				break
+	_update_camera(delta)
+	queue_redraw()
+
+
+func _has_control_input() -> bool:
+	return (
+		Input.is_physical_key_pressed(KEY_W)
+		or Input.is_physical_key_pressed(KEY_S)
+		or Input.is_physical_key_pressed(KEY_UP)
+		or Input.is_physical_key_pressed(KEY_DOWN)
+		or Input.is_physical_key_pressed(KEY_A)
+		or Input.is_physical_key_pressed(KEY_D)
+		or Input.is_physical_key_pressed(KEY_Q)
+		or Input.is_physical_key_pressed(KEY_E)
+		or Input.is_physical_key_pressed(KEY_SHIFT)
+		or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	)
+
+
+func _steer(dt: float) -> void:
+	var yaw := float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
+	_aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	if _aiming:
+		var want := (get_global_mouse_position() - global_position).angle()
+		var err := angle_difference(rotation, want)
+		var target_spin := clampf(err * 1.8, -MAX_SPIN, MAX_SPIN)
+		angular_velocity = move_toward(angular_velocity, target_spin, _yaw_accel() * 1.4 * dt)
+	elif absf(yaw) > 0.01:
+		angular_velocity += yaw * ControlModel.yaw_acceleration(self) * dt
+	else:
+		var damping := ROTATION_DAMPING * (1.65 if sas and energy > 0.0 else 1.0)
+		angular_velocity = move_toward(angular_velocity, 0.0, damping * dt)
+	angular_velocity = clampf(angular_velocity, -MAX_SPIN, MAX_SPIN)
+	rotation += angular_velocity * dt
+
+
+func _steer_to(wanted_angle: float, dt: float) -> void:
+	var error := angle_difference(rotation, wanted_angle)
+	var target_spin := clampf(error * 1.8, -MAX_SPIN, MAX_SPIN)
+	angular_velocity = move_toward(angular_velocity, target_spin, _yaw_accel() * 1.6 * dt)
+	angular_velocity = clampf(angular_velocity, -MAX_SPIN, MAX_SPIN)
+	rotation += angular_velocity * dt
+
+
+func _throttle_input(dt: float) -> void:
+	if Input.is_physical_key_pressed(KEY_W) or (landed_on == null and Input.is_physical_key_pressed(KEY_UP)):
+		var throttle_rate := 0.9 if landed_on != null else 0.55
+		throttle = move_toward(throttle, 1.0, throttle_rate * dt)
+	if Input.is_physical_key_pressed(KEY_S) or (landed_on == null and Input.is_physical_key_pressed(KEY_DOWN)):
+		throttle = move_toward(throttle, -0.28, 0.55 * dt)
+	if Input.is_physical_key_pressed(KEY_SHIFT):
+		throttle = move_toward(throttle, 1.0, 1.4 * dt)
+
+
+func _yaw_accel() -> float:
+	return ControlModel.yaw_acceleration(self)
+
+
+func _apply_forces(dt: float) -> void:
+	if fuel <= 0.0:
+		throttle = 0.0
+	var main_accel := ControlModel.main_acceleration(self)
+	if absf(throttle) > 0.01 and main_accel > 0.0:
+		var forward := Vector2.from_angle(rotation)
+		velocity += forward * main_accel * throttle * dt
+		ControlModel.consume_main(self, absf(throttle), dt)
+	var nose := Vector2.from_angle(rotation)
+	var rcs := Vector2.ZERO
+	if Input.is_physical_key_pressed(KEY_Q):
+		rcs += Vector2(-nose.y, nose.x)
+	if Input.is_physical_key_pressed(KEY_E):
+		rcs -= Vector2(-nose.y, nose.x)
+	var rcs_accel := ControlModel.rcs_acceleration(self)
+	if rcs.length() > 0.01 and rcs_accel > 0.0:
+		velocity += rcs.normalized() * rcs_accel * dt
+		ControlModel.consume_rcs(self, dt)
+	if universe:
+		velocity += universe.gravity_at(global_position) * dt
+
+
+func mass() -> float:
+	return graph.stats().mass
+
+
+func _move_step(dt: float) -> void:
+	var velocity_before := velocity
+	var hit := move_and_collide(velocity * dt)
+	if hit == null:
+		return
+	var normal := hit.get_normal()
+	var normal_speed := maxf(0.0, -normal.dot(velocity_before))
+	var tangent_speed := absf(normal.orthogonal().dot(velocity_before))
+	var collider := hit.get_collider() as Node
+	var planet := collider.get_parent() as ProcPlanet if collider else null
+	if (
+		planet
+		and planet.allows_surface_landing()
+		and normal_speed <= MAX_SAFE_LANDING_RADIAL_SPEED
+		and tangent_speed <= MAX_SAFE_LANDING_TANGENT_SPEED
+	):
+		_land_after_contact(planet)
+		return
+	if normal_speed > MAX_SAFE_LANDING_RADIAL_SPEED:
+		graph.apply_hull_damage((normal_speed - MAX_SAFE_LANDING_RADIAL_SPEED) * 0.7)
+		hull = graph.stats().hull
+	velocity = velocity_before.bounce(normal) * 0.28
+	global_position += normal * 2.0
+
+
+func _update_energy(dt: float) -> void:
+	if sas and absf(angular_velocity) > 0.015:
+		energy = maxf(0.0, energy - 2.4 * dt)
+	else:
+		energy = move_toward(energy, ENERGY_MAX, 1.2 * dt)
+
+
+func _tick_landed(delta: float) -> void:
+	if not is_instance_valid(landed_on):
+		landed_on = null
+		return
+	landed_angle = surface_coordinate.longitude
+	var world_angle := surface_coordinate.longitude + landed_on.rotation
+	var outward := Vector2.from_angle(world_angle)
+	var surface_radius := landed_on.radius + hull_radius() + ControlModel.GROUND_CLEARANCE
+	global_position = landed_on.global_position + outward * surface_radius
+	velocity = landed_on.inertial_velocity() + outward.orthogonal() * landed_on.spin_speed * surface_radius
+	rotation = world_angle
+	angular_velocity = 0.0
+	if autopilot_target != null:
+		autopilot_phase = "launch"
+		_autopilot_heading = world_angle
+		throttle = 1.0
+	_update_energy(delta)
+	var thrust_acceleration := ControlModel.main_acceleration(self) * maxf(throttle, 0.0)
+	var local_gravity := landed_on.mu / (surface_radius * surface_radius)
+	if thrust_acceleration > local_gravity * 1.05 and fuel > 0.0:
+		landed_on = null
+		global_position += outward * 8.0
+		velocity += outward * 3.0
+		rotation = world_angle
+		angular_velocity = 0.0
+
+
+func _land_after_contact(planet: ProcPlanet) -> void:
+	landed_on = planet
+	landed_angle = (global_position - planet.global_position).angle() - planet.rotation
+	surface_coordinate = SurfaceCoordinate.new(0.0, landed_angle)
+	throttle = 0.0
+	angular_velocity = 0.0
+	_tick_landed(0.0)
+
+
+func place_landed(planet: ProcPlanet) -> void:
+	var outward := planet.global_position.normalized()
+	if outward.length_squared() < 0.01:
+		outward = Vector2.RIGHT
+	_reset_resources()
+	cancel_autopilot()
+	landed_on = planet
+	landed_angle = outward.angle() - planet.rotation
+	surface_coordinate = SurfaceCoordinate.new(0.0, landed_angle)
+	_tick_landed(0.0)
+
+
+func relative_velocity_to(planet: ProcPlanet) -> Vector2:
+	if planet == null:
+		return velocity
+	return velocity - planet.inertial_velocity()
+
+
+func landing_block_reason(planet: ProcPlanet) -> String:
+	if planet == null:
+		return "Brak celu"
+	if not planet.allows_surface_landing():
+		return "Gazowy olbrzym — brak twardej powierzchni"
+	var altitude := global_position.distance_to(planet.global_position) - planet.radius - hull_radius()
+	var relative_speed := relative_velocity_to(planet).length()
+	if altitude > planet.approach_altitude():
+		return "Za wysoko na lądowanie"
+	if relative_speed > ControlModel.APPROACH_SPEED:
+		return "Za szybko na lądowanie"
+	return ""
+
+
+func can_land_at(planet: ProcPlanet) -> bool:
+	return landing_block_reason(planet) == ""
+
+
+func land_at_surface(planet: ProcPlanet, coordinate: SurfaceCoordinate) -> bool:
+	if not can_land_at(planet):
+		return false
+	cancel_autopilot()
+	landed_on = planet
+	surface_coordinate = coordinate.copy()
+	landed_angle = surface_coordinate.longitude
+	throttle = 0.0
+	_tick_landed(0.0)
+	return true
+
+
+func engage_orbit_autopilot(target: ProcPlanet) -> void:
+	if target == null:
+		return
+	autopilot_target = target
+	autopilot_phase = "launch" if landed_on != null else "approach"
+	autopilot_delta_v = 0.0
+	throttle = 0.0
+	time_warp = 1.0
+
+
+func cancel_autopilot() -> void:
+	var was_active := autopilot_target != null
+	autopilot_target = null
+	autopilot_phase = "off"
+	autopilot_delta_v = 0.0
+	if was_active:
+		throttle = 0.0
+
+
+func _update_autopilot_guidance() -> void:
+	if not is_instance_valid(autopilot_target) or fuel <= 0.0:
+		cancel_autopilot()
+		return
+	if landed_on != null:
+		autopilot_phase = "launch"
+		_autopilot_heading = (global_position - landed_on.global_position).angle()
+		throttle = 1.0
+		return
+	var target := autopilot_target
+	var relative_position := global_position - target.global_position
+	var radius := maxf(relative_position.length(), 1.0)
+	var radial := relative_position / radius
+	var tangent := radial.orthogonal()
+	var relative_velocity := velocity - target.inertial_velocity()
+	if relative_position.cross(relative_velocity) < 0.0:
+		tangent = -tangent
+	var desired_radius := target.radius + target.lowest_orbit_altitude() * 1.15
+	var max_accel := ControlModel.MAIN_ACCELERATION
+	var desired_velocity := Vector2.ZERO
+	if radius > desired_radius * 1.12:
+		autopilot_phase = "approach"
+		var distance_left := radius - desired_radius
+		var intercept := sqrt(maxf(2.0 * max_accel * distance_left, 0.0)) * 0.65
+		var closing_speed := clampf(intercept, 20.0, 2_500.0)
+		desired_velocity = target.inertial_velocity() - radial * closing_speed
+	else:
+		autopilot_phase = "circularize"
+		var circular := OrbitalPhysics.circular_speed(target.mu, desired_radius)
+		var radial_correction := clampf((radius - desired_radius) * 0.035, -35.0, 35.0)
+		desired_velocity = target.inertial_velocity() + tangent * circular - radial * radial_correction
+	var velocity_error := desired_velocity - velocity
+	autopilot_delta_v = velocity_error.length()
+	var orbit_slack := maxf(80.0, target.lowest_orbit_altitude() * 0.08)
+	if autopilot_phase == "circularize" and autopilot_delta_v < 1.2 and absf(radius - desired_radius) < orbit_slack:
+		autopilot_phase = "orbit"
+		throttle = 0.0
+		_autopilot_heading = tangent.angle()
+		return
+	_autopilot_heading = velocity_error.angle()
+	var alignment := absf(angle_difference(rotation, _autopilot_heading))
+	throttle = clampf(autopilot_delta_v / maxf(max_accel * 5.0, 1.0), 0.08, 1.0) if alignment < 0.22 else 0.0
+
+
+func frame_near(planet: ProcPlanet) -> void:
+	var viewport := get_viewport_rect().size
+	var target_screen_radius := ProcPlanet.target_screen_radius(viewport)
+	camera_zoom = clampf(
+		target_screen_radius / maxf(planet.radius, 1.0),
+		CAMERA_ZOOM_MIN,
+		CAMERA_ZOOM_MAX
+	)
+	if _cam:
+		_cam.global_position = global_position
+		_cam.zoom = Vector2(camera_zoom, camera_zoom)
+
+
+func apply_screen_scale(planet: ProcPlanet, screen_radius: float) -> void:
+	camera_zoom = clampf(
+		screen_radius / maxf(planet.radius, 1.0),
+		CAMERA_ZOOM_MIN,
+		CAMERA_ZOOM_MAX
+	)
+	if _cam:
+		_cam.global_position = global_position
+		_cam.zoom = Vector2(camera_zoom, camera_zoom)
+
+
+func reset_to(point: Vector2, look_at_point: Vector2, inherited_velocity: Vector2 = Vector2.ZERO) -> void:
+	global_position = point
+	reset_physics_interpolation()
+	if _cam:
+		_cam.global_position = point
+	velocity = inherited_velocity
+	angular_velocity = 0.0
+	rotation = (point - look_at_point).angle()
+	landed_on = null
+	cancel_autopilot()
+	_reset_resources()
+
+
+func _reset_resources() -> void:
+	throttle = 0.0
+	graph.refill_fuel()
+	graph.restore_hull()
+	_sync_from_graph()
+	energy = ENERGY_MAX
+	time_warp = 1.0
+
+
+func _draw() -> void:
+	if surface_mode_active:
+		return
+	if _aiming:
+		var aim_local := to_local(get_global_mouse_position())
+		if aim_local.length() > 35.0:
+			var aim_direction := aim_local.normalized()
+			var aim_end := aim_direction * minf(aim_local.length(), 900.0)
+			var aim_color := Color(0.35, 1.0, 0.48, 0.72)
+			draw_line(aim_direction * hull_radius(), aim_end, aim_color, 1.15, true)
+			draw_circle(aim_end, 3.0, aim_color)
+	if velocity.length() > 0.5:
+		var flight_direction := velocity.normalized().rotated(-rotation)
+		var rim := hull_radius()
+		var line_length := clampf(velocity.length() * 0.65, rim * 1.65, rim * 4.6)
+		var line_start := flight_direction * rim
+		var line_end := flight_direction * line_length
+		var guide_color := Color(0.35, 0.85, 1.0, 0.58)
+		draw_line(line_start, line_end, guide_color, 1.2, true)
+		var side := flight_direction.orthogonal()
+		var head_length := maxf(rim * 0.75, 5.0)
+		var head_width := maxf(rim * 0.32, 2.5)
+		draw_line(line_end, line_end - flight_direction * head_length + side * head_width, guide_color, 1.2, true)
+		draw_line(line_end, line_end - flight_direction * head_length - side * head_width, guide_color, 1.2, true)
+	graph.draw_on(self, Vector2.ZERO, 0.0, 1.0, throttle, fuel > 0.0)

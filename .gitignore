@@ -1,0 +1,6 @@
+.godot/
+.test_appdata/
+*.translation
+export.cfg
+export_presets.cfg
+backup-*/

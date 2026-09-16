@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dtdnfmp7pgki0"]
+
+[ext_resource type="Script" path="res://scripts/hangar.gd" id="1_hangar"]
+
+[node name="Hangar" type="Node2D"]
+script = ExtResource("1_hangar")

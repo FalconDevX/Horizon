@@ -1,0 +1,9 @@
+{
+	"modules": [
+		{"type": "cockpit_mk1", "x": 1, "y": 0, "rotation": 0},
+		{"type": "fuel_tank_s", "x": -1, "y": 0, "rotation": 0},
+		{"type": "engine_chemical_s", "x": -3, "y": 0, "rotation": 0},
+		{"type": "rcs", "x": 0, "y": 2, "rotation": 0},
+		{"type": "rcs", "x": 0, "y": -1, "rotation": 0}
+	]
+}
