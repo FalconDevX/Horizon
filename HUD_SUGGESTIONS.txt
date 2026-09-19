@@ -1,0 +1,140 @@
+SUGESTIE POPRAWEK HUD - SolarSystem2
+======================================
+Propozycje, nic z tego NIE jest zaimplementowane - do przedyskutowania
+i ewentualnego wybrania. Punkt odniesienia: HUD_FEATURES.txt (pełny spis
+tego, co już jest).
+
+
+1. SPÓJNOŚĆ WIZUALNA
+-------------------------------------------
+Problem: lewy panel jest celowo monochromatyczny (tekst), a wszystkie
+nowsze panele (speed gauge, PE/AP, status, autopilot, blueprint statku)
+są kolorowe w stylu sci-fi. To dwa różne języki wizualne obok siebie.
+
+Sugestie:
+- Albo w pełni przejść na nowy, kolorowy styl i lewy panel zredukować do
+  rzeczy, których NIE ma nigdzie indziej (żeby nie duplikować), albo
+  świadomie zostawić lewy panel jako "surowy telemetryczny odczyt" (inny
+  rejestr celowo, jak konsola diagnostyczna) i to jakoś zaznaczyć
+  wizualnie (np. inna czcionka/ramka), żeby różnica wyglądała na decyzję,
+  nie przypadek.
+- Ujednolicić promień zaokrąglenia rogów, grubość ramek i odstępy między
+  wszystkimi panelami - teraz każdy panel ma inne wartości dobierane
+  osobno.
+
+
+2. DUPLIKACJA INFORMACJI
+-------------------------------------------
+Speed, PE i AP są pokazywane W DWÓCH miejscach naraz (tekst w lewym
+panelu + gauge/karty na dole). To zajmuje miejsce na ekranie i przy okazji
+dwa źródła tej samej liczby mogą się wizualnie "rozjechać" (inny format:
+"25.3" vs "25.3 SU/s" itp.).
+
+Sugestia: zostawić tekst w lewym panelu TYLKO dla rzeczy bez nowoczesnego
+odpowiednika (Orbit/SOI/Trajectory/Eccentricity/Time), a Speed/PE/AP
+pokazywać wyłącznie w gauge'ach - albo odwrotnie, do ustalenia który
+wariant ma zostać głównym źródłem prawdy.
+
+
+3. BRAK OSTRZEŻEŃ O NIEBEZPIECZEŃSTWIE
+-------------------------------------------
+Nie ma dziś żadnego wyraźnego alertu dla stanów krytycznych:
+- peryapsis poniżej promienia planety (kolizja/wejście w atmosferę)
+- orbita hiperboliczna (ucieczka) gdy gracz tego nie planował
+- autopilot z zablokowanym głównym silnikiem (MAIN THRUSTER: OFF) próbujący
+  bezskutecznie skorygować dużą prędkość samym RCS
+
+Sugestia: migający czerwony baner/ramka wokół odpowiedniego panelu (PE
+gauge na czerwono przy PE < promień ciała, autopilot panel na czerwono
+gdy REMAINING Δv rośnie zamiast maleć przez dłuższy czas).
+
+
+4. RCS CHIP JEST MAŁO INFORMACYJNY
+-------------------------------------------
+Chip "RCS" w pasku statusu to tylko włącz/wyłącz - nie mówi który z 4
+silniczków ciągnie ani jak mocno (to widać dopiero na modelu statku w
+prawym dolnym rogu). Gracz musi patrzeć w dwa miejsca na raz.
+
+Sugestia: mały, uproszczony krzyżyk-wskaźnik kierunku (4 kropki
+przód/tył/lewo/prawo) bezpośrednio w samym chipie RCS, żeby nie trzeba
+było przenosić wzroku do rogu ekranu.
+
+
+5. TIME SCALE (1-7) BEZ WIZUALNEJ PODPOWIEDZI
+-------------------------------------------
+"Time: Nx" to zwykły tekst - nie widać, jakie wartości są dostępne (1x/2x/
+5x/10x/50x/100x/200x) ani który klawisz czemu odpowiada, jeśli się tego
+nie pamięta.
+
+Sugestia: mały rządek 7 kropek/segmentów (jak segmenty throttle) z
+podświetleniem aktywnej prędkości, ewentualnie z podpisanymi cyframi 1-7
+pod spodem.
+
+
+6. BRAK TOOLTIPÓW / PODPOWIEDZI KLAWISZY
+-------------------------------------------
+Żaden panel nie mówi wprost jakim klawiszem się nim steruje (np. LOCK nie
+przypomina "X", MAIN THRUSTER nie przypomina, że to dotyczy tylko
+autopilota). Nowy gracz musi znać HUD_FEATURES.txt na pamięć.
+
+Sugestia: najechanie myszą na chip/panel pokazuje krótki tooltip z
+klawiszem/skrótem. Ewentualnie stały, cienki pasek na dole ekranu z
+aktualnie dostępnymi skrótami (kontekstowo zmieniający się, np. inny
+podczas SELECTING niż podczas normalnego lotu).
+
+
+7. BRAK PRZEGLĄDU CAŁEGO UKŁADU (MINIMAPA)
+-------------------------------------------
+Przy bardzo dużych odległościach (Nyxholm) łatwo stracić orientację, gdzie
+się jest względem reszty układu - trzeba ręcznie oddalać kamerę. Stąd też
+część wcześniejszych zgłoszeń ("blisko granicy mapy") brała się z braku
+kontekstu przestrzennego.
+
+Sugestia: mała, stała minimapa w rogu (albo rozwijana pod klawiszem) -
+Słońce w środku, planety jako kropki w skali logarytmicznej odległości,
+pozycja statku jako trójkącik.
+
+
+8. BRAK WSKAŹNIKA ZOOMU KAMERY
+-------------------------------------------
+Nigdzie nie widać aktualnego poziomu przybliżenia (camera_zoom) - przy
+zakresie 0.001-50x łatwo się zgubić, czy jest się "blisko" czy "daleko"
+bez orientowania się po rozmiarze obiektów na ekranie.
+
+Sugestia: mały, dyskretny odczyt zoomu (np. "1.0x" / "0.05x") gdzieś przy
+prędkościomierzu albo przy minimapie z punktu 7.
+
+
+9. AUTOPILOT PANEL - TEKST ZAMIAST PASKA POSTĘPU
+-------------------------------------------
+STATUS w panelu autopilota to gęsty tekst z odliczaniem czasu (np. "BURN 1
+IN: 3m45s"). Trudno ocenić na pierwszy rzut oka, jak blisko jest zdarzenie.
+
+Sugestia: cienki pasek postępu pod tekstem STATUS, wypełniający się w miarę
+zbliżania do najbliższego zdarzenia (burn/okno startowe/peryapsis).
+
+
+10. UKŁAD STAŁY NA SZTYWNO POD 1920x1080
+-------------------------------------------
+Wszystkie panele mają twarde przesunięcia pikselowe dobrane pod jedną
+rozdzielczość - nie sprawdzone na innych proporcjach ekranu (ultrawide,
+4:3, mniejsze okna). Przy zmianie rozdzielczości panele mogą się nakładać
+albo wychodzić poza ekran.
+
+Sugestia: przejście na proporcjonalne kotwiczenie (już częściowo jest -
+anchor_left/right=0.5 dla dolnego klastra) + przetestowanie na 2-3 innych
+rozdzielczościach/proporcjach przed uznaniem układu za finalny.
+
+
+11. DROBIAZGI
+-------------------------------------------
+- Panel statku w rogu (ship_blueprint_panel) i model statku w świecie gry
+  teraz pokazują to samo zdjęcie - z bliska (true_scale) info z rogu jest
+  częściowo redundantne. Ma to sens tylko dlatego, że model w rogu ma
+  STAŁĄ orientację (dziób zawsze u góry), a w świecie statek się obraca -
+  warto to jasno skomunikować graczowi (np. podpis "HEADING" pod
+  panelem), żeby było wiadomo po co jest oba naraz.
+- Kolor eccentricity nie jest już nigdzie pokazywany kolorem (usunięty
+  get_eccentricity_color) - wartość liczbowa w lewym panelu jest teraz
+  całkowicie płaska; jeśli to było przydatne, warto rozważyć przywrócenie
+  w jakiejś formie (np. mały pasek 0-1 zamiast koloru tekstu).

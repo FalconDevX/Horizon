@@ -1,0 +1,480 @@
+[gd_scene format=3 uid="uid://boxk5lvydfjoa"]
+
+[ext_resource type="Script" uid="uid://cqrjkrxk7l355" path="res://celestial_body.gd" id="1_hbvo3"]
+[ext_resource type="Script" uid="uid://by5l0speo313d" path="res://solar_system.gd" id="1_hp4wh"]
+[ext_resource type="Script" uid="uid://dj1v1v5b6j121" path="res://ship.gd" id="3_ship"]
+[ext_resource type="Script" path="res://speed_gauge.gd" id="4_speed_gauge"]
+[ext_resource type="Script" path="res://hud_status_panel.gd" id="5_hud_status"]
+[ext_resource type="Script" path="res://orbit_value_gauge.gd" id="6_orbit_value"]
+[ext_resource type="Script" path="res://autopilot_panel.gd" id="7_autopilot_panel"]
+[ext_resource type="Script" path="res://ship_blueprint_panel.gd" id="8_ship_blueprint"]
+[ext_resource type="Texture2D" path="res://textures/background.png" id="9_background"]
+[ext_resource type="AudioStream" path="res://sounds/rcs.mp3" id="10_rcs_sound"]
+[ext_resource type="Script" path="res://time_warp_panel.gd" id="11_time_warp"]
+[ext_resource type="Script" path="res://left_panel_bg.gd" id="12_left_panel_bg"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
+radius = 20.0
+
+[sub_resource type="SystemFont" id="SystemFont_hud"]
+font_names = PackedStringArray("Cascadia Mono", "Consolas", "Courier New")
+subpixel_positioning = 0
+
+[sub_resource type="Theme" id="Theme_hud"]
+default_font = SubResource("SystemFont_hud")
+default_font_size = 14
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxFlat_hud_panel"]
+content_margin_left = 14.0
+content_margin_top = 10.0
+content_margin_right = 10.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxLine" id="StyleBoxLine_hud_sep"]
+color = Color(0.32, 0.5, 0.72, 0.45)
+
+[node name="SolarSystem" type="Node2D" unique_id=459036639]
+script = ExtResource("1_hp4wh")
+
+[node name="Background" type="CanvasLayer" parent="." unique_id=384403149]
+layer = -10
+
+[node name="BackgroundImage" type="TextureRect" parent="Background" unique_id=847252374]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("9_background")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="BackgroundMask" type="ColorRect" parent="Background" unique_id=192384625]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.0, 0.0, 0.0, 0.5)
+
+[node name="OrbitLines" type="Node2D" parent="." unique_id=1305353892]
+
+[node name="TrajectoryPrediction" type="Line2D" parent="." unique_id=555732344]
+width = 2.0
+default_color = Color(0.85, 0.9, 1, 0.55)
+antialiased = true
+
+[node name="OsculatingOrbitLine" type="Line2D" parent="." unique_id=217950049]
+width = 1.5
+default_color = Color(0.85, 0.85, 0.85, 0.5)
+antialiased = true
+
+[node name="TargetOrbit" type="Line2D" parent="." unique_id=722839800]
+visible = false
+width = 2.0
+default_color = Color(0, 1, 0, 1)
+antialiased = true
+
+[node name="InterplanetaryRoute" type="Line2D" parent="." unique_id=616883616]
+visible = false
+width = 2.0
+default_color = Color(1, 0.41, 0.7, 0.85)
+antialiased = true
+
+[node name="PeriapsisMarker" type="Node2D" parent="." unique_id=72141260]
+visible = false
+
+[node name="Label" type="Label" parent="PeriapsisMarker" unique_id=1509998926]
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 27.0
+offset_bottom = 11.0
+text = "PE"
+
+[node name="ApoapsisMarker" type="Node2D" parent="." unique_id=1056636234]
+visible = false
+
+[node name="Label" type="Label" parent="ApoapsisMarker" unique_id=988720973]
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 27.0
+offset_bottom = 11.0
+text = "AP"
+
+[node name="DepartureBurnMarker" type="Node2D" parent="." unique_id=1031075272]
+visible = false
+
+[node name="Label" type="Label" parent="DepartureBurnMarker" unique_id=1463624216]
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 27.0
+offset_bottom = 11.0
+theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
+text = "DepartureBurnMarker"
+
+[node name="TransferBurnMarker" type="Node2D" parent="." unique_id=2087320388]
+visible = false
+
+[node name="Label" type="Label" parent="TransferBurnMarker" unique_id=120431003]
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 27.0
+offset_bottom = 11.0
+theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
+text = "TransferBurnMarker"
+
+[node name="ArrivalMarker" type="Node2D" parent="." unique_id=2076522040]
+visible = false
+
+[node name="Label" type="Label" parent="ArrivalMarker" unique_id=646834989]
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 27.0
+offset_bottom = 11.0
+theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
+text = "ArrivalMarker"
+
+[node name="Sun" type="Node2D" parent="." unique_id=592866294]
+script = ExtResource("1_hbvo3")
+radius = 800.0
+visual_radius = 800.0
+color = Color(1, 0.85, 0.3, 1)
+mass = 1000.0
+body_name = "Virelia"
+
+[node name="Planets" type="Node2D" parent="." unique_id=1016710538]
+
+[node name="Emberrock" type="Node2D" parent="Planets" unique_id=224297438]
+position = Vector2(9000, 0)
+script = ExtResource("1_hbvo3")
+radius = 220.0
+visual_radius = 220.0
+color = Color(0.85, 0.42, 0.2, 1)
+mass = 9.0
+body_name = "Emberrock"
+show_soi = true
+
+[node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
+position = Vector2(17500, 0)
+script = ExtResource("1_hbvo3")
+radius = 430.0
+visual_radius = 430.0
+color = Color(0.2, 0.8, 0.55, 1)
+mass = 50.0
+body_name = "Coralyss"
+show_soi = true
+
+[node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
+position = Vector2(32300, 0)
+script = ExtResource("1_hbvo3")
+radius = 300.0
+visual_radius = 300.0
+color = Color(0.6, 0.48, 0.8, 1)
+mass = 12.0
+body_name = "Duskveil"
+show_soi = true
+
+[node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
+position = Vector2(57800, 0)
+script = ExtResource("1_hbvo3")
+radius = 500.0
+visual_radius = 500.0
+color = Color(0.85, 0.36, 0.2, 1)
+mass = 25.0
+body_name = "Thornix"
+show_soi = true
+
+[node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
+position = Vector2(102300, 0)
+script = ExtResource("1_hbvo3")
+radius = 350.0
+visual_radius = 350.0
+color = Color(0.56, 0.84, 0.92, 1)
+mass = 14.0
+body_name = "Glacenna"
+show_soi = true
+
+[node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
+position = Vector2(163800, 0)
+script = ExtResource("1_hbvo3")
+radius = 260.0
+visual_radius = 260.0
+color = Color(0.55, 0.38, 0.3, 1)
+mass = 6.0
+body_name = "Marrow"
+show_soi = true
+
+[node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
+position = Vector2(295000, 0)
+script = ExtResource("1_hbvo3")
+radius = 700.0
+visual_radius = 700.0
+color = Color(0.88, 0.7, 0.3, 1)
+mass = 34.0
+body_name = "Vantauri"
+show_soi = true
+
+[node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
+position = Vector2(548500, 0)
+script = ExtResource("1_hbvo3")
+radius = 560.0
+visual_radius = 560.0
+color = Color(0.3, 0.48, 0.85, 1)
+mass = 18.0
+body_name = "Nyxholm"
+show_soi = true
+
+[node name="Ship" type="Node2D" parent="." unique_id=1594130779]
+position = Vector2(18500, 0)
+script = ExtResource("3_ship")
+
+[node name="RcsSound" type="AudioStreamPlayer" parent="Ship" unique_id=730025986]
+stream = ExtResource("10_rcs_sound")
+volume_db = -6.0
+
+[node name="ClickArea" type="Area2D" parent="Ship" unique_id=1384908549]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Ship/ClickArea" unique_id=68411742]
+shape = SubResource("CircleShape2D_ship")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=641785987]
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1393702548]
+
+[node name="PanelContainer" type="PanelContainer" parent="HUD" unique_id=2076821922]
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 278.0
+offset_bottom = 640.0
+theme = SubResource("Theme_hud")
+theme_override_styles/panel = SubResource("StyleBoxFlat_hud_panel")
+script = ExtResource("12_left_panel_bg")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="HUD/PanelContainer" unique_id=1433907446]
+layout_mode = 2
+theme_override_constants/separation = 3
+
+[node name="TitleLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803400]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.65, 0.72, 1)
+theme_override_font_sizes/font_size = 13
+text = "SOLAR SYSTEM 2"
+
+[node name="TitleSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803401]
+layout_mode = 2
+theme_override_styles/separator = SubResource("StyleBoxLine_hud_sep")
+
+[node name="ShipLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1288827776]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.85, 0.9, 1)
+theme_override_font_sizes/font_size = 16
+text = "SHIP"
+
+[node name="DistanceLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1961042275]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.78, 0.4, 1)
+text = "● Sun distance: 0"
+
+[node name="ThrustLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1500975629]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
+text = "● Thrust: OFF"
+
+[node name="NavSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=59962096]
+layout_mode = 2
+theme_override_styles/separator = SubResource("StyleBoxLine_hud_sep")
+
+[node name="NavHeader" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=222279227]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.85, 0.9, 1)
+theme_override_font_sizes/font_size = 16
+text = "NAVIGATION"
+
+[node name="OrbitLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=723224470]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
+text = "● Orbit: Coralyss"
+
+[node name="SOILabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1713580554]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
+text = "● SOI: Coralyss"
+
+[node name="TrajectoryLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=148423100]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.9, 1, 1)
+text = "● Trajectory: ORBIT"
+
+[node name="OrbitSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=1827497986]
+layout_mode = 2
+theme_override_styles/separator = SubResource("StyleBoxLine_hud_sep")
+
+[node name="OrbitHeader" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1978788597]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.85, 0.9, 1)
+theme_override_font_sizes/font_size = 16
+text = "ORBIT"
+
+[node name="PeriapsisLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=957304119]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
+text = "● PE altitude: --"
+
+[node name="ApoapsisLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=2068963463]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
+text = "● AP altitude: --"
+
+[node name="EccentricityLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1173231797]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
+text = "● Eccentricity: --"
+
+[node name="TimeSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=1327896132]
+layout_mode = 2
+theme_override_styles/separator = SubResource("StyleBoxLine_hud_sep")
+
+[node name="TimeLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1299181970]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
+text = "● Time: 1x"
+
+[node name="SpeedGauge" type="Control" parent="HUD" unique_id=314159265]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -90.0
+offset_top = -200.0
+offset_right = 90.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("4_speed_gauge")
+
+[node name="HudStatus" type="Control" parent="HUD" unique_id=271828182]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -155.0
+offset_top = -260.0
+offset_right = 155.0
+offset_bottom = -206.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("5_hud_status")
+
+[node name="PeGauge" type="Control" parent="HUD" unique_id=161803398]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -214.0
+offset_top = -120.0
+offset_right = -104.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("6_orbit_value")
+label_text = "PE"
+accent_color = Color(0.5, 0.85, 0.95, 1)
+warn_below_zero = true
+
+[node name="ApGauge" type="Control" parent="HUD" unique_id=141421356]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = 104.0
+offset_top = -120.0
+offset_right = 214.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("6_orbit_value")
+label_text = "AP"
+accent_color = Color(0.95, 0.75, 0.4, 1)
+
+[node name="AutopilotPanel" type="Control" parent="HUD" unique_id=299792458]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -312.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 318.0
+mouse_filter = 2
+script = ExtResource("7_autopilot_panel")
+
+[node name="MainThrusterToggle" type="CheckButton" parent="HUD/AutopilotPanel" unique_id=855681495]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 244.0
+offset_right = 288.0
+offset_bottom = 268.0
+theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 13
+button_pressed = true
+text = "Main thruster"
+
+[node name="MainThrusterCaption" type="Label" parent="HUD/AutopilotPanel" unique_id=855681496]
+layout_mode = 0
+offset_left = 34.0
+offset_top = 268.0
+offset_right = 300.0
+offset_bottom = 286.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.5, 0.55, 0.62, 0.7)
+theme_override_font_sizes/font_size = 10
+text = "Autopilot may use main engine"
+
+[node name="ShipBlueprintPanel" type="Control" parent="HUD" unique_id=577215664]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -218.0
+offset_top = -268.0
+offset_right = -28.0
+offset_bottom = -28.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 1
+script = ExtResource("8_ship_blueprint")
+
+[node name="TimeWarpPanel" type="Control" parent="HUD" unique_id=161803399]
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -76.0
+offset_right = 456.0
+offset_bottom = -16.0
+grow_horizontal = 1
+grow_vertical = 0
+mouse_filter = 1
+script = ExtResource("11_time_warp")
+
+[node name="VersionLabel" type="Label" parent="HUD" unique_id=161803402]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -160.0
+offset_top = -20.0
+offset_right = -8.0
+offset_bottom = -4.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.45, 0.48, 0.55, 0.6)
+theme_override_font_sizes/font_size = 10
+horizontal_alignment = 2
+text = "SOLAR SYSTEM 2  v0.1"
