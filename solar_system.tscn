@@ -158,6 +158,8 @@ mass = 9.0
 body_name = "Emberrock"
 atmosphere = "Trace CO2, volcanic ash"
 show_soi = true
+surface_seed = 1001
+surface_blob_count = 64
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
 position = Vector2(17500, 0)
@@ -169,6 +171,9 @@ mass = 50.0
 body_name = "Coralyss"
 atmosphere = "Oxygen-rich, humid"
 show_soi = true
+surface_seed = 1002
+surface_blob_count = 96
+surface_style = 2
 
 [node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
 position = Vector2(32300, 0)
@@ -180,6 +185,8 @@ mass = 12.0
 body_name = "Duskveil"
 atmosphere = "Dense violet haze"
 show_soi = true
+surface_seed = 1003
+surface_blob_count = 48
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(57800, 0)
@@ -191,6 +198,8 @@ mass = 25.0
 body_name = "Thornix"
 atmosphere = "Thin, dusty"
 show_soi = true
+surface_seed = 1004
+surface_blob_count = 80
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
 position = Vector2(102300, 0)
@@ -202,6 +211,8 @@ mass = 14.0
 body_name = "Glacenna"
 atmosphere = "Frozen nitrogen fog"
 show_soi = true
+surface_seed = 1005
+surface_blob_count = 56
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
 position = Vector2(163800, 0)
@@ -213,6 +224,9 @@ mass = 6.0
 body_name = "Marrow"
 atmosphere = "None (airless)"
 show_soi = true
+surface_seed = 1006
+surface_blob_count = 40
+surface_style = 1
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(295000, 0)
@@ -224,6 +238,9 @@ mass = 34.0
 body_name = "Vantauri"
 atmosphere = "Dense hydrogen/helium"
 show_soi = true
+surface_seed = 1007
+surface_blob_count = 110
+surface_style = 3
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
 position = Vector2(548500, 0)
@@ -235,6 +252,8 @@ mass = 18.0
 body_name = "Nyxholm"
 atmosphere = "Deep hydrogen, stormy"
 show_soi = true
+surface_seed = 1008
+surface_blob_count = 88
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
 position = Vector2(18500, 0)
