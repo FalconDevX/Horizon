@@ -175,6 +175,15 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   clump, cell areas vary wildly and the colour split drifts off target — measured worst
   case around 7 points of error versus under 3 for the spiral. Even spacing is what
   makes blob share equal area share.
+- **Textures are optional and purely visual.** `surface_textures` takes a
+  `Texture2DArray` — one layer per palette slot — and stays off (flat colours) while it
+  is null. A sphere has no sensible UVs, so the shader samples **triplanar**: three
+  reads blended by which way the surface faces, no seams and no pole pinching. It is an
+  array rather than separate samplers because GLSL cannot index a sampler array with a
+  value it cannot resolve at compile time. Layers are read at `(color_index +
+  texture_offset) % layers`, the offset rolled per seed. Textures multiply the generated
+  palette colour (`surface_texture_tint`), so the 60/30/10 hue work still shows through.
+  `blob_at()` is untouched — texturing changes no gameplay answer.
 - **Edges.** Two separate mechanisms, both tunable per body: `surface_warp_*` bends the
   lookup direction before the nearest-blob test so straight Voronoi edges come out
   ragged, and `surface_edge_softness` blends the nearest against the second-nearest so

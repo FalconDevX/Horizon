@@ -31,9 +31,58 @@ uniform float edge_softness : hint_range(0.0, 0.2) = 0.02;
 // Purely geometric shading so the disc reads as a ball. Set to 0.0 for flat.
 uniform float limb_darkening : hint_range(0.0, 1.0) = 0.45;
 
+// One texture per palette slot, as array layers rather than separate samplers:
+// GLSL will not let you index an array of samplers with a value it cannot work
+// out at compile time, and the layer here is exactly that kind of value.
+// Nothing happens until use_textures is set, so an unset array cannot break
+// the flat look.
+uniform sampler2DArray surface_textures : source_color, filter_linear_mipmap, repeat_enable;
+uniform bool use_textures = false;
+uniform int texture_layers = 1;
+
+// Shifts which layer each palette slot reads, so two planets that both rolled
+// three colours do not wear the same three materials.
+uniform int texture_offset = 0;
+
+// How many times a texture repeats across the planet.
+uniform float texture_scale : hint_range(0.5, 32.0) = 4.0;
+
+// 1.0 multiplies the texture by the planet's generated colour, 0.0 leaves the
+// texture's own colours alone.
+uniform float texture_tint : hint_range(0.0, 1.0) = 1.0;
+
 vec3 quat_rotate(vec4 q, vec3 v) {
 	vec3 t = 2.0 * cross(q.xyz, v);
 	return v + q.w * t + cross(q.xyz, t);
+}
+
+// Triplanar sampling: read the texture down each of the three axes and blend
+// by how much the surface faces that way. A sphere has no sensible UVs - wrap
+// a flat image round one and it pinches at the poles and seams at the join -
+// and this sidesteps the problem by never needing them.
+vec3 triplanar(vec3 dir, int layer) {
+	vec3 blend = abs(dir);
+	blend /= max(blend.x + blend.y + blend.z, 1e-5);
+	float slice = float(layer);
+
+	vec3 down_x = texture(surface_textures, vec3(dir.yz * texture_scale, slice)).rgb;
+	vec3 down_y = texture(surface_textures, vec3(dir.zx * texture_scale, slice)).rgb;
+	vec3 down_z = texture(surface_textures, vec3(dir.xy * texture_scale, slice)).rgb;
+
+	return down_x * blend.x + down_y * blend.y + down_z * blend.z;
+}
+
+// What a palette slot actually looks like: its generated colour, optionally
+// carrying a texture.
+vec3 material(int color_index, vec3 dir) {
+	vec3 tint = palette[color_index].rgb;
+
+	if (!use_textures) {
+		return tint;
+	}
+
+	int layer = (color_index + texture_offset) % max(texture_layers, 1);
+	return triplanar(dir, layer) * mix(vec3(1.0), tint, texture_tint);
 }
 
 // Smooth, well-conditioned displacement field. Deliberately built from sines
@@ -78,6 +127,11 @@ void fragment() {
 	vec4 inverse_rotation = vec4(-planet_rotation.xyz, planet_rotation.w);
 	vec3 planet_dir = quat_rotate(inverse_rotation, view_dir);
 
+	// Textures sample the unwarped direction. Warping it too would make the
+	// material swim about as the warp wobbles, rather than sitting on the
+	// surface; only the region boundaries should be ragged.
+	vec3 surface_dir = planet_dir;
+
 	if (warp_strength > 0.0) {
 		planet_dir = normalize(
 			planet_dir + surface_warp(planet_dir, warp_frequency) * warp_strength
@@ -104,8 +158,15 @@ void fragment() {
 		}
 	}
 
-	vec3 near_color = palette[int(blobs[best].w)].rgb;
-	vec3 far_color = palette[int(blobs[second].w)].rgb;
+	int near_index = int(blobs[best].w);
+	int far_index = int(blobs[second].w);
+	vec3 near_color = material(near_index, surface_dir);
+
+	// Neighbours sharing a colour are the common case - that is what merges
+	// cells into continents - so reuse the result instead of sampling twice.
+	vec3 far_color = near_index == far_index
+		? near_color
+		: material(far_index, surface_dir);
 
 	// At a boundary the two distances are equal, so mix 50/50 and ramp to the
 	// winner as we move inland. Neighbours sharing a colour blend invisibly,

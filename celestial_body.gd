@@ -79,6 +79,27 @@ var surface_style: int = 0
 		surface_edge_softness = value
 		push_surface_parameter("edge_softness", value)
 
+## One texture per palette slot, as layers of a Texture2DArray. Leave empty for
+## flat colours. Which layer a slot reads is offset per planet, so bodies that
+## rolled the same colour count still differ.
+@export var surface_textures: Texture2DArray = null:
+	set(value):
+		surface_textures = value
+		push_surface_textures()
+
+## How many times a texture repeats across the planet.
+@export_range(0.5, 32.0, 0.1) var surface_texture_scale: float = 4.0:
+	set(value):
+		surface_texture_scale = value
+		push_surface_parameter("texture_scale", value)
+
+## 1.0 multiplies textures by the planet's generated colour, 0.0 leaves the
+## texture's own colours alone.
+@export_range(0.0, 1.0, 0.01) var surface_texture_tint: float = 1.0:
+	set(value):
+		surface_texture_tint = value
+		push_surface_parameter("texture_tint", value)
+
 var velocity: Vector2 = Vector2.ZERO
 
 ## Orientation of the surface, mapping planet space into view space. This is
@@ -144,6 +165,9 @@ func build_surface() -> void:
 	surface_material.set_shader_parameter("warp_strength", surface_warp_strength)
 	surface_material.set_shader_parameter("warp_frequency", surface_warp_frequency)
 	surface_material.set_shader_parameter("edge_softness", surface_edge_softness)
+	surface_material.set_shader_parameter("texture_scale", surface_texture_scale)
+	surface_material.set_shader_parameter("texture_tint", surface_texture_tint)
+	push_surface_textures()
 
 	# The sprite only needs to supply a quad and its UVs - the shader writes
 	# COLOR outright and never samples TEXTURE, so which texture this is does
@@ -164,6 +188,22 @@ func palette_to_vectors(palette: PackedColorArray) -> PackedVector4Array:
 		vectors.append(Vector4(entry.r, entry.g, entry.b, entry.a))
 
 	return vectors
+
+
+func push_surface_textures() -> void:
+	if surface_material == null:
+		return
+
+	var layers: int = 0
+	if surface_textures != null:
+		layers = surface_textures.get_layers()
+
+	surface_material.set_shader_parameter("surface_textures", surface_textures)
+	surface_material.set_shader_parameter("use_textures", layers > 0)
+	surface_material.set_shader_parameter("texture_layers", maxi(layers, 1))
+	surface_material.set_shader_parameter(
+		"texture_offset", PlanetSurface.roll_texture_offset(surface_seed, layers)
+	)
 
 
 func push_surface_parameter(parameter: String, value: Variant) -> void:

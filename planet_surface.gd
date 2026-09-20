@@ -75,6 +75,7 @@ const COLOR_COUNT_ODDS: Array[float] = [0.54, 0.26, 0.12, 0.05, 0.02, 0.01]
 ## Separate RNG streams, so changing the palette does not reshuffle the points.
 const PALETTE_SALT := 0x9E3779B9
 const COUNT_SALT := 0x85EBCA6B
+const TEXTURE_SALT := 0x27D4EB2F
 
 # The 60/30/10 split. Every colour past the third takes another ACCENT_SHARE,
 # drawn from the dominant and secondary in a 2:1 ratio.
@@ -95,6 +96,18 @@ static func roll_style(surface_seed: int) -> Style:
 			return (Style.SCATTERED + i) as Style
 
 	return Style.CONTINENTS
+
+
+## Which texture layer this planet's first palette slot reads. Purely cosmetic,
+## so it gets its own stream and changing it disturbs nothing else.
+static func roll_texture_offset(surface_seed: int, layers: int) -> int:
+	if layers <= 0:
+		return 0
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = surface_seed ^ TEXTURE_SALT
+
+	return rng.randi() % layers
 
 
 static func roll_color_count(surface_seed: int) -> int:
