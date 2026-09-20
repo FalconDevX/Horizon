@@ -47,11 +47,12 @@ enum AutopilotPhase {
 @onready var ap_gauge: Control = $HUD/ApGauge
 @onready var distance_label: Label = $HUD/PanelContainer/VBoxContainer/DistanceLabel
 @onready var thrust_label: Label = $HUD/PanelContainer/VBoxContainer/ThrustLabel
-@onready var orbit_label: Label = $HUD/PanelContainer/VBoxContainer/OrbitLabel
+@onready var orbit_label: Label = $HUD/PanelContainer/VBoxContainer/OrbitRow/OrbitLabel
+@onready var orbit_info_button: Button = $HUD/PanelContainer/VBoxContainer/OrbitRow/OrbitInfoButton
+@onready var planet_info_panel: Control = $HUD/PlanetInfoPanel
 @onready var soi_label: Label = $HUD/PanelContainer/VBoxContainer/SOILabel
 @onready var trajectory_label: Label = $HUD/PanelContainer/VBoxContainer/TrajectoryLabel
 @onready var eccentricity_label: Label = $HUD/PanelContainer/VBoxContainer/EccentricityLabel
-@onready var time_label: Label = $HUD/PanelContainer/VBoxContainer/TimeLabel
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -78,11 +79,14 @@ var current_periapsis_altitude := 0.0
 var current_apoapsis_altitude := 0.0
 var has_bound_orbit := false
 var osculating_periapsis_direction := Vector2.RIGHT
+var target_orbit_flash := 0.0
 var autopilot_selecting := false
 var autopilot_active := false
 var autopilot_main_thruster_allowed := true
 var autopilot_body: Node2D = null
 var autopilot_target_altitude := 500.0
+var autopilot_target_pe_altitude := 500.0
+var autopilot_target_ap_altitude := 500.0
 var autopilot_phase: AutopilotPhase = AutopilotPhase.OFF
 var autopilot_raising := true
 var autopilot_planned_delta_v1 := 0.0
@@ -110,13 +114,16 @@ var soi_radii_cache: PackedFloat64Array = []
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
 
+const TARGET_ORBIT_COLOR := Color(0.55, 1.0, 0.62, 0.8)
+const TARGET_ORBIT_FLASH_COLOR := Color(0.8, 1.0, 0.85, 1.0)
+const TARGET_ORBIT_FLASH_FADE := 4.0
 const ZOOM_MIN := 0.001
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
 const ZOOM_STEP := 1.2
-const PREDICTION_STEPS := 4000
+const PREDICTION_STEPS := 6000
 const PREDICTION_DT := 0.8
-const PREDICTION_DRAW_INTERVAL := 15
+const PREDICTION_DRAW_INTERVAL := 20
 const SIM_DT := 1.0 / 120.0
 const MAX_SIM_STEPS_PER_FRAME := 6000
 const TRAJECTORY_CONFIRM_FRAMES := 10
@@ -129,6 +136,7 @@ const STATION_KEEPING_TRIGGER := 150.0
 const STATION_KEEPING_EMERGENCY_FACTOR := 2.5
 const STATION_KEEPING_MAX_WAIT_FRACTION := 0.55
 const AUTOPILOT_SCROLL_STEP := 250.0
+const AUTOPILOT_SCROLL_STEP_FRACTION := 0.02
 const AUTOPILOT_MIN_ALTITUDE := 100.0
 const AUTOPILOT_MAX_SOI_FACTOR := 0.8
 const APSIS_BURN_WINDOW := 15.0
@@ -217,6 +225,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			time_scale = 100.0
 		elif event.keycode == KEY_7:
 			time_scale = 200.0
+		elif event.keycode == KEY_PERIOD:
+			camera_follow_ship = not camera_follow_ship
 
 	if (
 		event is InputEventMouseButton
@@ -224,10 +234,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		and autopilot_selecting
 	):
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			change_autopilot_altitude(AUTOPILOT_SCROLL_STEP)
+			change_autopilot_altitude(1.0)
 			return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			change_autopilot_altitude(-AUTOPILOT_SCROLL_STEP)
+			change_autopilot_altitude(-1.0)
 			return
 
 	if event is InputEventMouseButton:
@@ -294,13 +304,17 @@ func _ready() -> void:
 		home_mass
 	)
 	ship.velocity = home.velocity + local_ship_velocity
+	ship.reset_physics_interpolation()
 	physics_ship = PhysicsBody.new(ship)
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
 	main_thruster_toggle.toggled.connect(_on_main_thruster_toggled)
 	time_warp_panel.time_scale_selected.connect(_on_time_scale_selected)
+	pe_gauge.scrolled.connect(change_autopilot_target_pe)
+	ap_gauge.scrolled.connect(change_autopilot_target_ap)
+	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	target_orbit.visible = false
-	target_orbit.default_color = Color.GREEN
+	target_orbit.default_color = TARGET_ORBIT_COLOR
 
 
 func _process(delta: float) -> void:
@@ -317,10 +331,8 @@ func _process(delta: float) -> void:
 	update_hud()
 
 	if camera_follow_ship:
-		camera.position = camera.position.lerp(
-			ship.position,
-			5.0 * delta
-		)
+		var catch_up: float = clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
+		camera.position = camera.position.lerp(ship.position, catch_up)
 
 
 func update_screen_space_visuals() -> void:
@@ -383,18 +395,15 @@ func start_autopilot_selection() -> void:
 	)
 
 
-func change_autopilot_altitude(amount: float) -> void:
-	if autopilot_body == null:
-		return
-
-	var body_radius: float = autopilot_body.get("radius")
+func get_autopilot_altitude_range(body: Node2D) -> Dictionary:
+	var body_radius: float = body.get("radius")
 	var max_radius: float
 
-	if autopilot_body == sun:
+	if body == sun:
 		max_radius = planets[-1].position.distance_to(sun.position) * 1.5
 	else:
 		max_radius = (
-			get_soi_radius(autopilot_body)
+			get_soi_radius(body)
 			* AUTOPILOT_MAX_SOI_FACTOR
 		)
 
@@ -403,11 +412,62 @@ func change_autopilot_altitude(amount: float) -> void:
 		AUTOPILOT_MIN_ALTITUDE
 	)
 
-	autopilot_target_altitude = clampf(
-		autopilot_target_altitude + amount,
-		AUTOPILOT_MIN_ALTITUDE,
-		max_altitude
+	var step: float = clampf(
+		max_altitude * AUTOPILOT_SCROLL_STEP_FRACTION,
+		AUTOPILOT_SCROLL_STEP,
+		max_altitude * 0.25
 	)
+
+	return {"max_altitude": max_altitude, "step": step}
+
+
+func change_autopilot_altitude(direction: float) -> void:
+	if autopilot_body == null:
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+
+	autopilot_target_altitude = clampf(
+		autopilot_target_altitude + direction * altitude_range.step,
+		AUTOPILOT_MIN_ALTITUDE,
+		altitude_range.max_altitude
+	)
+	flash_target_orbit()
+
+
+func can_edit_autopilot_apsis_targets() -> bool:
+	return (
+		autopilot_active
+		and not autopilot_selecting
+		and autopilot_body != null
+		and autopilot_body == get_current_orbit_body()
+	)
+
+
+func change_autopilot_target_pe(direction: float) -> void:
+	if not can_edit_autopilot_apsis_targets():
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_pe_altitude = clampf(
+		autopilot_target_pe_altitude + direction * altitude_range.step,
+		AUTOPILOT_MIN_ALTITUDE,
+		minf(altitude_range.max_altitude, autopilot_target_ap_altitude)
+	)
+	flash_target_orbit()
+
+
+func change_autopilot_target_ap(direction: float) -> void:
+	if not can_edit_autopilot_apsis_targets():
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_ap_altitude = clampf(
+		autopilot_target_ap_altitude + direction * altitude_range.step,
+		maxf(AUTOPILOT_MIN_ALTITUDE, autopilot_target_pe_altitude),
+		altitude_range.max_altitude
+	)
+	flash_target_orbit()
 
 
 func disengage_autopilot() -> void:
@@ -547,6 +607,19 @@ func engage_local_autopilot() -> void:
 	if initial_radius <= 0.0 or target_radius <= 0.0:
 		return
 
+	var current_pe_radius: float = body_radius + elements.pe_alt
+	var current_ap_radius: float = body_radius + elements.ap_alt
+
+	if target_radius >= current_ap_radius:
+		autopilot_raising = true
+	elif target_radius <= current_pe_radius:
+		autopilot_raising = false
+	else:
+		autopilot_raising = (
+			absf(current_ap_radius - target_radius)
+			>= absf(target_radius - current_pe_radius)
+		)
+
 	var transfer_semi_major_axis: float = 0.5 * (
 		initial_radius + target_radius
 	)
@@ -572,7 +645,8 @@ func engage_local_autopilot() -> void:
 		circular_velocity_2 - transfer_velocity_2
 	)
 	autopilot_remaining_delta_v = absf(autopilot_planned_delta_v1)
-	autopilot_raising = target_radius > initial_radius
+	autopilot_target_pe_altitude = autopilot_target_altitude
+	autopilot_target_ap_altitude = autopilot_target_altitude
 	autopilot_active = true
 	autopilot_phase = AutopilotPhase.WAIT_FIRST_BURN
 
@@ -652,28 +726,39 @@ func update_local_orbit_autopilot(dt: float) -> void:
 		return
 
 	var body_radius: float = autopilot_body.get("radius")
-	var target_radius: float = body_radius + autopilot_target_altitude
+	var target_pe_radius: float = body_radius + autopilot_target_pe_altitude
+	var target_ap_radius: float = body_radius + autopilot_target_ap_altitude
 
 	match autopilot_phase:
 		AutopilotPhase.WAIT_FIRST_BURN:
 			ship.clear_autopilot_thrust()
-			if is_apsis_burn_window(orbit, mu, autopilot_raising, target_radius):
+			var first_target: float = target_ap_radius if autopilot_raising else target_pe_radius
+			var first_current: float = orbit.ra if autopilot_raising else orbit.rp
+			if absf(first_current - first_target) <= AUTOPILOT_TOLERANCE:
+				autopilot_phase = AutopilotPhase.COAST
+			elif is_apsis_burn_window(orbit, mu, autopilot_raising, first_target):
 				autopilot_phase = AutopilotPhase.FIRST_BURN
 
 		AutopilotPhase.FIRST_BURN:
+			var first_target_burn: float = target_ap_radius if autopilot_raising else target_pe_radius
 			if execute_apsis_change_burn(
-				autopilot_raising, target_radius, relative_position, relative_velocity, mu, dt
+				autopilot_raising, first_target_burn, relative_position, relative_velocity, mu, dt
 			):
 				autopilot_phase = AutopilotPhase.COAST
 
 		AutopilotPhase.COAST:
 			ship.clear_autopilot_thrust()
-			if is_apsis_burn_window(orbit, mu, not autopilot_raising, target_radius):
+			var second_target: float = target_pe_radius if autopilot_raising else target_ap_radius
+			var second_current: float = orbit.rp if autopilot_raising else orbit.ra
+			if absf(second_current - second_target) <= AUTOPILOT_TOLERANCE:
+				finish_autopilot_maneuver()
+			elif is_apsis_burn_window(orbit, mu, not autopilot_raising, second_target):
 				autopilot_phase = AutopilotPhase.SECOND_BURN
 
 		AutopilotPhase.SECOND_BURN:
+			var second_target_burn: float = target_pe_radius if autopilot_raising else target_ap_radius
 			if execute_apsis_change_burn(
-				not autopilot_raising, target_radius, relative_position, relative_velocity, mu, dt
+				not autopilot_raising, second_target_burn, relative_position, relative_velocity, mu, dt
 			):
 				finish_autopilot_maneuver()
 
@@ -681,8 +766,8 @@ func update_local_orbit_autopilot(dt: float) -> void:
 			ship.clear_autopilot_thrust()
 			autopilot_remaining_delta_v = 0.0
 
-			var pe_error: float = orbit.rp - target_radius
-			var ap_error: float = orbit.ra - target_radius
+			var pe_error: float = orbit.rp - target_pe_radius
+			var ap_error: float = orbit.ra - target_ap_radius
 
 			if absf(pe_error) > STATION_KEEPING_TRIGGER or absf(ap_error) > STATION_KEEPING_TRIGGER:
 				station_keeping_correcting_apoapsis = absf(ap_error) >= absf(pe_error)
@@ -693,13 +778,16 @@ func update_local_orbit_autopilot(dt: float) -> void:
 			ship.clear_autopilot_thrust()
 			station_keeping_wait_time += dt
 
+			var station_target: float = (
+				target_ap_radius if station_keeping_correcting_apoapsis else target_pe_radius
+			)
 			var ready: bool = is_apsis_burn_window(
-				orbit, mu, station_keeping_correcting_apoapsis, target_radius
+				orbit, mu, station_keeping_correcting_apoapsis, station_target
 			)
 
 			var worst_error: float = maxf(
-				absf(orbit.rp - target_radius),
-				absf(orbit.ra - target_radius)
+				absf(orbit.rp - target_pe_radius),
+				absf(orbit.ra - target_ap_radius)
 			)
 			var drift_critical: bool = (
 				worst_error > STATION_KEEPING_TRIGGER * STATION_KEEPING_EMERGENCY_FACTOR
@@ -710,7 +798,8 @@ func update_local_orbit_autopilot(dt: float) -> void:
 			)
 			var correctable_is_apoapsis: bool = cos(orbit.nu) >= 0.0
 			var correctable_error: float = absf(
-				(orbit.ra if correctable_is_apoapsis else orbit.rp) - target_radius
+				(orbit.ra - target_ap_radius) if correctable_is_apoapsis
+				else (orbit.rp - target_pe_radius)
 			)
 			var in_burn_arc: bool = absf(
 				wrapf(orbit.nu - (0.0 if correctable_is_apoapsis else PI), -PI, PI)
@@ -729,9 +818,12 @@ func update_local_orbit_autopilot(dt: float) -> void:
 				autopilot_phase = AutopilotPhase.STATION_KEEPING_BURN
 
 		AutopilotPhase.STATION_KEEPING_BURN:
+			var station_target_burn: float = (
+				target_ap_radius if station_keeping_correcting_apoapsis else target_pe_radius
+			)
 			if execute_apsis_change_burn(
 				station_keeping_correcting_apoapsis,
-				target_radius,
+				station_target_burn,
 				relative_position,
 				relative_velocity,
 				mu,
@@ -1278,6 +1370,8 @@ func begin_local_capture() -> void:
 	else:
 		autopilot_raising = true
 
+	autopilot_target_pe_altitude = autopilot_target_altitude
+	autopilot_target_ap_altitude = autopilot_target_altitude
 	autopilot_phase = AutopilotPhase.WAIT_FIRST_BURN
 
 
@@ -1428,30 +1522,91 @@ func refresh_orbit_parameters_for_body(body: Node2D) -> void:
 	has_bound_orbit = true
 
 
+func flash_target_orbit() -> void:
+	target_orbit_flash = 1.0
+
+
 func update_target_orbit_visual() -> void:
 	target_orbit.clear_points()
 
 	if not autopilot_selecting and not autopilot_active:
 		target_orbit.visible = false
+		target_orbit_flash = 0.0
 		return
 
 	if autopilot_body == null:
 		target_orbit.visible = false
+		target_orbit_flash = 0.0
 		return
 
 	target_orbit.visible = true
 
+	target_orbit_flash = maxf(
+		target_orbit_flash - get_process_delta_time() * TARGET_ORBIT_FLASH_FADE,
+		0.0
+	)
+	target_orbit.default_color = TARGET_ORBIT_COLOR.lerp(
+		TARGET_ORBIT_FLASH_COLOR,
+		target_orbit_flash
+	)
+
 	var body_radius: float = autopilot_body.get("radius")
-	var target_radius: float = body_radius + autopilot_target_altitude
+	var periapsis_radius: float
+	var apoapsis_radius: float
+
+	if autopilot_active and autopilot_body == get_current_orbit_body():
+		periapsis_radius = body_radius + autopilot_target_pe_altitude
+		apoapsis_radius = body_radius + autopilot_target_ap_altitude
+	else:
+		periapsis_radius = body_radius + autopilot_target_altitude
+		apoapsis_radius = periapsis_radius
+
+	if apoapsis_radius < periapsis_radius:
+		var swapped: float = periapsis_radius
+		periapsis_radius = apoapsis_radius
+		apoapsis_radius = swapped
+
+	var semi_major_axis: float = (periapsis_radius + apoapsis_radius) * 0.5
+
+	if semi_major_axis <= 0.0:
+		target_orbit.visible = false
+		return
+
+	var eccentricity: float = clampf(
+		(apoapsis_radius - periapsis_radius)
+		/ (apoapsis_radius + periapsis_radius),
+		0.0,
+		0.95
+	)
+	var semi_latus_rectum: float = (
+		semi_major_axis
+		* (1.0 - eccentricity * eccentricity)
+	)
+
+	var periapsis_direction: Vector2 = osculating_periapsis_direction
+
+	if periapsis_direction.length_squared() < 0.5:
+		periapsis_direction = Vector2.RIGHT
+
+	var perpendicular := Vector2(
+		-periapsis_direction.y,
+		periapsis_direction.x
+	)
+
 	const TARGET_ORBIT_POINTS := 180
 
 	for point_index in range(TARGET_ORBIT_POINTS + 1):
-		var angle: float = (
+		var theta: float = (
 			TAU * float(point_index) / float(TARGET_ORBIT_POINTS)
+		)
+		var orbit_radius: float = (
+			semi_latus_rectum
+			/ (1.0 + eccentricity * cos(theta))
 		)
 		target_orbit.add_point(
 			autopilot_body.position
-			+ Vector2(cos(angle), sin(angle)) * target_radius
+			+ periapsis_direction * cos(theta) * orbit_radius
+			+ perpendicular * sin(theta) * orbit_radius
 		)
 
 
@@ -1534,6 +1689,7 @@ const COLOR_GOOD := Color(0.4, 0.9, 0.5)
 const COLOR_WARN := Color(0.92, 0.85, 0.35)
 const COLOR_BAD := Color(0.95, 0.45, 0.3)
 const COLOR_ORBIT_INFO := Color(0.4, 0.9, 1)
+const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
 
 
 func update_hud() -> void:
@@ -1557,7 +1713,9 @@ func update_hud() -> void:
 		thrust_label.text = hud_row("Thrust", "OFF (time warp)" + lock_suffix)
 		thrust_label.add_theme_color_override("font_color", COLOR_DIM)
 	elif ship.throttle > 0.0:
-		thrust_label.text = hud_row("Thrust", "%d%%%s" % [roundi(ship.throttle * 100.0), lock_suffix])
+		thrust_label.text = hud_row(
+			"Thrust", "%.1f/%.1f%s" % [ship.thrust_force * ship.throttle, ship.thrust_force, lock_suffix]
+		)
 		thrust_label.add_theme_color_override("font_color", COLOR_MONO)
 	else:
 		thrust_label.text = hud_row("Thrust", "OFF" + lock_suffix)
@@ -1583,19 +1741,23 @@ func update_hud() -> void:
 		trajectory_label.text = hud_row("Trajectory", trajectory_status)
 		trajectory_label.add_theme_color_override("font_color", COLOR_MONO)
 
+	var show_apsis_targets: bool = can_edit_autopilot_apsis_targets()
+
 	if has_bound_orbit:
 		eccentricity_label.text = hud_row("Eccentricity", "%.3f" % current_eccentricity)
 		eccentricity_label.add_theme_color_override("font_color", COLOR_MONO)
-		pe_gauge.set_value(current_periapsis_altitude, true)
-		ap_gauge.set_value(current_apoapsis_altitude, true)
+		pe_gauge.set_value(
+			current_periapsis_altitude, true, autopilot_target_pe_altitude, show_apsis_targets
+		)
+		ap_gauge.set_value(
+			current_apoapsis_altitude, true, autopilot_target_ap_altitude, show_apsis_targets
+		)
 	else:
 		eccentricity_label.text = hud_row("Eccentricity", "--")
 		eccentricity_label.add_theme_color_override("font_color", COLOR_DIM)
 		pe_gauge.set_value(0.0, false)
 		ap_gauge.set_value(0.0, false)
 
-	time_label.text = hud_row("Time", "%dx" % int(time_scale))
-	time_label.add_theme_color_override("font_color", COLOR_MONO)
 	update_autopilot_hud()
 
 
@@ -1667,23 +1829,98 @@ func update_autopilot_hud() -> void:
 		burn_mode_text = "COASTING"
 		burn_mode_color = Color(0.55, 0.6, 0.68)
 
+	var eta: Dictionary = get_autopilot_eta()
+	var eta_text: String = ""
+	var eta_color: Color = Color.WHITE
+	if eta.get("valid", false):
+		var eta_is_orbit: bool = eta.get("is_orbit", true)
+		eta_text = (
+			("ORBIT IN: " if eta_is_orbit else "ARRIVAL IN: ")
+			+ format_duration(eta.get("time", 0.0))
+		)
+		eta_color = COLOR_GOOD if eta_is_orbit else COLOR_ETA_TRANSFER
+
 	autopilot_panel.set_state({
 		"active": true,
 		"selecting": false,
 		"body_name": get_body_name(autopilot_body),
 		"body_color": get_body_display_color(autopilot_body),
 		"target_altitude": autopilot_target_altitude,
+		"target_pe_altitude": autopilot_target_pe_altitude,
+		"target_ap_altitude": autopilot_target_ap_altitude,
+		"show_apsis_targets": not is_interplanetary_autopilot_phase(autopilot_phase),
 		"tolerance": AUTOPILOT_TOLERANCE,
 		"burn1": autopilot_planned_delta_v1,
 		"burn2": autopilot_planned_delta_v2,
 		"remaining_delta_v": autopilot_remaining_delta_v,
 		"remaining_color": get_delta_v_color(autopilot_remaining_delta_v),
+		"eta_text": eta_text,
+		"eta_color": eta_color,
 		"rcs_lines": get_rcs_status(),
 		"status_lines": get_autopilot_status().split("\n"),
 		"status_color": get_phase_color(autopilot_phase),
 		"burn_mode_text": burn_mode_text,
 		"burn_mode_color": burn_mode_color,
 	})
+
+
+func get_autopilot_eta() -> Dictionary:
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT, AutopilotPhase.DEPARTURE_BURN, AutopilotPhase.DEPARTURE_COAST, \
+		AutopilotPhase.TRANSFER_BURN, AutopilotPhase.TRANSFER_COAST, AutopilotPhase.ESCAPE_BURN, \
+		AutopilotPhase.INTERPLANETARY_CRUISE, AutopilotPhase.ARRIVAL_COAST:
+			var arrival_time: float = route_plan.get("closest_t", -1.0)
+			if arrival_time < 0.0:
+				return {"valid": false}
+			return {"valid": true, "is_orbit": false, "time": maxf(arrival_time - total_sim_time, 0.0)}
+
+		AutopilotPhase.ARRIVAL_BURN, AutopilotPhase.CAPTURE_BURN, AutopilotPhase.SECOND_BURN, \
+		AutopilotPhase.STATION_KEEPING_BURN:
+			return {"valid": true, "is_orbit": true, "time": 0.0}
+
+		AutopilotPhase.WAIT_FIRST_BURN, AutopilotPhase.FIRST_BURN, AutopilotPhase.COAST, \
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			var eta: float = get_local_orbit_eta()
+			if eta < 0.0:
+				return {"valid": false}
+			return {"valid": true, "is_orbit": true, "time": eta}
+
+		_:
+			return {"valid": false}
+
+
+func get_local_orbit_eta() -> float:
+	if autopilot_body == null or not is_inside_soi(ship.position, autopilot_body):
+		return -1.0
+
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		body_velocity = autopilot_body.get("velocity")
+
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var relative_position: Vector2 = get_relative_position_precise(ship, autopilot_body)
+	var mu: float = G * autopilot_body.get("mass")
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+	if orbit.e >= 1.0:
+		return -1.0
+
+	var period: float = OrbitMath.orbital_period(orbit.a, mu)
+
+	match autopilot_phase:
+		AutopilotPhase.WAIT_FIRST_BURN:
+			return time_to_apsis(orbit, mu, autopilot_raising)
+		AutopilotPhase.FIRST_BURN:
+			return period * 0.5
+		AutopilotPhase.COAST:
+			return time_to_apsis(orbit, mu, not autopilot_raising)
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			return time_to_apsis(orbit, mu, station_keeping_correcting_apoapsis)
+		_:
+			return -1.0
+
+
+func time_to_apsis(orbit: Dictionary, mu: float, at_periapsis: bool) -> float:
+	return OrbitMath.time_to_periapsis(orbit, mu) if at_periapsis else OrbitMath.time_to_apoapsis(orbit, mu)
 
 
 func get_body_name(body: Node2D) -> String:
@@ -2120,6 +2357,26 @@ func update_trajectory_status(
 
 func _on_ship_clicked() -> void:
 	camera_follow_ship = true
+
+
+func _on_orbit_info_pressed() -> void:
+	if planet_info_panel.visible:
+		planet_info_panel.hide_panel()
+		return
+
+	var body: Node2D = get_current_orbit_body()
+	var is_sun: bool = body == sun
+	var body_radius: float = body.get("radius")
+
+	planet_info_panel.show_body(
+		get_body_name(body),
+		body.get("color"),
+		body_radius,
+		body.get("mass"),
+		0.0 if is_sun else get_soi_radius(body),
+		body.get("atmosphere"),
+		is_sun
+	)
 
 
 func _on_main_thruster_toggled(pressed: bool) -> void:

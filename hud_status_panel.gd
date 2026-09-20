@@ -14,6 +14,8 @@ const BAR_HEIGHT := 10.0
 const BAR_SEGMENTS := 18
 const BAR_SEGMENT_GAP := 2.0
 const BAR_LABEL_GAP := 4.0
+const PAD_LEFT := 22.0
+const PAD_TOP := 10.0
 
 const COLOR_ON := Color(0.35, 0.85, 1.0)
 const COLOR_OFF := Color(0.4, 0.45, 0.52, 0.5)
@@ -47,15 +49,15 @@ func _draw() -> void:
 	]
 
 	var total_width: float = CHIP_WIDTH * chips.size() + CHIP_GAP * (chips.size() - 1)
-	var start_x: float = (size.x - total_width) * 0.5
+	var start_x: float = maxf((size.x - total_width) * 0.5, PAD_LEFT)
 
 	for i in range(chips.size()):
 		var chip: Dictionary = chips[i]
-		var rect := Rect2(start_x + float(i) * (CHIP_WIDTH + CHIP_GAP), 0.0, CHIP_WIDTH, CHIP_HEIGHT)
+		var rect := Rect2(start_x + float(i) * (CHIP_WIDTH + CHIP_GAP), PAD_TOP, CHIP_WIDTH, CHIP_HEIGHT)
 		_draw_chip(rect, chip.label, chip.on, chip.warn, chip.color)
 
 	var font: Font = HudPanelStyle.get_font()
-	var bar_y: float = CHIP_HEIGHT + BAR_GAP_ABOVE
+	var bar_y: float = PAD_TOP + CHIP_HEIGHT + BAR_GAP_ABOVE
 	draw_string(
 		font, Vector2(start_x, bar_y - BAR_LABEL_GAP), "THRUST",
 		HORIZONTAL_ALIGNMENT_LEFT, total_width, 9, Color(0.55, 0.6, 0.68, 0.7)

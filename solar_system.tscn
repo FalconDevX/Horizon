@@ -12,6 +12,7 @@
 [ext_resource type="AudioStream" path="res://sounds/rcs.mp3" id="10_rcs_sound"]
 [ext_resource type="Script" path="res://time_warp_panel.gd" id="11_time_warp"]
 [ext_resource type="Script" path="res://left_panel_bg.gd" id="12_left_panel_bg"]
+[ext_resource type="Script" path="res://planet_info_panel.gd" id="13_planet_info"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
 radius = 20.0
@@ -74,7 +75,7 @@ antialiased = true
 [node name="TargetOrbit" type="Line2D" parent="." unique_id=722839800]
 visible = false
 width = 2.0
-default_color = Color(0, 1, 0, 1)
+default_color = Color(0.55, 1, 0.62, 0.8)
 antialiased = true
 
 [node name="InterplanetaryRoute" type="Line2D" parent="." unique_id=616883616]
@@ -143,6 +144,7 @@ visual_radius = 800.0
 color = Color(1, 0.85, 0.3, 1)
 mass = 1000.0
 body_name = "Virelia"
+atmosphere = "Plasma (stellar)"
 
 [node name="Planets" type="Node2D" parent="." unique_id=1016710538]
 
@@ -154,6 +156,7 @@ visual_radius = 220.0
 color = Color(0.85, 0.42, 0.2, 1)
 mass = 9.0
 body_name = "Emberrock"
+atmosphere = "Trace CO2, volcanic ash"
 show_soi = true
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
@@ -164,6 +167,7 @@ visual_radius = 430.0
 color = Color(0.2, 0.8, 0.55, 1)
 mass = 50.0
 body_name = "Coralyss"
+atmosphere = "Oxygen-rich, humid"
 show_soi = true
 
 [node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
@@ -174,6 +178,7 @@ visual_radius = 300.0
 color = Color(0.6, 0.48, 0.8, 1)
 mass = 12.0
 body_name = "Duskveil"
+atmosphere = "Dense violet haze"
 show_soi = true
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
@@ -184,6 +189,7 @@ visual_radius = 500.0
 color = Color(0.85, 0.36, 0.2, 1)
 mass = 25.0
 body_name = "Thornix"
+atmosphere = "Thin, dusty"
 show_soi = true
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
@@ -194,6 +200,7 @@ visual_radius = 350.0
 color = Color(0.56, 0.84, 0.92, 1)
 mass = 14.0
 body_name = "Glacenna"
+atmosphere = "Frozen nitrogen fog"
 show_soi = true
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
@@ -204,6 +211,7 @@ visual_radius = 260.0
 color = Color(0.55, 0.38, 0.3, 1)
 mass = 6.0
 body_name = "Marrow"
+atmosphere = "None (airless)"
 show_soi = true
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
@@ -214,6 +222,7 @@ visual_radius = 700.0
 color = Color(0.88, 0.7, 0.3, 1)
 mass = 34.0
 body_name = "Vantauri"
+atmosphere = "Dense hydrogen/helium"
 show_soi = true
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
@@ -224,6 +233,7 @@ visual_radius = 560.0
 color = Color(0.3, 0.48, 0.85, 1)
 mass = 18.0
 body_name = "Nyxholm"
+atmosphere = "Deep hydrogen, stormy"
 show_soi = true
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
@@ -247,7 +257,7 @@ shape = SubResource("CircleShape2D_ship")
 offset_left = 12.0
 offset_top = 12.0
 offset_right = 278.0
-offset_bottom = 640.0
+offset_bottom = 300.0
 theme = SubResource("Theme_hud")
 theme_override_styles/panel = SubResource("StyleBoxFlat_hud_panel")
 script = ExtResource("12_left_panel_bg")
@@ -260,7 +270,7 @@ theme_override_constants/separation = 3
 layout_mode = 2
 theme_override_colors/font_color = Color(0.6, 0.65, 0.72, 1)
 theme_override_font_sizes/font_size = 13
-text = "SOLAR SYSTEM 2"
+text = "VESPERIS SYSTEM"
 
 [node name="TitleSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803401]
 layout_mode = 2
@@ -292,10 +302,23 @@ theme_override_colors/font_color = Color(0.82, 0.85, 0.9, 1)
 theme_override_font_sizes/font_size = 16
 text = "NAVIGATION"
 
-[node name="OrbitLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=723224470]
+[node name="OrbitRow" type="HBoxContainer" parent="HUD/PanelContainer/VBoxContainer" unique_id=723224469]
 layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="OrbitLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer/OrbitRow" unique_id=723224470]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.7, 0.7, 0.75, 1)
 text = "● Orbit: Coralyss"
+
+[node name="OrbitInfoButton" type="Button" parent="HUD/PanelContainer/VBoxContainer/OrbitRow" unique_id=723224471]
+layout_mode = 2
+custom_minimum_size = Vector2(20, 0)
+theme_override_colors/font_color = Color(0.4, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 12
+flat = true
+text = "(i)"
 
 [node name="SOILabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1713580554]
 layout_mode = 2
@@ -317,29 +340,19 @@ theme_override_colors/font_color = Color(0.82, 0.85, 0.9, 1)
 theme_override_font_sizes/font_size = 16
 text = "ORBIT"
 
-[node name="PeriapsisLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=957304119]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
-text = "● PE altitude: --"
-
-[node name="ApoapsisLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=2068963463]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
-text = "● AP altitude: --"
-
 [node name="EccentricityLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1173231797]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.55, 0.55, 0.62, 1)
 text = "● Eccentricity: --"
 
-[node name="TimeSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=1327896132]
-layout_mode = 2
-theme_override_styles/separator = SubResource("StyleBoxLine_hud_sep")
-
-[node name="TimeLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=1299181970]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
-text = "● Time: 1x"
+[node name="PlanetInfoPanel" type="Control" parent="HUD" unique_id=723224472]
+offset_left = 290.0
+offset_top = 12.0
+offset_right = 550.0
+offset_bottom = 332.0
+mouse_filter = 1
+visible = false
+script = ExtResource("13_planet_info")
 
 [node name="SpeedGauge" type="Control" parent="HUD" unique_id=314159265]
 anchor_left = 0.5
@@ -347,9 +360,9 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -90.0
-offset_top = -200.0
+offset_top = -280.0
 offset_right = 90.0
-offset_bottom = -20.0
+offset_bottom = -100.0
 grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
@@ -361,9 +374,9 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -155.0
-offset_top = -260.0
+offset_top = -84.0
 offset_right = 155.0
-offset_bottom = -206.0
+offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
@@ -375,12 +388,12 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -214.0
-offset_top = -120.0
+offset_top = -200.0
 offset_right = -104.0
-offset_bottom = -20.0
+offset_bottom = -100.0
 grow_horizontal = 2
 grow_vertical = 0
-mouse_filter = 2
+mouse_filter = 1
 script = ExtResource("6_orbit_value")
 label_text = "PE"
 accent_color = Color(0.5, 0.85, 0.95, 1)
@@ -392,12 +405,12 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = 104.0
-offset_top = -120.0
+offset_top = -200.0
 offset_right = 214.0
-offset_bottom = -20.0
+offset_bottom = -100.0
 grow_horizontal = 2
 grow_vertical = 0
-mouse_filter = 2
+mouse_filter = 1
 script = ExtResource("6_orbit_value")
 label_text = "AP"
 accent_color = Color(0.95, 0.75, 0.4, 1)

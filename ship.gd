@@ -31,6 +31,8 @@ var true_scale := false:
 
 func _ready() -> void:
 	$ClickArea.input_event.connect(_on_click_area_input_event)
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
+	reset_physics_interpolation()
 
 
 func _on_click_area_input_event(
@@ -192,6 +194,12 @@ const RCS_ACTIVE_THRESHOLD := 0.05
 const RCS_FLAME_LENGTH := 3.0
 const RCS_FLAME_WIDTH := 1.8
 
+const ENGINE_OUTER_HALF_WIDTH := 3.0
+const ENGINE_MAX_LENGTH := 11.0
+const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
+const MAIN_MID_COLOR := Color(1.0, 0.65, 0.2)
+const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
+
 
 var MARKER_POINTS := PackedVector2Array([
 	Vector2(12, 0),
@@ -232,13 +240,7 @@ func _draw() -> void:
 		engine_pos = back_pos
 
 	if throttle > 0.0:
-		var flame_length: float = 10.0 * throttle
-		var flame := PackedVector2Array([
-			engine_pos + Vector2(0, -3),
-			engine_pos + Vector2(0, 3),
-			engine_pos + Vector2(-flame_length, 0)
-		])
-		draw_colored_polygon(flame, Color(1.0, 0.55, 0.15, 0.9))
+		_draw_engine_flame(engine_pos)
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		draw_line(Vector2.ZERO, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.35), 1.0)
@@ -268,7 +270,7 @@ func _draw_rcs_thruster(local_pos: Vector2, outward_dir: Vector2, active: bool, 
 	var base: Vector2 = local_pos + outward_dir * RCS_DOT_RADIUS
 
 	_draw_wavy_flame(base, outward_dir, side, half_width, length, t + phase, Color(0.3, 0.65, 1.0, 0.75 * flicker))
-	_draw_spark(base, outward_dir, side, half_width, length, t + phase)
+	_draw_sparks(base, outward_dir, side, half_width, length, t + phase, Color(0.85, 0.95, 1.0))
 
 	draw_colored_polygon(
 		PackedVector2Array([
@@ -305,11 +307,54 @@ func _draw_wavy_flame(
 	draw_colored_polygon(points, color)
 
 
-# Pojedyncza migająca iskra odrywająca się od strumienia.
-func _draw_spark(tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float) -> void:
-	var f: float = fmod(t * 0.8, 1.0)
-	var pos: Vector2 = tip + direction * (length * (0.4 + f * 0.9))
-	pos += side * sin(t * 9.0) * half_width * 0.5 * f
-	var alpha: float = (1.0 - f) * 0.8
-	var radius: float = maxf(0.5, 0.9 * (1.0 - f * 0.6))
-	draw_circle(pos, radius, Color(0.85, 0.95, 1.0, alpha))
+# Kilka drobnych iskier odrywających się od strumienia, migających
+# niezależnie od głównego płomienia - to samo podejście co w
+# ship_blueprint_panel.gd, żeby statek w kosmosie wyglądał identycznie.
+func _draw_sparks(
+	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
+) -> void:
+	var spark_count := 3
+	for i in range(spark_count):
+		var phase_seed: float = float(i) * 17.3
+		var f: float = fmod(t * 0.7 + phase_seed, 1.0)
+		var pos: Vector2 = tip + direction * (length * (0.35 + f * 0.9))
+		var drift: float = sin(t * 9.0 + phase_seed) * half_width * 0.5 * f
+		pos += side * drift
+		var alpha: float = (1.0 - f) * 0.8
+		var radius: float = maxf(0.4, 0.9 * (1.0 - f * 0.6) * (half_width / 3.0))
+		draw_circle(pos, radius, Color(spark_color, alpha))
+
+
+# Wielowarstwowy płomień głównego silnika (zewnętrzny + środkowy wavy-flame,
+# rdzeń jako trójkąt, iskry) - ten sam wygląd co w podglądzie statku
+# w prawym dolnym rogu (ship_blueprint_panel.gd).
+func _draw_engine_flame(tip: Vector2) -> void:
+	var direction := Vector2.LEFT
+	var side: Vector2 = direction.orthogonal()
+
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var flicker: float = 0.85 + 0.15 * sin(t * 24.0) + 0.08 * sin(t * 61.0 + 1.3)
+	var length: float = ENGINE_MAX_LENGTH * throttle * flicker
+
+	_draw_wavy_flame(
+		tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t,
+		Color(MAIN_OUTER_COLOR, 0.55 * flicker)
+	)
+
+	var mid_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.75
+	_draw_wavy_flame(
+		tip, direction, side, mid_half_width, length * 0.8, t + 3.1,
+		Color(MAIN_MID_COLOR, 0.7 * flicker)
+	)
+
+	var inner_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.4
+	draw_colored_polygon(
+		PackedVector2Array([
+			tip + side * inner_half_width,
+			tip - side * inner_half_width,
+			tip + direction * (length * 0.6)
+		]),
+		Color(MAIN_CORE_COLOR, 0.95 * flicker)
+	)
+
+	_draw_sparks(tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t, Color(1.0, 0.8, 0.4))

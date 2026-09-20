@@ -49,8 +49,26 @@ func _draw() -> void:
 	draw_string(font, Vector2(PAD, y), label + body_name, HORIZONTAL_ALIGNMENT_LEFT, content_width, 12, body_color)
 	y += LINE_HEIGHT
 
-	y = _line(font, y, content_width, "TARGET ALT: %.0f SU" % data.get("target_altitude", 0.0), Color(0.75, 0.78, 0.85))
+	if not selecting and data.get("show_apsis_targets", false):
+		y = _line(
+			font, y, content_width, "TARGET PE: %.0f SU" % data.get("target_pe_altitude", 0.0),
+			Color(0.5, 0.85, 0.95)
+		)
+		y = _line(
+			font, y, content_width, "TARGET AP: %.0f SU" % data.get("target_ap_altitude", 0.0),
+			Color(0.95, 0.75, 0.4)
+		)
+	else:
+		y = _line(
+			font, y, content_width, "TARGET ALT: %.0f SU" % data.get("target_altitude", 0.0),
+			Color(0.75, 0.78, 0.85)
+		)
 	y = _line(font, y, content_width, "TOLERANCE: ±%.0f SU" % data.get("tolerance", 0.0), Color(0.75, 0.78, 0.85))
+
+	var eta_text: String = data.get("eta_text", "")
+	if eta_text != "":
+		y += SMALL_LINE_HEIGHT * 0.2
+		y = _line(font, y, content_width, eta_text, data.get("eta_color", Color.WHITE))
 
 	if selecting:
 		y += SMALL_LINE_HEIGHT * 0.5

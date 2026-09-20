@@ -22,6 +22,8 @@ const GLOW_TEXTURE := preload("res://textures/glow.png")
 
 @export var body_name: String = "Unnamed"
 
+@export var atmosphere: String = "None"
+
 @export var show_soi := false:
 	set(value):
 		show_soi = value
