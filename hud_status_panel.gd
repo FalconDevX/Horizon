@@ -17,10 +17,10 @@ const BAR_LABEL_GAP := 4.0
 const PAD_LEFT := 22.0
 const PAD_TOP := 10.0
 
-const COLOR_ON := Color(0.35, 0.85, 1.0)
-const COLOR_OFF := Color(0.4, 0.45, 0.52, 0.5)
-const COLOR_WARN := Color(1.0, 0.65, 0.25)
-const COLOR_AUTOPILOT := Color(0.35, 0.9, 0.45)
+const COLOR_ON := HudPanelStyle.COLOR_CYAN
+const COLOR_OFF := Color(0.35, 0.42, 0.52, 0.5)
+const COLOR_WARN := HudPanelStyle.COLOR_AMBER
+const COLOR_AUTOPILOT := HudPanelStyle.COLOR_EMERALD
 
 
 func set_state(p_autopilot: bool, p_rcs: bool, p_lock: bool, p_throttle: float) -> void:
@@ -40,12 +40,12 @@ func set_state(p_autopilot: bool, p_rcs: bool, p_lock: bool, p_throttle: float) 
 
 
 func _draw() -> void:
-	HudPanelStyle.draw_chamfered(self, size, Color(0.35, 0.85, 1.0), 14.0, 0.55)
+	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 14.0, 0.85, 0.55)
 
 	var chips := [
 		{"label": "AUTOPILOT", "on": autopilot_active, "warn": false, "color": COLOR_AUTOPILOT},
 		{"label": "RCS", "on": rcs_active, "warn": false, "color": COLOR_ON},
-		{"label": "LOCK (X)", "on": throttle_locked, "warn": throttle_locked, "color": COLOR_ON},
+		{"label": "LOCK (X)", "on": throttle_locked, "warn": throttle_locked, "color": COLOR_WARN},
 	]
 
 	var total_width: float = CHIP_WIDTH * chips.size() + CHIP_GAP * (chips.size() - 1)
@@ -60,7 +60,7 @@ func _draw() -> void:
 	var bar_y: float = PAD_TOP + CHIP_HEIGHT + BAR_GAP_ABOVE
 	draw_string(
 		font, Vector2(start_x, bar_y - BAR_LABEL_GAP), "THRUST",
-		HORIZONTAL_ALIGNMENT_LEFT, total_width, 9, Color(0.55, 0.6, 0.68, 0.7)
+		HORIZONTAL_ALIGNMENT_LEFT, total_width, 9, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 
 	var percent_text: String = "%d%%" % roundi(throttle * 100.0)
@@ -70,7 +70,7 @@ func _draw() -> void:
 
 	draw_string(
 		font, Vector2(bar_rect.end.x + 6.0, bar_y + BAR_HEIGHT - 1.0), percent_text,
-		HORIZONTAL_ALIGNMENT_LEFT, percent_width, 11, Color(0.85, 0.88, 0.92, 0.9)
+		HORIZONTAL_ALIGNMENT_LEFT, percent_width, 11, HudPanelStyle.COLOR_TEXT_PRIMARY
 	)
 
 
@@ -83,14 +83,14 @@ func _draw_chip(rect: Rect2, label: String, on: bool, warn: bool, on_color: Colo
 
 	draw_circle(
 		rect.position + Vector2(4.0, rect.size.y * 0.5), 3.0,
-		color if on else Color(color, 0.5)
+		color if on else Color(color, 0.4)
 	)
 
 	var font: Font = HudPanelStyle.get_font()
 	draw_string(
 		font, rect.position + Vector2(12.0, rect.size.y * 0.5 + 4.0),
-		label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 12.0, 12,
-		color if on else Color(0.6, 0.65, 0.72, 0.7)
+		label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 12.0, 11,
+		color if on else HudPanelStyle.COLOR_TEXT_MUTED
 	)
 
 
@@ -106,7 +106,7 @@ func _draw_throttle_bar(rect: Rect2) -> void:
 		var active: bool = i < filled_segments
 		var t: float = float(i) / float(BAR_SEGMENTS - 1)
 		var color: Color = (
-			Color(0.3, 0.75, 1.0).lerp(Color(1.0, 0.55, 0.15), t)
-			if active else Color(1.0, 1.0, 1.0, 0.08)
+			COLOR_ON.lerp(COLOR_WARN, t)
+			if active else Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 0.35)
 		)
 		draw_rect(seg_rect, color, true)

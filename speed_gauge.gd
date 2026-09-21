@@ -1,7 +1,7 @@
 extends Control
 
 @export var max_speed: float = 1000.0
-@export var gauge_color := Color(0.35, 0.75, 1.0)
+@export var gauge_color := HudPanelStyle.COLOR_CYAN
 @export var track_color := Color(1.0, 1.0, 1.0, 0.08)
 
 var speed: float = 0.0:
@@ -43,7 +43,7 @@ func _draw() -> void:
 
 
 func _draw_panel() -> void:
-	HudPanelStyle.draw_chamfered(self, size, Color(0.35, 0.75, 1.0), 20.0, 0.75)
+	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 20.0, 0.85, 0.55)
 
 
 func _draw_ticks(center: Vector2, radius: float) -> void:

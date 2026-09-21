@@ -13,6 +13,9 @@
 [ext_resource type="Script" path="res://time_warp_panel.gd" id="11_time_warp"]
 [ext_resource type="Script" path="res://left_panel_bg.gd" id="12_left_panel_bg"]
 [ext_resource type="Script" path="res://planet_info_panel.gd" id="13_planet_info"]
+[ext_resource type="Script" path="res://music_toast.gd" id="14_music_toast"]
+[ext_resource type="Script" path="res://settings_menu.gd" id="15_settings_menu"]
+[ext_resource type="PackedScene" path="res://scenes/builder/ShipBuilder.tscn" id="16_ship_builder"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
 radius = 20.0
@@ -160,6 +163,8 @@ atmosphere = "Trace CO2, volcanic ash"
 show_soi = true
 surface_seed = 1001
 surface_blob_count = 64
+surface_spin_speed = 0.06
+surface_spin_axis = Vector3(0.035, 0.999, 0.0)
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
 position = Vector2(17500, 0)
@@ -174,6 +179,8 @@ show_soi = true
 surface_seed = 1002
 surface_blob_count = 96
 surface_style = 2
+surface_spin_speed = 0.25
+surface_spin_axis = Vector3(0.391, 0.921, 0.0)
 
 [node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
 position = Vector2(32300, 0)
@@ -187,6 +194,8 @@ atmosphere = "Dense violet haze"
 show_soi = true
 surface_seed = 1003
 surface_blob_count = 48
+surface_spin_speed = -0.03
+surface_spin_axis = Vector3(0.0, 0.999, 0.052)
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(57800, 0)
@@ -200,6 +209,8 @@ atmosphere = "Thin, dusty"
 show_soi = true
 surface_seed = 1004
 surface_blob_count = 80
+surface_spin_speed = 0.24
+surface_spin_axis = Vector3(-0.423, 0.906, 0.0)
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
 position = Vector2(102300, 0)
@@ -213,6 +224,8 @@ atmosphere = "Frozen nitrogen fog"
 show_soi = true
 surface_seed = 1005
 surface_blob_count = 56
+surface_spin_speed = 0.10
+surface_spin_axis = Vector3(0.0, -0.139, 0.990)
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
 position = Vector2(163800, 0)
@@ -227,6 +240,8 @@ show_soi = true
 surface_seed = 1006
 surface_blob_count = 40
 surface_style = 1
+surface_spin_speed = 0.04
+surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(295000, 0)
@@ -241,6 +256,8 @@ show_soi = true
 surface_seed = 1007
 surface_blob_count = 110
 surface_style = 3
+surface_spin_speed = 0.55
+surface_spin_axis = Vector3(0.0, 0.999, -0.052)
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
 position = Vector2(548500, 0)
@@ -254,6 +271,8 @@ atmosphere = "Deep hydrogen, stormy"
 show_soi = true
 surface_seed = 1008
 surface_blob_count = 88
+surface_spin_speed = 0.50
+surface_spin_axis = Vector3(0.332, 0.883, 0.332)
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
 position = Vector2(18500, 0)
@@ -262,6 +281,7 @@ script = ExtResource("3_ship")
 [node name="RcsSound" type="AudioStreamPlayer" parent="Ship" unique_id=730025986]
 stream = ExtResource("10_rcs_sound")
 volume_db = -6.0
+bus = &"SFX"
 
 [node name="ClickArea" type="Area2D" parent="Ship" unique_id=1384908549]
 
@@ -269,6 +289,9 @@ volume_db = -6.0
 shape = SubResource("CircleShape2D_ship")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=641785987]
+
+[node name="MusicPlayer" type="AudioStreamPlayer" parent="." unique_id=987654321]
+bus = &"Music"
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1393702548]
 
@@ -285,11 +308,22 @@ script = ExtResource("12_left_panel_bg")
 layout_mode = 2
 theme_override_constants/separation = 3
 
-[node name="TitleLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803400]
+[node name="TitleRow" type="HBoxContainer" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803403]
 layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="HUD/PanelContainer/VBoxContainer/TitleRow" unique_id=161803400]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.6, 0.65, 0.72, 1)
 theme_override_font_sizes/font_size = 13
 text = "VESPERIS SYSTEM"
+
+[node name="SettingsButton" type="Button" parent="HUD/PanelContainer/VBoxContainer/TitleRow" unique_id=161803404]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.85, 1, 0.9)
+theme_override_font_sizes/font_size = 12
+flat = true
+text = "⚙"
 
 [node name="TitleSeparator" type="HSeparator" parent="HUD/PanelContainer/VBoxContainer" unique_id=161803401]
 layout_mode = 2
@@ -487,7 +521,7 @@ anchor_right = 0.0
 anchor_bottom = 1.0
 offset_left = 16.0
 offset_top = -76.0
-offset_right = 456.0
+offset_right = 486.0
 offset_bottom = -16.0
 grow_horizontal = 1
 grow_vertical = 0
@@ -510,3 +544,35 @@ theme_override_colors/font_color = Color(0.45, 0.48, 0.55, 0.6)
 theme_override_font_sizes/font_size = 10
 horizontal_alignment = 2
 text = "SOLAR SYSTEM 2  v0.1"
+
+[node name="MusicToast" type="Control" parent="HUD" unique_id=161803405]
+anchor_left = 0.5
+anchor_top = 0.0
+anchor_right = 0.5
+anchor_bottom = 0.0
+offset_left = -175.0
+offset_top = 16.0
+offset_right = 175.0
+offset_bottom = 44.0
+grow_horizontal = 2
+mouse_filter = 2
+visible = false
+script = ExtResource("14_music_toast")
+
+[node name="SettingsMenu" type="Control" parent="HUD" unique_id=161803406]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -400.0
+offset_top = -250.0
+offset_right = 400.0
+offset_bottom = 250.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+visible = false
+script = ExtResource("15_settings_menu")
+
+[node name="ShipBuilderPanel" parent="HUD" instance=ExtResource("16_ship_builder")]
+visible = false

@@ -3,9 +3,9 @@ extends Control
 
 var data: Dictionary = {}
 
-const COLOR_OFF := Color(0.45, 0.48, 0.55, 0.6)
-const COLOR_ACTIVE := Color(0.35, 0.85, 1.0)
-const COLOR_SELECTING := Color(0.9, 0.75, 0.25)
+const COLOR_OFF := HudPanelStyle.COLOR_BORDER_DEFAULT
+const COLOR_ACTIVE := HudPanelStyle.COLOR_EMERALD
+const COLOR_SELECTING := HudPanelStyle.COLOR_AMBER
 const PAD := 12.0
 const LINE_HEIGHT := 17.0
 const SMALL_LINE_HEIGHT := 15.0
@@ -26,7 +26,7 @@ func _draw() -> void:
 	elif active:
 		accent = COLOR_ACTIVE
 
-	_draw_panel(accent)
+	HudPanelStyle.draw_chamfered(self, size, accent, 14.0, 0.85, 0.65)
 
 	var font: Font = HudPanelStyle.get_font()
 	var content_width: float = size.x - PAD * 2.0
@@ -107,25 +107,4 @@ func _line(font: Font, y: float, content_width: float, text: String, color: Colo
 	return y + SMALL_LINE_HEIGHT
 
 
-# Ucięte po skosie narożniki (góra-lewo, dół-prawo) zamiast zaokrąglonego
-# boksu - kanciasty, sci-fi look z referencyjnego wzoru HUD-u zamiast
-# zaokrąglonych kart.
-func _draw_panel(accent: Color) -> void:
-	var chamfer := 16.0
-	var w: float = size.x
-	var h: float = size.y
 
-	var points := PackedVector2Array([
-		Vector2(chamfer, 0.0),
-		Vector2(w, 0.0),
-		Vector2(w, h - chamfer),
-		Vector2(w - chamfer, h),
-		Vector2(0.0, h),
-		Vector2(0.0, chamfer),
-	])
-
-	draw_colored_polygon(points, Color(0.05, 0.07, 0.12, 0.55))
-
-	var outline: PackedVector2Array = points.duplicate()
-	outline.append(points[0])
-	draw_polyline(outline, Color(accent, 0.8), 1.5, true)

@@ -18,6 +18,7 @@ var manual_rcs_local_command := Vector2.ZERO
 var autopilot_main_engine_output := 0.0
 var throttle_locked := false
 var _lock_key_was_pressed := false
+var paused := false
 var true_scale := false:
 	set(value):
 		if true_scale == value:
@@ -171,6 +172,11 @@ func _process(_delta: float) -> void:
 
 
 func _update_rcs_sound() -> void:
+	if paused:
+		if rcs_sound.playing:
+			rcs_sound.stop()
+		return
+
 	var combined: Vector2 = autopilot_rcs_local_command + manual_rcs_local_command
 	var active: bool = combined.length() > RCS_ACTIVE_THRESHOLD
 

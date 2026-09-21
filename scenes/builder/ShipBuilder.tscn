@@ -1,0 +1,178 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/ShipBuilderController.gd" id="1_controller"]
+[ext_resource type="Script" path="res://scripts/ship/ShipHull.gd" id="2_hull"]
+[ext_resource type="Script" path="res://scripts/ui/ShipGridUI.gd" id="3_grid"]
+[ext_resource type="Script" path="res://scripts/ui/StatsPanel.gd" id="4_stats"]
+[ext_resource type="Script" path="res://scripts/ui/CollapsibleSection.gd" id="5_collapse"]
+[ext_resource type="Script" path="res://scripts/ui/DragResizeHandle.gd" id="6_resize"]
+[ext_resource type="Script" path="res://scripts/ui/PannableScrollContainer.gd" id="7_pan"]
+[ext_resource type="Script" path="res://scripts/ui/BuildAreaHost.gd" id="8_host"]
+[ext_resource type="Script" path="res://scripts/ui/FastScrollContainer.gd" id="9_fastscroll"]
+
+[node name="ShipBuilder" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_controller")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.045, 0.065, 0.095, 1)
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="RootHBox" type="HBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="LeftColumn" type="VBoxContainer" parent="Margin/RootHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="TitleRow" type="HBoxContainer" parent="Margin/RootHBox/LeftColumn"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="Margin/RootHBox/LeftColumn/TitleRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
+theme_override_font_sizes/font_size = 22
+text = "Warsztat Statku"
+
+[node name="CenterViewButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Wycentruj widok"
+tooltip_text = "Wyśrodkuj obszar budowania. Przesuwanie: środkowy przycisk myszy."
+
+[node name="CloseButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
+theme_override_font_sizes/font_size = 16
+text = "✕ Zamknij"
+tooltip_text = "Zamknij warsztat (B)"
+
+[node name="Hint" type="Label" parent="Margin/RootHBox/LeftColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.75, 0.8, 1)
+text = "Ctrl+kółko = zoom. ŚPM = przesuwanie. Kółko = góra/dół, Shift+kółko = lewo/prawo."
+autowrap_mode = 3
+
+[node name="GridScroll" type="ScrollContainer" parent="Margin/RootHBox/LeftColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 2
+vertical_scroll_mode = 2
+script = ExtResource("7_pan")
+
+[node name="BuildAreaHost" type="Control" parent="Margin/RootHBox/LeftColumn/GridScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+script = ExtResource("8_host")
+grid_path = NodePath("ShipGridUI")
+
+[node name="ShipGridUI" type="Control" parent="Margin/RootHBox/LeftColumn/GridScroll/BuildAreaHost"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(1280, 896)
+layout_mode = 0
+script = ExtResource("3_grid")
+cell_size = Vector2(32, 32)
+base_cell_size = 32.0
+
+[node name="ShipHull" type="Node2D" parent="Margin/RootHBox/LeftColumn/GridScroll/BuildAreaHost/ShipGridUI"]
+unique_name_in_owner = true
+script = ExtResource("2_hull")
+build_grid_size = Vector2i(40, 28)
+cell_size = Vector2(32, 32)
+
+[node name="BayResizeHandle" type="ColorRect" parent="Margin/RootHBox/LeftColumn"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+mouse_default_cursor_shape = 9
+color = Color(0.45, 0.55, 0.65, 0.4)
+script = ExtResource("6_resize")
+axis = 0
+target_path = NodePath("../ModuleBaySection")
+min_size = 100.0
+max_size = 480.0
+invert_drag = true
+
+[node name="ModuleBaySection" type="VBoxContainer" parent="Margin/RootHBox/LeftColumn"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_constants/separation = 6
+script = ExtResource("5_collapse")
+title = "Magazyn modułów"
+content_path = NodePath("InventoryScroll")
+
+[node name="InventoryScroll" type="ScrollContainer" parent="Margin/RootHBox/LeftColumn/ModuleBaySection"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+script = ExtResource("9_fastscroll")
+wheel_step = 120
+
+[node name="InventoryGrid" type="GridContainer" parent="Margin/RootHBox/LeftColumn/ModuleBaySection/InventoryScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+columns = 4
+
+[node name="StatsResizeHandle" type="ColorRect" parent="Margin/RootHBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(6, 0)
+layout_mode = 2
+size_flags_vertical = 3
+mouse_default_cursor_shape = 10
+color = Color(0.45, 0.55, 0.65, 0.4)
+script = ExtResource("6_resize")
+axis = 1
+target_path = NodePath("../RightColumn")
+min_size = 160.0
+max_size = 480.0
+invert_drag = true
+
+[node name="RightColumn" type="VBoxContainer" parent="Margin/RootHBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(260, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_constants/separation = 8
+
+[node name="StatsPanel" type="VBoxContainer" parent="Margin/RootHBox/RightColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("4_stats")

@@ -57,8 +57,17 @@ const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 @export_enum("Auto", "Scattered", "Continents", "Bands")
 var surface_style: int = 0
 
-## Radians per second. Positive spins the surface toward screen-right.
+## Radians per second. Positive spins the surface toward screen-right
+## around `surface_spin_axis`.
 @export var surface_spin_speed: float = 0.25
+
+## Axis this body spins around, in its own local (view) space. Vector3.UP is
+## a plain vertical spin, the same as a globe with no tilt; lean it toward X
+## or Z to give the planet an axial tilt, the way Earth cants ~23 degrees
+## and Uranus tips almost onto its side.
+@export var surface_spin_axis: Vector3 = Vector3.UP:
+	set(value):
+		surface_spin_axis = value.normalized() if value.length() > 0.0001 else Vector3.UP
 
 ## How far the lookup direction is bent before the nearest-blob test. This is
 ## what turns straight Voronoi edges into ragged coastlines. 0.0 disables it.
@@ -128,11 +137,10 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	# Spinning toward screen-right means rolling about the screen-up axis, the
-	# same way a globe turns. Composing rotations cannot push the surface off
-	# the sphere, so there is nothing to correct afterwards.
+	# Composing rotations cannot push the surface off the sphere, so there is
+	# nothing to correct afterwards regardless of how surface_spin_axis tilts.
 	surface_rotation = (
-		Quaternion(Vector3.UP, surface_spin_speed * delta) * surface_rotation
+		Quaternion(surface_spin_axis, surface_spin_speed * delta) * surface_rotation
 	).normalized()
 
 	push_surface_rotation()

@@ -10,7 +10,7 @@ const LEFT_POS := Vector2(0.03, 0.47)
 const RIGHT_POS := Vector2(0.96, 0.475)
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 
-const RCS_COLOR := Color(0.3, 0.75, 1.0)
+const RCS_COLOR := HudPanelStyle.COLOR_CYAN
 const RCS_CORE_COLOR := Color(0.8, 0.95, 1.0)
 const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
 const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
@@ -43,7 +43,7 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	HudPanelStyle.draw_chamfered(self, size, Color(0.35, 0.45, 0.55))
+	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 16.0, 0.85, 0.55)
 
 	var image_rect: Rect2 = _fit_rect()
 	draw_texture_rect(SHIP_TEXTURE, image_rect, false)

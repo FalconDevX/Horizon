@@ -53,6 +53,16 @@ enum AutopilotPhase {
 @onready var soi_label: Label = $HUD/PanelContainer/VBoxContainer/SOILabel
 @onready var trajectory_label: Label = $HUD/PanelContainer/VBoxContainer/TrajectoryLabel
 @onready var eccentricity_label: Label = $HUD/PanelContainer/VBoxContainer/EccentricityLabel
+@onready var music_player: AudioStreamPlayer = $MusicPlayer
+@onready var settings_menu: Control = $HUD/SettingsMenu
+@onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
+@onready var music_toast: Control = $HUD/MusicToast
+@onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
+@onready var background_mask: ColorRect = $Background/BackgroundMask
+
+var settings_mgr: SettingsManager
+var music_mgr: MusicManager
+var _is_first_track_notification := true
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -70,6 +80,7 @@ var trajectory_candidate_status := ""
 var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
+var previous_time_scale := 1.0
 var simulation_accumulator := 0.0
 var prediction_update_accumulator := 1.0
 var current_periapsis := 0.0
@@ -192,6 +203,28 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if (
+		event is InputEventKey
+		and event.pressed
+		and not event.echo
+		and event.keycode == KEY_ESCAPE
+		and (ship_builder_panel == null or not ship_builder_panel.visible)
+	):
+		toggle_settings_menu()
+		get_viewport().set_input_as_handled()
+		return
+
+	if settings_menu != null and settings_menu.visible:
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_B:
+		toggle_ship_builder()
+		get_viewport().set_input_as_handled()
+		return
+
+	if ship_builder_panel != null and ship_builder_panel.visible:
+		return
+
 	if event is InputEventKey and event.keycode == KEY_F:
 		if event.pressed and not event.echo:
 			if autopilot_active:
@@ -211,20 +244,25 @@ func _unhandled_input(event: InputEvent) -> void:
 		cycle_autopilot_target_body()
 
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_1:
-			time_scale = 1.0
+		if event.keycode == KEY_W:
+			if settings_mgr != null and settings_mgr.auto_drop_warp_on_thrust and time_scale > 1.0:
+				set_time_scale(1.0)
+		elif event.keycode == KEY_SPACE or event.keycode == KEY_P or event.keycode == KEY_0:
+			toggle_pause()
+		elif event.keycode == KEY_1:
+			set_time_scale(1.0)
 		elif event.keycode == KEY_2:
-			time_scale = 2.0
+			set_time_scale(2.0)
 		elif event.keycode == KEY_3:
-			time_scale = 5.0
+			set_time_scale(5.0)
 		elif event.keycode == KEY_4:
-			time_scale = 10.0
+			set_time_scale(10.0)
 		elif event.keycode == KEY_5:
-			time_scale = 50.0
+			set_time_scale(50.0)
 		elif event.keycode == KEY_6:
-			time_scale = 100.0
+			set_time_scale(100.0)
 		elif event.keycode == KEY_7:
-			time_scale = 200.0
+			set_time_scale(200.0)
 		elif event.keycode == KEY_PERIOD:
 			camera_follow_ship = not camera_follow_ship
 
@@ -242,11 +280,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		if event.pressed:
+			var zoom_step: float = settings_mgr.camera_zoom_speed if settings_mgr != null else ZOOM_STEP
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-				camera_zoom *= ZOOM_STEP
+				camera_zoom *= zoom_step
 
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				camera_zoom /= ZOOM_STEP
+				camera_zoom /= zoom_step
 
 		camera_zoom = clamp(camera_zoom, ZOOM_MIN, ZOOM_MAX)
 		camera.zoom = Vector2(camera_zoom, camera_zoom)
@@ -258,7 +297,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				camera_follow_ship = false
 
 	if event is InputEventMouseMotion and is_dragging:
-		camera.position -= event.relative / camera_zoom
+		var pan_factor: float = settings_mgr.camera_pan_speed if settings_mgr != null else 1.0
+		camera.position -= (event.relative * pan_factor) / camera_zoom
 
 
 func _ready() -> void:
@@ -310,11 +350,41 @@ func _ready() -> void:
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
 	main_thruster_toggle.toggled.connect(_on_main_thruster_toggled)
 	time_warp_panel.time_scale_selected.connect(_on_time_scale_selected)
+	time_warp_panel.pause_toggled.connect(toggle_pause)
+	time_warp_panel.step_requested.connect(step_simulation_once)
 	pe_gauge.scrolled.connect(change_autopilot_target_pe)
 	ap_gauge.scrolled.connect(change_autopilot_target_ap)
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
+
+	settings_mgr = SettingsManager.new()
+	music_mgr = MusicManager.new()
+	add_child(music_mgr)
+	music_mgr.setup(music_player, settings_mgr.autoplay_music)
+
+	settings_menu.setup(settings_mgr, music_mgr)
+	settings_button.pressed.connect(toggle_settings_menu)
+	ship_builder_panel.closed.connect(close_ship_builder)
+	if time_warp_panel != null:
+		var gear_icon: Texture2D = time_warp_panel._load_icon("res://textures/icons/settings.svg")
+		if gear_icon != null:
+			settings_button.icon = gear_icon
+			settings_button.text = ""
+			settings_button.expand_icon = true
+			settings_button.custom_minimum_size = Vector2(20.0, 20.0)
+			settings_button.modulate = HudPanelStyle.COLOR_CYAN
+	settings_menu.setting_changed.connect(_on_setting_changed)
+
+	music_mgr.track_changed.connect(func(title: String) -> void:
+		if _is_first_track_notification:
+			_is_first_track_notification = false
+			return
+		if settings_mgr != null and settings_mgr.show_music_notifications:
+			music_toast.show_track(title)
+	)
+
+	_apply_all_settings()
 
 
 func _process(delta: float) -> void:
@@ -331,7 +401,7 @@ func _process(delta: float) -> void:
 	update_hud()
 
 	if camera_follow_ship:
-		var catch_up: float = clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
+		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
 		camera.position = camera.position.lerp(ship.position, catch_up)
 
 
@@ -703,8 +773,11 @@ func update_orbit_autopilot(dt: float) -> void:
 
 func update_local_orbit_autopilot(dt: float) -> void:
 	if not is_inside_soi(ship.position, autopilot_body):
+		# Overshot the target's SOI (usually from arriving too fast to capture
+		# in one pass). Chase it down and try again instead of giving up -
+		# the same recovery path interplanetary arrivals already use.
 		ship.clear_autopilot_thrust()
-		autopilot_active = false
+		autopilot_phase = AutopilotPhase.CAPTURE_BURN
 		return
 
 	var body_velocity: Vector2 = Vector2.ZERO
@@ -720,14 +793,24 @@ func update_local_orbit_autopilot(dt: float) -> void:
 		return
 
 	var mu: float = G * autopilot_body.get("mass")
-	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
-	if orbit.e >= 1.0:
-		ship.clear_autopilot_thrust()
-		return
-
 	var body_radius: float = autopilot_body.get("radius")
 	var target_pe_radius: float = body_radius + autopilot_target_pe_altitude
 	var target_ap_radius: float = body_radius + autopilot_target_ap_altitude
+
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+	if orbit.e >= 1.0:
+		# Above escape velocity for this body - apsis burns assume an ellipse
+		# and have no periapsis/apoapsis to aim at. Braking toward a bound
+		# orbit (the same move used to capture on interplanetary arrival)
+		# beats giving up and coasting out of the system.
+		var radial_dir: Vector2 = relative_position.normalized()
+		var tangent_dir := Vector2(-radial_dir.y, radial_dir.x)
+		if relative_velocity.dot(tangent_dir) < 0.0:
+			tangent_dir = -tangent_dir
+		autopilot_remaining_delta_v = execute_apsis_targeting_burn(
+			r, target_pe_radius, mu, tangent_dir, relative_velocity
+		)
+		return
 
 	match autopilot_phase:
 		AutopilotPhase.WAIT_FIRST_BURN:
@@ -1709,7 +1792,10 @@ func update_hud() -> void:
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
 
-	if ship.throttle > 0.0 and time_scale > 1.0:
+	if time_scale == 0.0:
+		thrust_label.text = hud_row("Thrust", "PAUSED" + lock_suffix)
+		thrust_label.add_theme_color_override("font_color", COLOR_WARN)
+	elif ship.throttle > 0.0 and time_scale > 1.0:
 		thrust_label.text = hud_row("Thrust", "OFF (time warp)" + lock_suffix)
 		thrust_label.add_theme_color_override("font_color", COLOR_DIM)
 	elif ship.throttle > 0.0:
@@ -2051,6 +2137,7 @@ func build_trajectory_snapshot() -> Dictionary:
 		"masses": masses,
 		"soi_radii": soi_radii,
 		"names": names,
+		"prediction_steps": 12000 if (settings_mgr != null and settings_mgr.trajectory_long_prediction) else PREDICTION_STEPS,
 	}
 
 
@@ -2109,7 +2196,8 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 	next_positions.resize(count)
 	next_accelerations.resize(count)
 
-	for step in range(PREDICTION_STEPS):
+	var total_steps: int = snap.get("prediction_steps", PREDICTION_STEPS)
+	for step in range(total_steps):
 		var previous_ship_pos: Vector2 = ship_pos
 		var previous_positions: PackedVector2Array = positions.duplicate()
 
@@ -2379,12 +2467,109 @@ func _on_orbit_info_pressed() -> void:
 	)
 
 
+func toggle_settings_menu() -> void:
+	if settings_menu.visible:
+		settings_menu.close_menu()
+	else:
+		settings_menu.open_menu()
+
+
+func toggle_ship_builder() -> void:
+	if ship_builder_panel.visible:
+		close_ship_builder()
+	else:
+		open_ship_builder()
+
+
+func open_ship_builder() -> void:
+	autopilot_selecting = false
+	ship_builder_panel.visible = true
+
+
+func close_ship_builder() -> void:
+	ship_builder_panel.visible = false
+
+
+func _on_setting_changed(key: String, value: Variant) -> void:
+	match key:
+		"show_orbit_lines":
+			for line in orbit_lines:
+				line.visible = value
+		"show_soi_circles":
+			for planet in planets:
+				planet.show_soi = value
+		"show_trajectory":
+			trajectory_prediction.visible = value
+		"starfield_brightness":
+			if background_mask != null:
+				background_mask.color.a = clampf(1.0 - float(value), 0.0, 1.0)
+		"ship_rotation_speed":
+			if ship != null:
+				ship.rotation_speed = float(value)
+		"autopilot_default_main_engine":
+			autopilot_main_thruster_allowed = bool(value)
+			if main_thruster_toggle != null:
+				main_thruster_toggle.button_pressed = bool(value)
+		"camera_smoothing":
+			pass
+
+
+func _apply_all_settings() -> void:
+	if settings_mgr == null:
+		return
+	for line in orbit_lines:
+		line.visible = settings_mgr.show_orbit_lines
+	for planet in planets:
+		planet.show_soi = settings_mgr.show_soi_circles
+	trajectory_prediction.visible = settings_mgr.show_trajectory
+	if background_mask != null:
+		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
+	if ship != null:
+		ship.rotation_speed = settings_mgr.ship_rotation_speed
+	autopilot_main_thruster_allowed = settings_mgr.autopilot_default_main_engine
+	if main_thruster_toggle != null:
+		main_thruster_toggle.button_pressed = settings_mgr.autopilot_default_main_engine
+
+
 func _on_main_thruster_toggled(pressed: bool) -> void:
 	autopilot_main_thruster_allowed = pressed
 
 
 func _on_time_scale_selected(value: float) -> void:
+	set_time_scale(value)
+
+
+func set_time_scale(value: float) -> void:
+	if value > 0.0:
+		previous_time_scale = value
 	time_scale = value
+	if ship != null:
+		ship.paused = (time_scale == 0.0)
+
+
+func toggle_pause() -> void:
+	if time_scale > 0.0:
+		previous_time_scale = time_scale
+		set_time_scale(0.0)
+	else:
+		set_time_scale(previous_time_scale if previous_time_scale > 0.0 else 1.0)
+
+
+func step_simulation_once() -> void:
+	if time_scale > 0.0:
+		previous_time_scale = time_scale
+		set_time_scale(0.0)
+
+	if soi_radii_cache.size() != planets.size():
+		soi_radii_cache.resize(planets.size())
+	for i in range(planets.size()):
+		soi_radii_cache[i] = get_soi_radius(planets[i])
+
+	simulation_step(SIM_DT)
+	total_sim_time += SIM_DT
+
+	for i in range(planets.size()):
+		update_orbit_line(planets[i], orbit_lines[i], i)
 
 
 func get_circular_orbit_velocity(
