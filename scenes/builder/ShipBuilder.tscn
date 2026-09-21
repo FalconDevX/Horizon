@@ -55,6 +55,7 @@ layout_mode = 2
 theme_override_constants/separation = 12
 
 [node name="Title" type="Label" parent="Margin/RootHBox/LeftColumn/TitleRow"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
@@ -142,13 +143,11 @@ vertical_scroll_mode = 1
 script = ExtResource("9_fastscroll")
 wheel_step = 120
 
-[node name="InventoryGrid" type="GridContainer" parent="Margin/RootHBox/LeftColumn/ModuleBaySection/InventoryScroll"]
+[node name="InventoryGrid" type="VBoxContainer" parent="Margin/RootHBox/LeftColumn/ModuleBaySection/InventoryScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/h_separation = 8
-theme_override_constants/v_separation = 8
-columns = 4
+theme_override_constants/separation = 10
 
 [node name="StatsResizeHandle" type="ColorRect" parent="Margin/RootHBox"]
 unique_name_in_owner = true

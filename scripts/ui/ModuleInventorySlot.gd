@@ -16,12 +16,38 @@ signal module_selected(module: ModuleData)
 var _icon: TextureRect
 var _label: Label
 var _shape_host: Control
+var _panel_style: StyleBoxFlat
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_ensure_children()
+	_apply_style()
 	_refresh()
+	mouse_entered.connect(_on_mouse_entered)
+	mouse_exited.connect(_on_mouse_exited)
+
+
+func _apply_style() -> void:
+	_panel_style = StyleBoxFlat.new()
+	_panel_style.bg_color = HudPanelStyle.COLOR_BG_SURFACE
+	_panel_style.border_color = HudPanelStyle.COLOR_BORDER_DEFAULT
+	_panel_style.set_border_width_all(1)
+	_panel_style.set_corner_radius_all(5)
+	_panel_style.set_content_margin_all(6)
+	add_theme_stylebox_override("panel", _panel_style)
+
+
+func _on_mouse_entered() -> void:
+	if _panel_style != null:
+		_panel_style.border_color = HudPanelStyle.COLOR_CYAN
+		_panel_style.bg_color = HudPanelStyle.COLOR_BG_SURFACE.lightened(0.06)
+
+
+func _on_mouse_exited() -> void:
+	if _panel_style != null:
+		_panel_style.border_color = HudPanelStyle.COLOR_BORDER_DEFAULT
+		_panel_style.bg_color = HudPanelStyle.COLOR_BG_SURFACE
 
 
 func setup(module: ModuleData) -> void:
@@ -62,6 +88,9 @@ func _ensure_children() -> void:
 	_label = Label.new()
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_label.add_theme_font_override("font", HudPanelStyle.get_font())
+	_label.add_theme_font_size_override("font_size", 11)
+	_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_SECONDARY)
 	vbox.add_child(_label)
 
 

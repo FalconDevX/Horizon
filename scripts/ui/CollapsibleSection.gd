@@ -36,9 +36,12 @@ func setup(p_title: String, p_content: Control, start_expanded: bool = true) -> 
 	title = p_title
 	_content = p_content
 	_ensure_header()
-	if _content.get_parent() == self:
-		move_child(_header, 0)
-		move_child(_content, 1)
+	if _content.get_parent() != self:
+		if _content.get_parent() != null:
+			_content.get_parent().remove_child(_content)
+		add_child(_content)
+	move_child(_header, 0)
+	move_child(_content, 1)
 	expanded = start_expanded
 
 
@@ -62,9 +65,29 @@ func _ensure_header() -> void:
 	_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_header.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_header.pressed.connect(toggle)
+	_style_header()
 	add_child(_header)
 	move_child(_header, 0)
 	_refresh_header()
+
+
+func _style_header() -> void:
+	var flat := StyleBoxFlat.new()
+	flat.bg_color = HudPanelStyle.COLOR_BG_SURFACE
+	flat.border_color = HudPanelStyle.COLOR_BORDER_DEFAULT
+	flat.set_border_width_all(1)
+	flat.set_corner_radius_all(4)
+	flat.set_content_margin_all(6)
+	var flat_hover := flat.duplicate() as StyleBoxFlat
+	flat_hover.border_color = HudPanelStyle.COLOR_CYAN
+	_header.add_theme_stylebox_override("normal", flat)
+	_header.add_theme_stylebox_override("hover", flat_hover)
+	_header.add_theme_stylebox_override("pressed", flat_hover)
+	_header.add_theme_stylebox_override("focus", flat)
+	_header.add_theme_font_override("font", HudPanelStyle.get_font())
+	_header.add_theme_font_size_override("font_size", 13)
+	_header.add_theme_color_override("font_color", HudPanelStyle.COLOR_CYAN)
+	_header.add_theme_color_override("font_hover_color", HudPanelStyle.COLOR_TEXT_PRIMARY)
 
 
 func _refresh_header() -> void:
