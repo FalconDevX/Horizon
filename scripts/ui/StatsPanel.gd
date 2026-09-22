@@ -23,6 +23,7 @@ const DISPLAY_KEYS: Array[String] = [
 	"energy_generation",
 	"energy_capacity",
 	"net_energy",
+	"shield_strength",
 	"damage",
 	"repair_rate",
 	"max_heat",

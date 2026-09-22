@@ -13,6 +13,8 @@ signal ship_clicked
 @export var fuel_capacity: float = 0.0
 @export var energy_consumption: float = 0.0
 @export var energy_generation: float = 0.0
+@export var energy_capacity: float = 0.0
+@export var shield_strength: float = 0.0
 
 ## Fallback when the shipyard has no modules yet (keeps the default orbital ship flyable).
 const DEFAULT_SHIP_MASS := 10.0
@@ -60,6 +62,8 @@ func apply_module_stats(stats: Dictionary) -> void:
 		fuel_capacity = 0.0
 		energy_consumption = 0.0
 		energy_generation = 0.0
+		energy_capacity = 0.0
+		shield_strength = 0.0
 		return
 
 	ship_mass = maxf(float(stats.get("mass", 0.0)), MIN_SHIP_MASS)
@@ -69,6 +73,8 @@ func apply_module_stats(stats: Dictionary) -> void:
 	fuel_capacity = maxf(float(stats.get("fuel_capacity", 0.0)), 0.0)
 	energy_consumption = maxf(float(stats.get("energy_consumption", 0.0)), 0.0)
 	energy_generation = maxf(float(stats.get("energy_generation", 0.0)), 0.0)
+	energy_capacity = maxf(float(stats.get("energy_capacity", 0.0)), 0.0)
+	shield_strength = maxf(float(stats.get("shield_strength", 0.0)), 0.0)
 
 
 func _on_click_area_input_event(
