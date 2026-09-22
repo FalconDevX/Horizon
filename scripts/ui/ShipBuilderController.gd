@@ -17,6 +17,11 @@ signal closed
 @onready var _center_view_btn: Button = %CenterViewButton
 @onready var _close_btn: Button = %CloseButton
 @onready var _title: Label = %Title
+@onready var _exit_confirm: Control = %ExitConfirm
+@onready var _exit_scrim: Control = %Scrim
+@onready var _exit_dialog_panel: PanelContainer = %DialogPanel
+@onready var _save_exit_btn: Button = %SaveExitButton
+@onready var _discard_exit_btn: Button = %DiscardExitButton
 
 const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
@@ -74,7 +79,13 @@ func _ready() -> void:
 		_center_view_btn.pressed.connect(_on_center_view_pressed)
 
 	if _close_btn != null:
-		_close_btn.pressed.connect(func() -> void: closed.emit())
+		_close_btn.pressed.connect(_show_exit_confirm)
+	if _exit_scrim != null:
+		_exit_scrim.gui_input.connect(_on_scrim_gui_input)
+	if _save_exit_btn != null:
+		_save_exit_btn.pressed.connect(_on_save_exit_pressed)
+	if _discard_exit_btn != null:
+		_discard_exit_btn.pressed.connect(_on_discard_exit_pressed)
 
 	# Center once after first layout.
 	call_deferred("_on_center_view_pressed")
@@ -83,6 +94,33 @@ func _ready() -> void:
 func _on_center_view_pressed() -> void:
 	if _grid_scroll != null:
 		_grid_scroll.center_view()
+
+
+func _show_exit_confirm() -> void:
+	if _exit_confirm != null:
+		_exit_confirm.visible = true
+
+
+func _hide_exit_confirm() -> void:
+	if _exit_confirm != null:
+		_exit_confirm.visible = false
+
+
+func _on_scrim_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_hide_exit_confirm()
+
+
+func _on_save_exit_pressed() -> void:
+	# Placeholder: no persistence layer yet, so this currently behaves like a
+	# normal exit. Wire real blueprint saving here once it exists.
+	_hide_exit_confirm()
+	closed.emit()
+
+
+func _on_discard_exit_pressed() -> void:
+	_hide_exit_confirm()
+	closed.emit()
 
 
 func _on_bay_resized(new_height: float) -> void:
@@ -104,6 +142,7 @@ func _style_chrome() -> void:
 		_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
 	_style_topbar_button(_center_view_btn)
 	_style_topbar_button(_close_btn)
+	_style_exit_confirm()
 
 
 func _style_topbar_button(btn: Button) -> void:
@@ -128,6 +167,21 @@ func _style_topbar_button(btn: Button) -> void:
 	btn.add_theme_font_size_override("font_size", 13)
 	btn.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_SECONDARY)
 	btn.add_theme_color_override("font_hover_color", HudPanelStyle.COLOR_CYAN)
+
+
+func _style_exit_confirm() -> void:
+	if _exit_dialog_panel != null:
+		var flat := StyleBoxFlat.new()
+		flat.bg_color = HudPanelStyle.COLOR_BG_SURFACE
+		flat.border_color = HudPanelStyle.COLOR_BORDER_DEFAULT
+		flat.set_border_width_all(1)
+		flat.set_corner_radius_all(6)
+		_exit_dialog_panel.add_theme_stylebox_override("panel", flat)
+
+	_style_topbar_button(_discard_exit_btn)
+	_style_topbar_button(_save_exit_btn)
+	if _save_exit_btn != null:
+		_save_exit_btn.add_theme_color_override("font_color", HudPanelStyle.COLOR_CYAN)
 
 
 func _populate_inventory() -> void:
