@@ -27,11 +27,11 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 ]
 
 const CATEGORY_LABELS: Dictionary = {
-	ModuleData.Category.HULL: "Kadłuby",
-	ModuleData.Category.CONNECTOR: "Łączniki",
-	ModuleData.Category.ENGINE: "Silniki",
-	ModuleData.Category.WEAPON: "Uzbrojenie",
-	ModuleData.Category.UTILITY: "Moduły użytkowe",
+	ModuleData.Category.HULL: "Hulls",
+	ModuleData.Category.CONNECTOR: "Connectors",
+	ModuleData.Category.ENGINE: "Engines",
+	ModuleData.Category.WEAPON: "Weapons",
+	ModuleData.Category.UTILITY: "Utility",
 }
 
 var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[ModuleData]
@@ -233,24 +233,24 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 		return
 	var link := ""
 	if not _ship_hull.are_hulls_connected():
-		link = " ⚠ Kadłuby niepołączone — użyj Łącznika."
+		link = " ⚠ Hulls not connected - use a Connector."
 	if module == null:
-		_hint.text = "Ctrl+kółko = zoom. ŚPM = przesuwanie. Kółko = góra/dół, Shift+kółko = lewo/prawo. Przy module: kółko = obrót.%s" % link
+		_hint.text = "Wheel = zoom. Middle-drag = pan. Holding a module: wheel = rotate.%s" % link
 	else:
 		var bounds := module.get_bounding_size(rotation)
-		var floor_hint := "wolne pole stoczni"
+		var floor_hint := "free shipyard cell"
 		match module.category:
 			ModuleData.Category.HULL:
-				floor_hint = "stocznia (bez styku z innym kadłubem)"
+				floor_hint = "shipyard (no contact with another hull)"
 			ModuleData.Category.CONNECTOR:
-				floor_hint = "pusta kratka między kadłubami"
+				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
-				floor_hint = "obok pokładu (nie na podłodze)"
+				floor_hint = "next to a deck (not on the floor)"
 			ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
-				floor_hint = "pokład"
+				floor_hint = "deck"
 			_:
 				pass
-		_hint.text = "W ręku: %s → %s | obrót %d° | %dx%d%s" % [
+		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s" % [
 			module.title,
 			floor_hint,
 			rotation * 90,

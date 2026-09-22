@@ -1,11 +1,11 @@
 class_name ShipHull
 extends Node2D
 ## Shipyard build grid with two layers:
-##   structure  — HULL pieces + CONNECTOR (łącznik)
-##   equipment  — engines/utilities on DECK; weapons on empty cells adjacent to DECK
+##   structure  - HULL pieces + CONNECTOR
+##   equipment  - engines/utilities on DECK; weapons on empty cells adjacent to DECK
 ##
 ## Rules:
-##   - Hull pieces may not touch each other edge-to-edge (must use łącznik).
+##   - Hull pieces may not touch each other edge-to-edge (must use a connector).
 ##   - Weapons mount next to hull floor (not on the floor).
 ##   - Moving a hull keeps its attached modules (cargo).
 

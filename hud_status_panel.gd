@@ -74,8 +74,8 @@ func _draw() -> void:
 	)
 
 
-# Chip to tylko kropka + tekst, bez ramki/tła - jak w referencyjnym
-# wzorze HUD-u (elementy "pływają" na tle zamiast siedzieć w boksach).
+# A chip is just a dot + text, no border/background - matches the
+# reference HUD look (elements "float" on the background instead of sitting in boxes).
 func _draw_chip(rect: Rect2, label: String, on: bool, warn: bool, on_color: Color) -> void:
 	var color: Color = COLOR_OFF
 	if on:

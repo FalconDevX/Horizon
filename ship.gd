@@ -320,8 +320,8 @@ func _draw_rcs_thruster(local_pos: Vector2, outward_dir: Vector2, active: bool, 
 	)
 
 
-# Krawędź faluje sinusoidalnie zamiast być idealnie prostym trójkątem -
-# to samo podejście co przy głównym silniku (patrz ship_blueprint_panel.gd).
+# The edge waves sinusoidally instead of being a perfectly straight triangle -
+# same approach as the main engine (see ship_blueprint_panel.gd).
 func _draw_wavy_flame(
 	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, color: Color
 ) -> void:
@@ -345,9 +345,9 @@ func _draw_wavy_flame(
 	draw_colored_polygon(points, color)
 
 
-# Kilka drobnych iskier odrywających się od strumienia, migających
-# niezależnie od głównego płomienia - to samo podejście co w
-# ship_blueprint_panel.gd, żeby statek w kosmosie wyglądał identycznie.
+# A few tiny sparks breaking off the stream, flickering independently
+# of the main flame - same approach as ship_blueprint_panel.gd, so the
+# ship looks identical out in space.
 func _draw_sparks(
 	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
 ) -> void:
@@ -363,9 +363,9 @@ func _draw_sparks(
 		draw_circle(pos, radius, Color(spark_color, alpha))
 
 
-# Wielowarstwowy płomień głównego silnika (zewnętrzny + środkowy wavy-flame,
-# rdzeń jako trójkąt, iskry) - ten sam wygląd co w podglądzie statku
-# w prawym dolnym rogu (ship_blueprint_panel.gd).
+# Multi-layer main engine flame (outer + middle wavy-flame, triangle core,
+# sparks) - same look as the ship preview in the bottom-right corner
+# (ship_blueprint_panel.gd).
 func _draw_engine_flame(tip: Vector2) -> void:
 	var direction := Vector2.LEFT
 	var side: Vector2 = direction.orthogonal()

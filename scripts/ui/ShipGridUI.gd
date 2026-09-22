@@ -211,7 +211,7 @@ func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
 		_hover_rotation = _held_rotation
 	else:
 		_hover_rotation = int(data.get("rotation", 0))
-	_hover_origin = _position_to_origin(at_position)
+	_hover_origin = _centered_origin(at_position, module, _hover_rotation)
 	_hover_valid = ship_hull.can_place(module, _hover_origin, _hover_rotation)
 	_preview.queue_redraw()
 	return _hover_valid
@@ -224,7 +224,7 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 		return
 
 	var rotation := _held_rotation if _held_module == module else int(data.get("rotation", 0))
-	var origin := _position_to_origin(at_position)
+	var origin := _centered_origin(at_position, module, rotation)
 	var placed := ship_hull.attach_module(module, origin, rotation)
 	if placed != null:
 		placement_succeeded.emit(placed)
@@ -264,7 +264,7 @@ func _gui_input(event: InputEvent) -> void:
 		if _held_module != null:
 			_hover_module = _held_module
 			_hover_rotation = _held_rotation
-			_hover_origin = _position_to_origin(motion.position)
+			_hover_origin = _centered_origin(motion.position, _held_module, _held_rotation)
 			_refresh_hover_validity()
 			_preview.queue_redraw()
 		return
@@ -276,26 +276,12 @@ func _gui_input(event: InputEvent) -> void:
 
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var dir := -1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1
-			# Ctrl → zoom. Holding module → rotate. Shift → horizontal scroll. Else → vertical.
-			if mb.ctrl_pressed:
+			# Ctrl always zooms. Otherwise: holding a module rotates it, empty hand zooms.
+			# Panning is middle-mouse-drag only - the wheel never scrolls the view.
+			if mb.ctrl_pressed or _held_module == null:
 				adjust_zoom(-dir) # wheel up → zoom in
-			elif _held_module != null and not mb.shift_pressed:
+			else:
 				rotate_held(dir)
-			elif _scroll_parent != null:
-				if mb.shift_pressed:
-					_scroll_parent.scroll_horizontal_by(dir * PannableScrollContainer.WHEEL_STEP)
-				else:
-					_scroll_parent.scroll_vertical_by(dir * PannableScrollContainer.WHEEL_STEP)
-			accept_event()
-			return
-
-		# Mouse tilt wheel (if available).
-		if mb.button_index == MOUSE_BUTTON_WHEEL_LEFT and _scroll_parent != null:
-			_scroll_parent.scroll_horizontal_by(-PannableScrollContainer.WHEEL_STEP)
-			accept_event()
-			return
-		if mb.button_index == MOUSE_BUTTON_WHEEL_RIGHT and _scroll_parent != null:
-			_scroll_parent.scroll_horizontal_by(PannableScrollContainer.WHEEL_STEP)
 			accept_event()
 			return
 
@@ -363,7 +349,7 @@ func _handle_left_click(cell: Vector2i) -> void:
 		return
 
 	if _held_module != null:
-		var origin := cell
+		var origin := _hover_origin
 		if _held_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
 			if ship_hull.can_place_hull_with_cargo(
 				_held_module, origin, _held_rotation, _held_cargo, _held_pick_rotation
@@ -559,6 +545,16 @@ func _position_to_origin(at_position: Vector2) -> Vector2i:
 		floori(at_position.x / cell_size.x),
 		floori(at_position.y / cell_size.y)
 	)
+
+
+## Cell under the cursor, offset so the module's footprint is centered on the
+## cursor instead of anchored at its top-left cell.
+func _centered_origin(at_position: Vector2, module: ModuleData, rotation: int) -> Vector2i:
+	var cell := _position_to_origin(at_position)
+	if module == null:
+		return cell
+	var bounds := module.get_bounding_size(rotation)
+	return cell - Vector2i(bounds.x / 2, bounds.y / 2)
 
 
 func _clear_hover() -> void:

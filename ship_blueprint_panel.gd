@@ -34,9 +34,9 @@ func set_state(p_throttle: float, p_rcs_command: Vector2) -> void:
 	queue_redraw()
 
 
-# Klik na podgląd statku = to samo co klik na statek w świecie gry
-# (kamera zaczyna go śledzić) - łatwiej trafić w duży model w rogu niż
-# w malutki znacznik statku po oddaleniu kamery.
+# Clicking the ship preview = same as clicking the ship in the game world
+# (camera starts following it) - easier to hit the large model in the corner
+# than the tiny ship marker once the camera has zoomed out.
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		clicked.emit()
@@ -89,9 +89,9 @@ func _fit_rect() -> Rect2:
 	return Rect2(Vector2(origin_x, TOP_PADDING), fitted_size)
 
 
-# Burst z falującą krawędzią (kilka punktów z drgającym przesunięciem
-# zamiast prostego trójkąta) + iskry lecące wzdłuż strumienia - więcej
-# "życia" niż płaski kształt, ale nadal tanie (bez cząsteczek/shaderów).
+# A burst with a wavy edge (a few points with a jittering offset instead
+# of a plain triangle) + sparks flying along the stream - more "life"
+# than a flat shape, but still cheap (no particles/shaders).
 func _draw_engine_flame(image_rect: Rect2, scale_ref: float) -> void:
 	if throttle <= 0.0:
 		return
@@ -122,9 +122,9 @@ func _draw_engine_flame(image_rect: Rect2, scale_ref: float) -> void:
 	_draw_sparks(tip, direction, side, outer_half_width, length, t, Color(1.0, 0.8, 0.4))
 
 
-# Trójkąt zamieniony na kilka segmentów z bocznym driftem (sinusoidalnie
-# w czasie i wzdłuż długości) - krawędź faluje jak prawdziwy strumień
-# spalin zamiast być idealnie prosta.
+# The triangle is replaced by a few segments with sideways drift (sinusoidal
+# over time and along the length) - the edge waves like a real exhaust
+# stream instead of being perfectly straight.
 func _draw_wavy_flame(
 	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, color: Color
 ) -> void:
@@ -148,8 +148,8 @@ func _draw_wavy_flame(
 	draw_colored_polygon(points, color)
 
 
-# Kilka drobnych iskier odrywających się od strumienia, migających
-# niezależnie od głównego płomienia (inna faza/częstotliwość).
+# A few tiny sparks breaking off the stream, flickering independently
+# of the main flame (different phase/frequency).
 func _draw_sparks(
 	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
 ) -> void:

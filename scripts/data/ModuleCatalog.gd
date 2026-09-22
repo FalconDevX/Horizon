@@ -17,55 +17,55 @@ static func all_buildable_modules() -> Array[ModuleData]:
 
 static func hull_modules() -> Array[ModuleData]:
 	return [
-		_hull_module(HullData.make_lekki(), &"hull_lekki"),
-		_hull_module(HullData.make_standardowy(), &"hull_standardowy"),
-		_hull_module(HullData.make_ciezki(), &"hull_ciezki"),
+		_hull_module(HullData.make_light(), &"hull_light"),
+		_hull_module(HullData.make_standard(), &"hull_standard"),
+		_hull_module(HullData.make_heavy(), &"hull_heavy"),
 	]
 
 
 static func connector() -> ModuleData:
-	var m := _base("Łącznik", &"connector", ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
+	var m := _base("Connector", &"connector", ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
 	m.texture = make_shape_texture(m.grid_shape, ModuleData.Category.CONNECTOR)
 	return m
 
 
-## Skala gwiazdek (1–5) → wartości gry:
-##   ciąg:    8 / 16 / 24 / 32 / 40
-##   paliwo:  1 / 2.5 / 4.5 / 7 / 10   (wyżej = większe zużycie)
-##   energia: 1.5 / 4 / 8 / 13 / 18
-##   masa:    3 / 6 / 10 / 15 / 22
+## Star rating (1-5) -> in-game values:
+##   thrust: 8 / 16 / 24 / 32 / 40
+##   fuel:   1 / 2.5 / 4.5 / 7 / 10   (higher = more consumption)
+##   energy: 1.5 / 4 / 8 / 13 / 18
+##   mass:   3 / 6 / 10 / 15 / 22
 static func engines() -> Array[ModuleData]:
 	return [
-		# Chemiczny:  ciąg ★★★★★  paliwo ★★★★★  energia ★☆☆☆☆  masa ★★☆☆☆
-		_engine("Chemiczny", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
-		# Nuklearny:  ciąg ★★★★☆  paliwo ★★★☆☆  energia ★★☆☆☆  masa ★★★★★
-		_engine("Nuklearny termiczny", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
-		# Jonowy:     ciąg ★☆☆☆☆  paliwo ★☆☆☆☆  energia ★★★★★  masa ★☆☆☆☆
-		_engine("Jonowy", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
-		# Plazmowy:   ciąg ★★★☆☆  paliwo ★★☆☆☆  energia ★★★★☆  masa ★★★☆☆
-		_engine("Plazmowy", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
-		# Fuzyjny:    ciąg ★★★★★  paliwo ★☆☆☆☆  energia ★★★★★  masa ★★★★★
-		_engine("Fuzyjny", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
+		# Chemical:        thrust ***** fuel ***** energy *     mass **
+		_engine("Chemical", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
+		# Nuclear thermal: thrust ****  fuel ***   energy **    mass *****
+		_engine("Nuclear Thermal", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
+		# Ion:             thrust *     fuel *      energy ***** mass *
+		_engine("Ion", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
+		# Plasma:          thrust ***   fuel **     energy ****  mass ***
+		_engine("Plasma", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
+		# Fusion:          thrust ***** fuel *      energy ***** mass *****
+		_engine("Fusion", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
 	]
 
 
 static func weapons() -> Array[ModuleData]:
 	return [
-		_weapon("Działo Gaussa", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, _shape_2x1()),
+		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, _shape_2x1()),
 		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, _shape_2x1()),
 		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, _shape_1x1()),
-		_weapon("Działo cząsteczkowe", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, _shape_3x1()),
+		_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, _shape_3x1()),
 	]
 
 
 static func utilities() -> Array[ModuleData]:
-	var repair := _base("Moduł Naprawczy", &"util_repair", ModuleData.Category.UTILITY, 5.0, 15.0, 2.0, _shape_1x1())
+	var repair := _base("Repair Module", &"util_repair", ModuleData.Category.UTILITY, 5.0, 15.0, 2.0, _shape_1x1())
 	repair.repair_rate = 4.0
 
 	var generator := _base("Generator", &"util_generator", ModuleData.Category.UTILITY, 8.0, 20.0, 0.0, _shape_2x1())
 	generator.energy_generation = 25.0
 
-	var battery := _base("Baterie", &"util_battery", ModuleData.Category.UTILITY, 4.0, 12.0, 0.0, _shape_1x1())
+	var battery := _base("Battery", &"util_battery", ModuleData.Category.UTILITY, 4.0, 12.0, 0.0, _shape_1x1())
 	battery.capacity = 60.0
 
 	return [repair, generator, battery]
@@ -73,9 +73,9 @@ static func utilities() -> Array[ModuleData]:
 
 static func hulls() -> Array[HullData]:
 	return [
-		HullData.make_lekki(),
-		HullData.make_standardowy(),
-		HullData.make_ciezki(),
+		HullData.make_light(),
+		HullData.make_standard(),
+		HullData.make_heavy(),
 	]
 
 
@@ -135,7 +135,7 @@ static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = 
 
 static func _hull_module(hull: HullData, id: StringName) -> ModuleData:
 	var m := ModuleData.new()
-	m.title = "Kadłub %s" % hull.title
+	m.title = "%s Hull" % hull.title
 	m.id = id
 	m.category = ModuleData.Category.HULL
 	m.hull_data = hull

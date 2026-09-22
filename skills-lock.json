@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "figma-icons-iconify": {
+      "source": "douinc/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/figma-icons-iconify/SKILL.md",
+      "computedHash": "743db53c3103887fc5137f441a02b6f8717586307c4c088d80048f829a0b69ac"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "106acf230014cbb43ca34e6410371321b56ca742f9ee0442e8ec05bf02eb0384"
+    },
+    "ui-unslop": {
+      "source": "Microck/ui-unslop",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "d280eb116c3f276e575b44d7ab6bb3f96887bf14a28a01e21c9696170cd32a1e"
+    }
+  }
+}

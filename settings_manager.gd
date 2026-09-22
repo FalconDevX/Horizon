@@ -6,7 +6,7 @@ const SAVE_PATH := "user://settings.cfg"
 # Audio settings
 var master_volume: float = 1.0
 var master_muted: bool = false
-var music_volume: float = 0.7
+var music_volume: float = 0.35
 var music_muted: bool = true
 var sfx_volume: float = 0.8
 var sfx_muted: bool = false

@@ -55,6 +55,7 @@ enum AutopilotPhase {
 @onready var eccentricity_label: Label = $HUD/PanelContainer/VBoxContainer/EccentricityLabel
 @onready var music_player: AudioStreamPlayer = $MusicPlayer
 @onready var settings_menu: Control = $HUD/SettingsMenu
+@onready var pause_menu: Control = $HUD/PauseMenu
 @onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
@@ -62,6 +63,7 @@ enum AutopilotPhase {
 
 var settings_mgr: SettingsManager
 var music_mgr: MusicManager
+var _settings_opened_from_pause: bool = false
 var _is_first_track_notification := true
 var _builder_controller: ShipBuilderController
 
@@ -211,11 +213,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		and event.keycode == KEY_ESCAPE
 		and (ship_builder_panel == null or not ship_builder_panel.visible)
 	):
-		toggle_settings_menu()
+		_handle_escape()
 		get_viewport().set_input_as_handled()
 		return
 
 	if settings_menu != null and settings_menu.visible:
+		return
+
+	if pause_menu != null and pause_menu.visible:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_B:
@@ -366,6 +371,9 @@ func _ready() -> void:
 
 	settings_menu.setup(settings_mgr, music_mgr)
 	settings_button.pressed.connect(toggle_settings_menu)
+	settings_menu.closed.connect(_on_settings_menu_closed)
+	pause_menu.settings_requested.connect(_on_pause_settings_requested)
+	pause_menu.exit_requested.connect(_on_pause_exit_requested)
 	ship_builder_panel.closed.connect(close_ship_builder)
 	_bind_ship_builder_to_ship()
 	if time_warp_panel != null:
@@ -1849,10 +1857,10 @@ func update_hud() -> void:
 	update_autopilot_hud()
 
 
-# Dwukolumnowy wiersz "Label    Value" zamiast "● Label: Value" - działa
-# tylko dlatego, że Theme_hud ma czcionkę monospace (Cascadia Mono/
-# Consolas/Courier New), więc stałe wyrównanie spacjami faktycznie się
-# wyrównuje w kolumny, tak jak w referencyjnym wzorze HUD-u.
+# A two-column "Label    Value" row instead of "* Label: Value" - this only
+# works because Theme_hud uses a monospace font (Cascadia Mono/Consolas/
+# Courier New), so fixed space-padding actually lines up into columns,
+# matching the reference HUD look.
 const HUD_LABEL_WIDTH := 14
 
 
@@ -2473,7 +2481,34 @@ func toggle_settings_menu() -> void:
 	if settings_menu.visible:
 		settings_menu.close_menu()
 	else:
+		_settings_opened_from_pause = false
 		settings_menu.open_menu()
+
+
+func _handle_escape() -> void:
+	if settings_menu.visible:
+		settings_menu.close_menu()
+		return
+	if pause_menu.visible:
+		pause_menu.close()
+		return
+	pause_menu.open()
+
+
+func _on_pause_settings_requested() -> void:
+	pause_menu.close()
+	_settings_opened_from_pause = true
+	settings_menu.open_menu()
+
+
+func _on_settings_menu_closed() -> void:
+	if _settings_opened_from_pause:
+		_settings_opened_from_pause = false
+		pause_menu.open()
+
+
+func _on_pause_exit_requested() -> void:
+	get_tree().change_scene_to_file("res://scenes/menu/MainMenu.tscn")
 
 
 func toggle_ship_builder() -> void:
@@ -2957,12 +2992,12 @@ func get_ship_acceleration_precise() -> Vector2:
 
 
 const ORBIT_TRAIL_POINTS_PER_ORBIT := 300
-# Linia to pełne koło (300+1 punktów) przebudowywane od zera - Line2D
-# przebudowuje CAŁĄ geometrię przy KAŻDYM add_point, więc robienie tego
-# co klatkę (x8 planet) było bardzo drogie i przy dużym time_scale (gdzie
-# fizyka i tak zjada więcej czasu na klatkę) dawało odczuwalny spadek FPS.
-# Promień orbity zmienia się bardzo powoli - przebudowujemy więc TYLKO
-# gdy realnie odjechał o więcej niż promil, zamiast bezwarunkowo co klatkę.
+# The line is a full circle (300+1 points) rebuilt from scratch - Line2D
+# rebuilds its ENTIRE geometry on EVERY add_point, so doing this every
+# frame (x8 planets) was very expensive and caused a noticeable FPS drop
+# at high time_scale (where physics already eats more time per frame).
+# The orbit radius changes very slowly, so we only rebuild when it has
+# actually moved by more than a tenth of a percent, instead of every frame.
 const ORBIT_RADIUS_REBUILD_THRESHOLD := 0.001
 
 

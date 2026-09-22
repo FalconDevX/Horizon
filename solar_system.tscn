@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://music_toast.gd" id="14_music_toast"]
 [ext_resource type="Script" path="res://settings_menu.gd" id="15_settings_menu"]
 [ext_resource type="PackedScene" path="res://scenes/builder/ShipBuilder.tscn" id="16_ship_builder"]
+[ext_resource type="Script" path="res://pause_menu.gd" id="17_pause_menu"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
 radius = 20.0
@@ -576,3 +577,50 @@ script = ExtResource("15_settings_menu")
 
 [node name="ShipBuilderPanel" parent="HUD" instance=ExtResource("16_ship_builder")]
 visible = false
+
+[node name="PauseMenu" type="Control" parent="HUD"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -150.0
+offset_top = -110.0
+offset_right = 150.0
+offset_bottom = 110.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+visible = false
+script = ExtResource("17_pause_menu")
+
+[node name="Margin" type="MarginContainer" parent="HUD/PauseMenu"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="HUD/PauseMenu/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="HUD/PauseMenu/Margin/VBox"]
+layout_mode = 2
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
+theme_override_font_sizes/font_size = 18
+text = "PAUSED"
+
+[node name="SettingsButton" type="Button" parent="HUD/PauseMenu/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Settings"
+
+[node name="ExitButton" type="Button" parent="HUD/PauseMenu/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Save and Exit"

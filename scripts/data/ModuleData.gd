@@ -7,7 +7,7 @@ enum Category {
 	ENGINE,
 	WEAPON,
 	UTILITY,
-	CONNECTOR, ## 1×1 łącznik — bridges separate hull pieces
+	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
 }
 
 @export var title: String = "Module"
@@ -153,7 +153,7 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 func category_name() -> String:
 	match category:
 		Category.HULL:
-			return "Kadłub"
+			return "Hull"
 		Category.ENGINE:
 			return "Engine"
 		Category.WEAPON:
@@ -161,6 +161,6 @@ func category_name() -> String:
 		Category.UTILITY:
 			return "Utility"
 		Category.CONNECTOR:
-			return "Łącznik"
+			return "Connector"
 		_:
 			return "Unknown"
