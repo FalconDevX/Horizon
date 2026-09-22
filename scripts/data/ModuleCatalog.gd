@@ -11,7 +11,10 @@ static func all_buildable_modules() -> Array[ModuleData]:
 	list.append(connector())
 	list.append_array(engines())
 	list.append_array(weapons())
+	list.append_array(shields())
 	list.append_array(utilities())
+	list.append_array(fuel_tanks())
+	list.append_array(batteries())
 	return list
 
 
@@ -65,10 +68,215 @@ static func utilities() -> Array[ModuleData]:
 	var generator := _base("Generator", &"util_generator", ModuleData.Category.UTILITY, 8.0, 20.0, 0.0, _shape_2x1())
 	generator.energy_generation = 25.0
 
-	var battery := _base("Battery", &"util_battery", ModuleData.Category.UTILITY, 4.0, 12.0, 0.0, _shape_1x1())
-	battery.capacity = 60.0
+	return [repair, generator]
 
-	return [repair, generator, battery]
+
+## Three sizes × two variants (standard / armored), same layout as fuel tanks.
+## Armored: +mass, +HP, slightly less energy capacity.
+static func batteries() -> Array[ModuleData]:
+	return [
+		_battery("Battery S", &"battery_s", false, 3.0, 10.0, 40.0, _shape_1x1()),
+		_battery("Battery S (Armored)", &"battery_s_armored", true, 5.5, 24.0, 32.0, _shape_1x1()),
+		_battery("Battery M", &"battery_m", false, 6.0, 16.0, 100.0, _shape_2x1()),
+		_battery("Battery M (Armored)", &"battery_m_armored", true, 11.0, 40.0, 85.0, _shape_2x1()),
+		_battery("Battery L", &"battery_l", false, 12.0, 28.0, 220.0, _shape_2x2()),
+		_battery("Battery L (Armored)", &"battery_l_armored", true, 22.0, 65.0, 185.0, _shape_2x2()),
+	]
+
+
+static func _battery(
+	title: String,
+	id: StringName,
+	armored: bool,
+	mass: float,
+	health: float,
+	energy_cap: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _base(title, id, ModuleData.Category.BATTERY, mass, health, 0.0, shape)
+	m.capacity = energy_cap
+	m.texture = make_battery_texture(shape, armored)
+	return m
+
+
+## Three shield types — light / balanced / heavy.
+static func shields() -> Array[ModuleData]:
+	return [
+		_shield("Deflector Shield", &"shield_deflector", 8.0, 18.0, 4.0, 60.0, _shape_1x1()),
+		_shield("Barrier Shield", &"shield_barrier", 14.0, 28.0, 8.0, 120.0, _shape_2x1()),
+		_shield("Aegis Shield", &"shield_aegis", 24.0, 45.0, 14.0, 220.0, _shape_2x2()),
+	]
+
+
+static func _shield(
+	title: String,
+	id: StringName,
+	mass: float,
+	health: float,
+	energy: float,
+	strength: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _base(title, id, ModuleData.Category.SHIELD, mass, health, energy, shape)
+	m.shield_strength = strength
+	m.texture = make_shape_texture(shape, ModuleData.Category.SHIELD)
+	return m
+
+
+## Three sizes × two variants (standard / armored).
+## Armored: +mass, +HP, slightly less fuel capacity.
+static func fuel_tanks() -> Array[ModuleData]:
+	return [
+		_fuel_tank("Fuel Tank S", &"fuel_s", false, 4.0, 12.0, 40.0, _shape_1x1()),
+		_fuel_tank("Fuel Tank S (Armored)", &"fuel_s_armored", true, 7.0, 28.0, 32.0, _shape_1x1()),
+		_fuel_tank("Fuel Tank M", &"fuel_m", false, 8.0, 20.0, 100.0, _shape_2x1()),
+		_fuel_tank("Fuel Tank M (Armored)", &"fuel_m_armored", true, 14.0, 48.0, 85.0, _shape_2x1()),
+		_fuel_tank("Fuel Tank L", &"fuel_l", false, 16.0, 35.0, 220.0, _shape_2x2()),
+		_fuel_tank("Fuel Tank L (Armored)", &"fuel_l_armored", true, 28.0, 80.0, 185.0, _shape_2x2()),
+	]
+
+
+static func _fuel_tank(
+	title: String,
+	id: StringName,
+	armored: bool,
+	mass: float,
+	health: float,
+	fuel: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _base(title, id, ModuleData.Category.FUEL_TANK, mass, health, 0.0, shape)
+	m.fuel_capacity = fuel
+	m.texture = make_fuel_tank_texture(shape, armored)
+	return m
+
+
+static func make_fuel_tank_texture(
+	shape: Array[Vector2i],
+	armored: bool,
+	rotation: int = 0,
+	cell_px: int = CELL_PX
+) -> Texture2D:
+	var rotated := ModuleData.rotate_shape(shape, rotation)
+	var bounds := ModuleData.bounding_size_of(rotated)
+	if bounds.x <= 0 or bounds.y <= 0:
+		return null
+
+	var img := Image.create(bounds.x * cell_px, bounds.y * cell_px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+
+	var fill := Color(0.22, 0.55, 0.72) if not armored else Color(0.38, 0.42, 0.48)
+	var hi := fill.lightened(0.22)
+	var lo := fill.darkened(0.28)
+	var accent := Color(0.85, 0.7, 0.25, 0.7) if not armored else Color(0.65, 0.55, 0.3, 0.75)
+
+	for c: Vector2i in rotated:
+		var ox := c.x * cell_px
+		var oy := c.y * cell_px
+		for py in cell_px:
+			for px in cell_px:
+				var edge := px < 2 or py < 2 or px >= cell_px - 2 or py >= cell_px - 2
+				var color := hi if (px < 3 or py < 3) else (lo if edge else fill)
+				if px > 4 and py > 4 and px < cell_px - 5 and py < cell_px - 5:
+					color = fill.lerp(Color.WHITE, 0.06)
+				img.set_pixel(ox + px, oy + py, color)
+		_draw_fuel_tank_glyph(img, ox, oy, cell_px, accent, armored)
+
+	return ImageTexture.create_from_image(img)
+
+
+static func _draw_fuel_tank_glyph(
+	img: Image,
+	ox: int,
+	oy: int,
+	cell_px: int,
+	accent: Color,
+	armored: bool
+) -> void:
+	var cx := ox + cell_px / 2
+	var cy := oy + cell_px / 2
+	# Vertical tank body outline.
+	for y in range(-8, 9):
+		img.set_pixel(cx - 5, cy + y, accent)
+		img.set_pixel(cx + 5, cy + y, accent)
+	for x in range(-5, 6):
+		img.set_pixel(cx + x, cy - 8, accent)
+		img.set_pixel(cx + x, cy + 8, accent)
+	# Fuel level bar.
+	for y in range(0, 7):
+		for x in range(-3, 4):
+			img.set_pixel(cx + x, cy + y, Color(accent, 0.45))
+	if armored:
+		# Extra armor braces.
+		for x in range(-5, 6):
+			img.set_pixel(cx + x, cy - 3, accent)
+			img.set_pixel(cx + x, cy + 3, accent)
+
+
+static func make_battery_texture(
+	shape: Array[Vector2i],
+	armored: bool,
+	rotation: int = 0,
+	cell_px: int = CELL_PX
+) -> Texture2D:
+	var rotated := ModuleData.rotate_shape(shape, rotation)
+	var bounds := ModuleData.bounding_size_of(rotated)
+	if bounds.x <= 0 or bounds.y <= 0:
+		return null
+
+	var img := Image.create(bounds.x * cell_px, bounds.y * cell_px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+
+	var fill := Color(0.2, 0.72, 0.45) if not armored else Color(0.35, 0.48, 0.42)
+	var hi := fill.lightened(0.22)
+	var lo := fill.darkened(0.28)
+	var accent := Color(0.7, 0.95, 0.4, 0.75) if not armored else Color(0.55, 0.7, 0.4, 0.8)
+
+	for c: Vector2i in rotated:
+		var ox := c.x * cell_px
+		var oy := c.y * cell_px
+		for py in cell_px:
+			for px in cell_px:
+				var edge := px < 2 or py < 2 or px >= cell_px - 2 or py >= cell_px - 2
+				var color := hi if (px < 3 or py < 3) else (lo if edge else fill)
+				if px > 4 and py > 4 and px < cell_px - 5 and py < cell_px - 5:
+					color = fill.lerp(Color.WHITE, 0.06)
+				img.set_pixel(ox + px, oy + py, color)
+		_draw_battery_glyph(img, ox, oy, cell_px, accent, armored)
+
+	return ImageTexture.create_from_image(img)
+
+
+static func _draw_battery_glyph(
+	img: Image,
+	ox: int,
+	oy: int,
+	cell_px: int,
+	accent: Color,
+	armored: bool
+) -> void:
+	var cx := ox + cell_px / 2
+	var cy := oy + cell_px / 2
+	# Battery body.
+	for y in range(-7, 8):
+		img.set_pixel(cx - 6, cy + y, accent)
+		img.set_pixel(cx + 6, cy + y, accent)
+	for x in range(-6, 7):
+		img.set_pixel(cx + x, cy - 7, accent)
+		img.set_pixel(cx + x, cy + 7, accent)
+	# Terminal nub.
+	for x in range(-2, 3):
+		img.set_pixel(cx + x, cy - 9, accent)
+		img.set_pixel(cx + x, cy - 8, accent)
+	# Charge bars.
+	for bar in range(3):
+		var by: int = cy + 3 - bar * 4
+		for x in range(-4, 5):
+			img.set_pixel(cx + x, by, Color(accent, 0.55))
+			img.set_pixel(cx + x, by + 1, Color(accent, 0.55))
+	if armored:
+		for x in range(-6, 7):
+			img.set_pixel(cx + x, cy, accent)
 
 
 static func hulls() -> Array[HullData]:
@@ -238,6 +446,12 @@ static func _category_color(category: ModuleData.Category) -> Color:
 			return Color(0.85, 0.2, 0.25)
 		ModuleData.Category.UTILITY:
 			return Color(0.25, 0.7, 0.55)
+		ModuleData.Category.FUEL_TANK:
+			return Color(0.22, 0.55, 0.72)
+		ModuleData.Category.BATTERY:
+			return Color(0.2, 0.72, 0.45)
+		ModuleData.Category.SHIELD:
+			return Color(0.45, 0.55, 0.95)
 		ModuleData.Category.HULL:
 			return Color(0.45, 0.55, 0.75)
 		ModuleData.Category.CONNECTOR:
@@ -271,6 +485,27 @@ static func _draw_cell_glyph(
 				for j in range(-5, 6):
 					if absi(i) == 5 or absi(j) == 5:
 						img.set_pixel(cx + i, cy + j, mark)
+		ModuleData.Category.FUEL_TANK:
+			for y in range(-8, 9):
+				img.set_pixel(cx - 5, cy + y, mark)
+				img.set_pixel(cx + 5, cy + y, mark)
+			for x in range(-5, 6):
+				img.set_pixel(cx + x, cy - 8, mark)
+				img.set_pixel(cx + x, cy + 8, mark)
+		ModuleData.Category.BATTERY:
+			for y in range(-6, 7):
+				img.set_pixel(cx - 5, cy + y, mark)
+				img.set_pixel(cx + 5, cy + y, mark)
+			for x in range(-5, 6):
+				img.set_pixel(cx + x, cy - 6, mark)
+				img.set_pixel(cx + x, cy + 6, mark)
+			for x in range(-2, 3):
+				img.set_pixel(cx + x, cy - 8, mark)
+		ModuleData.Category.SHIELD:
+			for i in range(-7, 8):
+				var y_off: int = int(sqrt(float(49 - i * i)))
+				img.set_pixel(cx + i, cy - y_off, mark)
+				img.set_pixel(cx + i, cy + y_off, mark)
 		ModuleData.Category.CONNECTOR:
 			for i in range(-8, 9):
 				img.set_pixel(cx + i, cy, mark)

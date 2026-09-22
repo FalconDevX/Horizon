@@ -128,9 +128,9 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 				and get_equipment_at(cell) == null
 				and is_weapon_mount_cell(cell)
 			)
-		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
-			return get_floor_type(cell) == HullData.FloorType.DECK and get_equipment_at(cell) == null
 		_:
+			if data.is_deck_equipment():
+				return get_floor_type(cell) == HullData.FloorType.DECK and get_equipment_at(cell) == null
 			return false
 
 
@@ -196,9 +196,6 @@ func can_place_hull_with_cargo(
 			if get_equipment_at(cell) != null:
 				return false
 			match c_data.category:
-				ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
-					if not hull_cells.has(cell):
-						return false
 				ModuleData.Category.WEAPON:
 					if hull_cells.has(cell):
 						return false
@@ -210,7 +207,11 @@ func can_place_hull_with_cargo(
 					if not touches:
 						return false
 				_:
-					return false
+					if c_data.is_deck_equipment():
+						if not hull_cells.has(cell):
+							return false
+					else:
+						return false
 	return true
 
 
@@ -469,9 +470,9 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 	match data.category:
 		ModuleData.Category.WEAPON:
 			return is_weapon_mount_cell(cell, ignore_instance_id)
-		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
-			return get_floor_type(cell) == HullData.FloorType.DECK
 		_:
+			if data.is_deck_equipment():
+				return get_floor_type(cell) == HullData.FloorType.DECK
 			return false
 
 
@@ -544,9 +545,11 @@ func _recalculate_stats() -> void:
 		stats.energy_consumption += d.energy_consumption
 		stats.thrust += d.thrust
 		stats.fuel_consumption += d.fuel_consumption
+		stats.fuel_capacity += d.fuel_capacity
 		stats.damage += d.damage
 		stats.energy_generation += d.energy_generation
 		stats.energy_capacity += d.capacity
+		stats.shield_strength += d.shield_strength
 		stats.repair_rate += d.repair_rate
 		if d.category == ModuleData.Category.ENGINE and d.max_heat > stats.max_heat:
 			stats.max_heat = d.max_heat

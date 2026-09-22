@@ -27,6 +27,9 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
 	ModuleData.Category.CONNECTOR,
 	ModuleData.Category.ENGINE,
+	ModuleData.Category.FUEL_TANK,
+	ModuleData.Category.BATTERY,
+	ModuleData.Category.SHIELD,
 	ModuleData.Category.WEAPON,
 	ModuleData.Category.UTILITY,
 ]
@@ -35,8 +38,11 @@ const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.HULL: "Hulls",
 	ModuleData.Category.CONNECTOR: "Connectors",
 	ModuleData.Category.ENGINE: "Engines",
+	ModuleData.Category.FUEL_TANK: "Fuel Tanks",
+	ModuleData.Category.BATTERY: "Batteries",
+	ModuleData.Category.SHIELD: "Shields",
 	ModuleData.Category.WEAPON: "Weapons",
-	ModuleData.Category.UTILITY: "Utility",
+	ModuleData.Category.UTILITY: "Utilities",
 }
 
 var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[ModuleData]
@@ -300,10 +306,9 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
 				floor_hint = "next to a deck (not on the floor)"
-			ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
-				floor_hint = "deck"
 			_:
-				pass
+				if module.is_deck_equipment():
+					floor_hint = "deck"
 		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s" % [
 			module.title,
 			floor_hint,

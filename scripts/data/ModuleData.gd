@@ -7,6 +7,9 @@ enum Category {
 	ENGINE,
 	WEAPON,
 	UTILITY,
+	FUEL_TANK,
+	BATTERY,
+	SHIELD,
 	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
 }
 
@@ -36,8 +39,12 @@ enum Category {
 
 @export_group("Utility")
 @export var capacity: float = 0.0
+@export var fuel_capacity: float = 0.0
 @export var energy_generation: float = 0.0
 @export var repair_rate: float = 0.0
+
+@export_group("Shield")
+@export var shield_strength: float = 0.0
 
 @export_group("Extras")
 @export var custom_stats: Dictionary = {}
@@ -48,7 +55,25 @@ func is_structure() -> bool:
 
 
 func is_equipment() -> bool:
-	return category == Category.ENGINE or category == Category.WEAPON or category == Category.UTILITY
+	return (
+		category == Category.ENGINE
+		or category == Category.WEAPON
+		or category == Category.UTILITY
+		or category == Category.FUEL_TANK
+		or category == Category.BATTERY
+		or category == Category.SHIELD
+	)
+
+
+## Engines, utilities, tanks, batteries and shields mount on hull deck cells.
+func is_deck_equipment() -> bool:
+	return (
+		category == Category.ENGINE
+		or category == Category.UTILITY
+		or category == Category.FUEL_TANK
+		or category == Category.BATTERY
+		or category == Category.SHIELD
+	)
 
 
 func get_cell_count() -> int:
@@ -142,10 +167,14 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 			return accuracy
 		"capacity":
 			return capacity
+		"fuel_capacity":
+			return fuel_capacity
 		"energy_generation":
 			return energy_generation
 		"repair_rate":
 			return repair_rate
+		"shield_strength":
+			return shield_strength
 		_:
 			return default
 
@@ -160,6 +189,12 @@ func category_name() -> String:
 			return "Weapon"
 		Category.UTILITY:
 			return "Utility"
+		Category.FUEL_TANK:
+			return "Fuel Tank"
+		Category.BATTERY:
+			return "Battery"
+		Category.SHIELD:
+			return "Shield"
 		Category.CONNECTOR:
 			return "Connector"
 		_:
