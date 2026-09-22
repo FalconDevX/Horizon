@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://settings_menu.gd" id="15_settings_menu"]
 [ext_resource type="PackedScene" path="res://scenes/builder/ShipBuilder.tscn" id="16_ship_builder"]
 [ext_resource type="Script" path="res://pause_menu.gd" id="17_pause_menu"]
+[ext_resource type="Script" path="res://resource_bars_panel.gd" id="18_resource_bars"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
 radius = 20.0
@@ -468,6 +469,20 @@ mouse_filter = 1
 script = ExtResource("6_orbit_value")
 label_text = "AP"
 accent_color = Color(0.95, 0.75, 0.4, 1)
+
+[node name="ResourceBarsPanel" type="Control" parent="HUD"]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -428.0
+offset_top = -264.0
+offset_right = -238.0
+offset_bottom = -28.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("18_resource_bars")
 
 [node name="AutopilotPanel" type="Control" parent="HUD" unique_id=299792458]
 anchor_left = 1.0

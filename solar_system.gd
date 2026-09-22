@@ -40,6 +40,7 @@ enum AutopilotPhase {
 @onready var speed_gauge: Control = $HUD/SpeedGauge
 @onready var hud_status: Control = $HUD/HudStatus
 @onready var autopilot_panel: Control = $HUD/AutopilotPanel
+@onready var resource_bars_panel: Control = $HUD/ResourceBarsPanel
 @onready var ship_blueprint_panel: Control = $HUD/ShipBlueprintPanel
 @onready var time_warp_panel: Control = $HUD/TimeWarpPanel
 @onready var main_thruster_toggle: CheckButton = $HUD/AutopilotPanel/MainThrusterToggle
@@ -365,6 +366,11 @@ func _ready() -> void:
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
 	settings_mgr = SettingsManager.new()
+	# In-flight music defaults to off regardless of the saved preference (the
+	# main menu keeps its own default). Not saved, so it doesn't clobber what
+	# the player picked in the menu - only this scene's starting state.
+	settings_mgr.music_muted = true
+	settings_mgr.apply_audio_settings()
 	music_mgr = MusicManager.new()
 	add_child(music_mgr)
 	music_mgr.setup(music_player, settings_mgr.autoplay_music)
@@ -1784,6 +1790,10 @@ const COLOR_BAD := Color(0.95, 0.45, 0.3)
 const COLOR_ORBIT_INFO := Color(0.4, 0.9, 1)
 const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
 
+const PLACEHOLDER_FUEL_PCT := 0.82
+const PLACEHOLDER_ENERGY_PCT := 0.95
+const PLACEHOLDER_SHIELD_PCT := 1.0
+
 
 func update_hud() -> void:
 	var speed: float = ship.velocity.length()
@@ -1799,6 +1809,8 @@ func update_hud() -> void:
 	time_warp_panel.set_state(time_scale)
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship_blueprint_panel.set_state(main_engine_display, rcs_command)
+	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
+	resource_bars_panel.set_state(PLACEHOLDER_FUEL_PCT, PLACEHOLDER_ENERGY_PCT, PLACEHOLDER_SHIELD_PCT)
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
 
