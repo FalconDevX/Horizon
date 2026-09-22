@@ -10,6 +10,7 @@ signal ship_clicked
 @export var collision_radius: float = 8.0
 @export var correction_thrust_force := 1.0
 @export var fuel_consumption: float = 0.0
+@export var fuel_capacity: float = 0.0
 @export var energy_consumption: float = 0.0
 @export var energy_generation: float = 0.0
 
@@ -56,6 +57,7 @@ func apply_module_stats(stats: Dictionary) -> void:
 		thrust_force = DEFAULT_THRUST_FORCE
 		correction_thrust_force = DEFAULT_CORRECTION_THRUST
 		fuel_consumption = 0.0
+		fuel_capacity = 0.0
 		energy_consumption = 0.0
 		energy_generation = 0.0
 		return
@@ -64,6 +66,7 @@ func apply_module_stats(stats: Dictionary) -> void:
 	thrust_force = maxf(float(stats.get("thrust", 0.0)), 0.0)
 	correction_thrust_force = thrust_force * RCS_THRUST_RATIO
 	fuel_consumption = maxf(float(stats.get("fuel_consumption", 0.0)), 0.0)
+	fuel_capacity = maxf(float(stats.get("fuel_capacity", 0.0)), 0.0)
 	energy_consumption = maxf(float(stats.get("energy_consumption", 0.0)), 0.0)
 	energy_generation = maxf(float(stats.get("energy_generation", 0.0)), 0.0)
 

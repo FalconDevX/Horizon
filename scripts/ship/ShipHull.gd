@@ -128,7 +128,7 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 				and get_equipment_at(cell) == null
 				and is_weapon_mount_cell(cell)
 			)
-		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
+		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY, ModuleData.Category.FUEL_TANK:
 			return get_floor_type(cell) == HullData.FloorType.DECK and get_equipment_at(cell) == null
 		_:
 			return false
@@ -196,7 +196,7 @@ func can_place_hull_with_cargo(
 			if get_equipment_at(cell) != null:
 				return false
 			match c_data.category:
-				ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
+				ModuleData.Category.ENGINE, ModuleData.Category.UTILITY, ModuleData.Category.FUEL_TANK:
 					if not hull_cells.has(cell):
 						return false
 				ModuleData.Category.WEAPON:
@@ -469,7 +469,7 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 	match data.category:
 		ModuleData.Category.WEAPON:
 			return is_weapon_mount_cell(cell, ignore_instance_id)
-		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
+		ModuleData.Category.ENGINE, ModuleData.Category.UTILITY, ModuleData.Category.FUEL_TANK:
 			return get_floor_type(cell) == HullData.FloorType.DECK
 		_:
 			return false
@@ -544,6 +544,7 @@ func _recalculate_stats() -> void:
 		stats.energy_consumption += d.energy_consumption
 		stats.thrust += d.thrust
 		stats.fuel_consumption += d.fuel_consumption
+		stats.fuel_capacity += d.fuel_capacity
 		stats.damage += d.damage
 		stats.energy_generation += d.energy_generation
 		stats.energy_capacity += d.capacity

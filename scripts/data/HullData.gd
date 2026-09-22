@@ -14,7 +14,7 @@ enum FloorType {
 	CONNECTOR, ## Łącznik cell
 }
 
-@export var title: String = "Standardowy"
+@export var title: String = "Standard"
 @export var hull_type: HullType = HullType.STANDARDOWY
 @export var grid_size: Vector2i = Vector2i(5, 5)
 @export var base_durability: float = 100.0
@@ -41,35 +41,35 @@ func make_rect_shape() -> Array[Vector2i]:
 
 static func make_lekki() -> HullData:
 	var h := HullData.new()
-	h.title = "Lekki"
+	h.title = "Light"
 	h.hull_type = HullType.LEKKI
 	h.grid_size = Vector2i(5, 5)
 	h.base_durability = 80.0
 	h.base_mass = 30.0
 	h.capacity = 12
-	h.description = "Lekki kadłub 5×5 — łączy się przez łączniki."
+	h.description = "Light 5×5 hull — links via connectors."
 	return h
 
 
 static func make_standardowy() -> HullData:
 	var h := HullData.new()
-	h.title = "Standardowy"
+	h.title = "Standard"
 	h.hull_type = HullType.STANDARDOWY
 	h.grid_size = Vector2i(7, 6)
 	h.base_durability = 120.0
 	h.base_mass = 55.0
 	h.capacity = 24
-	h.description = "Standardowy kadłub 7×6 — łączy się przez łączniki."
+	h.description = "Standard 7×6 hull — links via connectors."
 	return h
 
 
 static func make_ciezki() -> HullData:
 	var h := HullData.new()
-	h.title = "Ciężki"
+	h.title = "Heavy"
 	h.hull_type = HullType.CIEZKI
 	h.grid_size = Vector2i(9, 7)
 	h.base_durability = 200.0
 	h.base_mass = 90.0
 	h.capacity = 40
-	h.description = "Ciężki kadłub 9×7 — łączy się przez łączniki."
+	h.description = "Heavy 9×7 hull — links via connectors."
 	return h

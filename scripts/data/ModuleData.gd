@@ -7,6 +7,7 @@ enum Category {
 	ENGINE,
 	WEAPON,
 	UTILITY,
+	FUEL_TANK,
 	CONNECTOR, ## 1×1 łącznik — bridges separate hull pieces
 }
 
@@ -36,6 +37,7 @@ enum Category {
 
 @export_group("Utility")
 @export var capacity: float = 0.0
+@export var fuel_capacity: float = 0.0
 @export var energy_generation: float = 0.0
 @export var repair_rate: float = 0.0
 
@@ -48,7 +50,12 @@ func is_structure() -> bool:
 
 
 func is_equipment() -> bool:
-	return category == Category.ENGINE or category == Category.WEAPON or category == Category.UTILITY
+	return (
+		category == Category.ENGINE
+		or category == Category.WEAPON
+		or category == Category.UTILITY
+		or category == Category.FUEL_TANK
+	)
 
 
 func get_cell_count() -> int:
@@ -142,6 +149,8 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 			return accuracy
 		"capacity":
 			return capacity
+		"fuel_capacity":
+			return fuel_capacity
 		"energy_generation":
 			return energy_generation
 		"repair_rate":
@@ -153,14 +162,16 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 func category_name() -> String:
 	match category:
 		Category.HULL:
-			return "Kadłub"
+			return "Hull"
 		Category.ENGINE:
 			return "Engine"
 		Category.WEAPON:
 			return "Weapon"
 		Category.UTILITY:
 			return "Utility"
+		Category.FUEL_TANK:
+			return "Fuel Tank"
 		Category.CONNECTOR:
-			return "Łącznik"
+			return "Connector"
 		_:
 			return "Unknown"

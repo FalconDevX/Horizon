@@ -22,16 +22,18 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
 	ModuleData.Category.CONNECTOR,
 	ModuleData.Category.ENGINE,
+	ModuleData.Category.FUEL_TANK,
 	ModuleData.Category.WEAPON,
 	ModuleData.Category.UTILITY,
 ]
 
 const CATEGORY_LABELS: Dictionary = {
-	ModuleData.Category.HULL: "Kadłuby",
-	ModuleData.Category.CONNECTOR: "Łączniki",
-	ModuleData.Category.ENGINE: "Silniki",
-	ModuleData.Category.WEAPON: "Uzbrojenie",
-	ModuleData.Category.UTILITY: "Moduły użytkowe",
+	ModuleData.Category.HULL: "Hulls",
+	ModuleData.Category.CONNECTOR: "Connectors",
+	ModuleData.Category.ENGINE: "Engines",
+	ModuleData.Category.FUEL_TANK: "Fuel Tanks",
+	ModuleData.Category.WEAPON: "Weapons",
+	ModuleData.Category.UTILITY: "Utilities",
 }
 
 var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[ModuleData]
@@ -246,7 +248,7 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "pusta kratka między kadłubami"
 			ModuleData.Category.WEAPON:
 				floor_hint = "obok pokładu (nie na podłodze)"
-			ModuleData.Category.ENGINE, ModuleData.Category.UTILITY:
+			ModuleData.Category.ENGINE, ModuleData.Category.UTILITY, ModuleData.Category.FUEL_TANK:
 				floor_hint = "pokład"
 			_:
 				pass

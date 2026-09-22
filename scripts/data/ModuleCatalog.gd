@@ -12,6 +12,7 @@ static func all_buildable_modules() -> Array[ModuleData]:
 	list.append_array(engines())
 	list.append_array(weapons())
 	list.append_array(utilities())
+	list.append_array(fuel_tanks())
 	return list
 
 
@@ -24,51 +25,141 @@ static func hull_modules() -> Array[ModuleData]:
 
 
 static func connector() -> ModuleData:
-	var m := _base("Łącznik", &"connector", ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
+	var m := _base("Connector", &"connector", ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
 	m.texture = make_shape_texture(m.grid_shape, ModuleData.Category.CONNECTOR)
 	return m
 
 
-## Skala gwiazdek (1–5) → wartości gry:
-##   ciąg:    8 / 16 / 24 / 32 / 40
-##   paliwo:  1 / 2.5 / 4.5 / 7 / 10   (wyżej = większe zużycie)
-##   energia: 1.5 / 4 / 8 / 13 / 18
-##   masa:    3 / 6 / 10 / 15 / 22
+## Star scale (1–5) → game values:
+##   thrust:  8 / 16 / 24 / 32 / 40
+##   fuel:    1 / 2.5 / 4.5 / 7 / 10   (higher = more consumption)
+##   energy:  1.5 / 4 / 8 / 13 / 18
+##   mass:    3 / 6 / 10 / 15 / 22
 static func engines() -> Array[ModuleData]:
 	return [
-		# Chemiczny:  ciąg ★★★★★  paliwo ★★★★★  energia ★☆☆☆☆  masa ★★☆☆☆
-		_engine("Chemiczny", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
-		# Nuklearny:  ciąg ★★★★☆  paliwo ★★★☆☆  energia ★★☆☆☆  masa ★★★★★
-		_engine("Nuklearny termiczny", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
-		# Jonowy:     ciąg ★☆☆☆☆  paliwo ★☆☆☆☆  energia ★★★★★  masa ★☆☆☆☆
-		_engine("Jonowy", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
-		# Plazmowy:   ciąg ★★★☆☆  paliwo ★★☆☆☆  energia ★★★★☆  masa ★★★☆☆
-		_engine("Plazmowy", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
-		# Fuzyjny:    ciąg ★★★★★  paliwo ★☆☆☆☆  energia ★★★★★  masa ★★★★★
-		_engine("Fuzyjny", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
+		# Chemical:        thrust ★★★★★  fuel ★★★★★  energy ★☆☆☆☆  mass ★★☆☆☆
+		_engine("Chemical", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
+		# Nuclear thermal: thrust ★★★★☆  fuel ★★★☆☆  energy ★★☆☆☆  mass ★★★★★
+		_engine("Nuclear Thermal", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
+		# Ion:             thrust ★☆☆☆☆  fuel ★☆☆☆☆  energy ★★★★★  mass ★☆☆☆☆
+		_engine("Ion", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
+		# Plasma:          thrust ★★★☆☆  fuel ★★☆☆☆  energy ★★★★☆  mass ★★★☆☆
+		_engine("Plasma", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
+		# Fusion:          thrust ★★★★★  fuel ★☆☆☆☆  energy ★★★★★  mass ★★★★★
+		_engine("Fusion", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
 	]
 
 
 static func weapons() -> Array[ModuleData]:
 	return [
-		_weapon("Działo Gaussa", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, _shape_2x1()),
+		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, _shape_2x1()),
 		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, _shape_2x1()),
 		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, _shape_1x1()),
-		_weapon("Działo cząsteczkowe", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, _shape_3x1()),
+		_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, _shape_3x1()),
 	]
 
 
 static func utilities() -> Array[ModuleData]:
-	var repair := _base("Moduł Naprawczy", &"util_repair", ModuleData.Category.UTILITY, 5.0, 15.0, 2.0, _shape_1x1())
+	var repair := _base("Repair Module", &"util_repair", ModuleData.Category.UTILITY, 5.0, 15.0, 2.0, _shape_1x1())
 	repair.repair_rate = 4.0
 
 	var generator := _base("Generator", &"util_generator", ModuleData.Category.UTILITY, 8.0, 20.0, 0.0, _shape_2x1())
 	generator.energy_generation = 25.0
 
-	var battery := _base("Baterie", &"util_battery", ModuleData.Category.UTILITY, 4.0, 12.0, 0.0, _shape_1x1())
+	var battery := _base("Battery", &"util_battery", ModuleData.Category.UTILITY, 4.0, 12.0, 0.0, _shape_1x1())
 	battery.capacity = 60.0
 
 	return [repair, generator, battery]
+
+
+## Three sizes × two variants (standard / armored).
+## Armored: +mass, +HP, slightly less fuel capacity.
+static func fuel_tanks() -> Array[ModuleData]:
+	return [
+		_fuel_tank("Fuel Tank S", &"fuel_s", false, 4.0, 12.0, 40.0, _shape_1x1()),
+		_fuel_tank("Fuel Tank S (Armored)", &"fuel_s_armored", true, 7.0, 28.0, 32.0, _shape_1x1()),
+		_fuel_tank("Fuel Tank M", &"fuel_m", false, 8.0, 20.0, 100.0, _shape_2x1()),
+		_fuel_tank("Fuel Tank M (Armored)", &"fuel_m_armored", true, 14.0, 48.0, 85.0, _shape_2x1()),
+		_fuel_tank("Fuel Tank L", &"fuel_l", false, 16.0, 35.0, 220.0, _shape_2x2()),
+		_fuel_tank("Fuel Tank L (Armored)", &"fuel_l_armored", true, 28.0, 80.0, 185.0, _shape_2x2()),
+	]
+
+
+static func _fuel_tank(
+	title: String,
+	id: StringName,
+	armored: bool,
+	mass: float,
+	health: float,
+	fuel: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _base(title, id, ModuleData.Category.FUEL_TANK, mass, health, 0.0, shape)
+	m.fuel_capacity = fuel
+	m.texture = make_fuel_tank_texture(shape, armored)
+	return m
+
+
+static func make_fuel_tank_texture(
+	shape: Array[Vector2i],
+	armored: bool,
+	rotation: int = 0,
+	cell_px: int = CELL_PX
+) -> Texture2D:
+	var rotated := ModuleData.rotate_shape(shape, rotation)
+	var bounds := ModuleData.bounding_size_of(rotated)
+	if bounds.x <= 0 or bounds.y <= 0:
+		return null
+
+	var img := Image.create(bounds.x * cell_px, bounds.y * cell_px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+
+	var fill := Color(0.22, 0.55, 0.72) if not armored else Color(0.38, 0.42, 0.48)
+	var hi := fill.lightened(0.22)
+	var lo := fill.darkened(0.28)
+	var accent := Color(0.85, 0.7, 0.25, 0.7) if not armored else Color(0.65, 0.55, 0.3, 0.75)
+
+	for c: Vector2i in rotated:
+		var ox := c.x * cell_px
+		var oy := c.y * cell_px
+		for py in cell_px:
+			for px in cell_px:
+				var edge := px < 2 or py < 2 or px >= cell_px - 2 or py >= cell_px - 2
+				var color := hi if (px < 3 or py < 3) else (lo if edge else fill)
+				if px > 4 and py > 4 and px < cell_px - 5 and py < cell_px - 5:
+					color = fill.lerp(Color.WHITE, 0.06)
+				img.set_pixel(ox + px, oy + py, color)
+		_draw_fuel_tank_glyph(img, ox, oy, cell_px, accent, armored)
+
+	return ImageTexture.create_from_image(img)
+
+
+static func _draw_fuel_tank_glyph(
+	img: Image,
+	ox: int,
+	oy: int,
+	cell_px: int,
+	accent: Color,
+	armored: bool
+) -> void:
+	var cx := ox + cell_px / 2
+	var cy := oy + cell_px / 2
+	# Vertical tank body outline.
+	for y in range(-8, 9):
+		img.set_pixel(cx - 5, cy + y, accent)
+		img.set_pixel(cx + 5, cy + y, accent)
+	for x in range(-5, 6):
+		img.set_pixel(cx + x, cy - 8, accent)
+		img.set_pixel(cx + x, cy + 8, accent)
+	# Fuel level bar.
+	for y in range(0, 7):
+		for x in range(-3, 4):
+			img.set_pixel(cx + x, cy + y, Color(accent, 0.45))
+	if armored:
+		# Extra armor braces.
+		for x in range(-5, 6):
+			img.set_pixel(cx + x, cy - 3, accent)
+			img.set_pixel(cx + x, cy + 3, accent)
 
 
 static func hulls() -> Array[HullData]:
@@ -135,7 +226,7 @@ static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = 
 
 static func _hull_module(hull: HullData, id: StringName) -> ModuleData:
 	var m := ModuleData.new()
-	m.title = "Kadłub %s" % hull.title
+	m.title = "Hull %s" % hull.title
 	m.id = id
 	m.category = ModuleData.Category.HULL
 	m.hull_data = hull
@@ -238,6 +329,8 @@ static func _category_color(category: ModuleData.Category) -> Color:
 			return Color(0.85, 0.2, 0.25)
 		ModuleData.Category.UTILITY:
 			return Color(0.25, 0.7, 0.55)
+		ModuleData.Category.FUEL_TANK:
+			return Color(0.22, 0.55, 0.72)
 		ModuleData.Category.HULL:
 			return Color(0.45, 0.55, 0.75)
 		ModuleData.Category.CONNECTOR:
@@ -271,6 +364,13 @@ static func _draw_cell_glyph(
 				for j in range(-5, 6):
 					if absi(i) == 5 or absi(j) == 5:
 						img.set_pixel(cx + i, cy + j, mark)
+		ModuleData.Category.FUEL_TANK:
+			for y in range(-8, 9):
+				img.set_pixel(cx - 5, cy + y, mark)
+				img.set_pixel(cx + 5, cy + y, mark)
+			for x in range(-5, 6):
+				img.set_pixel(cx + x, cy - 8, mark)
+				img.set_pixel(cx + x, cy + 8, mark)
 		ModuleData.Category.CONNECTOR:
 			for i in range(-8, 9):
 				img.set_pixel(cx + i, cy, mark)
