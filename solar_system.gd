@@ -63,6 +63,7 @@ enum AutopilotPhase {
 var settings_mgr: SettingsManager
 var music_mgr: MusicManager
 var _is_first_track_notification := true
+var _builder_controller: ShipBuilderController
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -366,6 +367,7 @@ func _ready() -> void:
 	settings_menu.setup(settings_mgr, music_mgr)
 	settings_button.pressed.connect(toggle_settings_menu)
 	ship_builder_panel.closed.connect(close_ship_builder)
+	_bind_ship_builder_to_ship()
 	if time_warp_panel != null:
 		var gear_icon: Texture2D = time_warp_panel._load_icon("res://textures/icons/settings.svg")
 		if gear_icon != null:
@@ -2488,6 +2490,29 @@ func open_ship_builder() -> void:
 
 func close_ship_builder() -> void:
 	ship_builder_panel.visible = false
+	_sync_ship_from_builder()
+
+
+func _bind_ship_builder_to_ship() -> void:
+	_builder_controller = ship_builder_panel as ShipBuilderController
+	if _builder_controller == null:
+		return
+	var hull: ShipHull = _builder_controller.get_hull()
+	if hull == null:
+		return
+	if not hull.stats_changed.is_connected(_on_builder_stats_changed):
+		hull.stats_changed.connect(_on_builder_stats_changed)
+	_sync_ship_from_builder()
+
+
+func _on_builder_stats_changed(_stats: Dictionary) -> void:
+	_sync_ship_from_builder()
+
+
+func _sync_ship_from_builder() -> void:
+	if ship == null or _builder_controller == null:
+		return
+	ship.apply_module_stats(_builder_controller.get_stats_dictionary())
 
 
 func _on_setting_changed(key: String, value: Variant) -> void:

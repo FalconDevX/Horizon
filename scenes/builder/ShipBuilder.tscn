@@ -137,6 +137,7 @@ content_path = NodePath("InventoryScroll")
 [node name="InventoryScroll" type="ScrollContainer" parent="Margin/RootHBox/LeftColumn/ModuleBaySection"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 vertical_scroll_mode = 1
@@ -147,6 +148,7 @@ wheel_step = 120
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
+size_flags_vertical = 0
 theme_override_constants/separation = 10
 
 [node name="StatsResizeHandle" type="ColorRect" parent="Margin/RootHBox"]

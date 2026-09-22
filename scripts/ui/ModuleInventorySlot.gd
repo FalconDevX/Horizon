@@ -21,6 +21,7 @@ var _panel_style: StyleBoxFlat
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ensure_children()
 	_apply_style()
 	_refresh()
@@ -87,6 +88,7 @@ func _ensure_children() -> void:
 
 	_label = Label.new()
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_label.add_theme_font_override("font", HudPanelStyle.get_font())
 	_label.add_theme_font_size_override("font_size", 11)

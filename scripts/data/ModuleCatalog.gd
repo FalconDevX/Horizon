@@ -29,13 +29,23 @@ static func connector() -> ModuleData:
 	return m
 
 
+## Skala gwiazdek (1–5) → wartości gry:
+##   ciąg:    8 / 16 / 24 / 32 / 40
+##   paliwo:  1 / 2.5 / 4.5 / 7 / 10   (wyżej = większe zużycie)
+##   energia: 1.5 / 4 / 8 / 13 / 18
+##   masa:    3 / 6 / 10 / 15 / 22
 static func engines() -> Array[ModuleData]:
 	return [
-		_engine("Chemiczny", &"engine_chemical", 40.0, 8.0, 2.0, 6.0, 120.0, _shape_1x1()),
-		_engine("Nuklearny termiczny", &"engine_nuclear", 70.0, 5.0, 6.0, 12.0, 180.0, _shape_2x1()),
-		_engine("Jonowy", &"engine_ion", 25.0, 1.5, 10.0, 4.0, 90.0, _shape_1x1()),
-		_engine("Plazmowy", &"engine_plasma", 95.0, 12.0, 14.0, 14.0, 220.0, _shape_2x2()),
-		_engine("Fuzyjny", &"engine_fusion", 140.0, 4.0, 18.0, 20.0, 260.0, _shape_l()),
+		# Chemiczny:  ciąg ★★★★★  paliwo ★★★★★  energia ★☆☆☆☆  masa ★★☆☆☆
+		_engine("Chemiczny", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
+		# Nuklearny:  ciąg ★★★★☆  paliwo ★★★☆☆  energia ★★☆☆☆  masa ★★★★★
+		_engine("Nuklearny termiczny", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
+		# Jonowy:     ciąg ★☆☆☆☆  paliwo ★☆☆☆☆  energia ★★★★★  masa ★☆☆☆☆
+		_engine("Jonowy", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
+		# Plazmowy:   ciąg ★★★☆☆  paliwo ★★☆☆☆  energia ★★★★☆  masa ★★★☆☆
+		_engine("Plazmowy", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
+		# Fuzyjny:    ciąg ★★★★★  paliwo ★☆☆☆☆  energia ★★★★★  masa ★★★★★
+		_engine("Fuzyjny", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
 	]
 
 

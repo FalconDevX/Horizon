@@ -9,6 +9,17 @@ signal ship_clicked
 @export var rotation_speed: float = 2.5
 @export var collision_radius: float = 8.0
 @export var correction_thrust_force := 1.0
+@export var fuel_consumption: float = 0.0
+@export var energy_consumption: float = 0.0
+@export var energy_generation: float = 0.0
+
+## Fallback when the shipyard has no modules yet (keeps the default orbital ship flyable).
+const DEFAULT_SHIP_MASS := 10.0
+const DEFAULT_THRUST_FORCE := 6.0
+const DEFAULT_CORRECTION_THRUST := 1.0
+const MIN_SHIP_MASS := 1.0
+## RCS scales with main thrust so module builds keep a usable attitude/translation ratio.
+const RCS_THRUST_RATIO := 1.0 / 6.0
 
 var velocity := Vector2.ZERO
 var throttle := 0.0
@@ -34,6 +45,27 @@ func _ready() -> void:
 	$ClickArea.input_event.connect(_on_click_area_input_event)
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	reset_physics_interpolation()
+
+
+## Applies aggregated ShipHull / ShipStats totals to flight parameters.
+## Empty builds restore scene defaults so the orbital ship stays usable.
+func apply_module_stats(stats: Dictionary) -> void:
+	var module_count: int = int(stats.get("module_count", 0))
+	if module_count <= 0:
+		ship_mass = DEFAULT_SHIP_MASS
+		thrust_force = DEFAULT_THRUST_FORCE
+		correction_thrust_force = DEFAULT_CORRECTION_THRUST
+		fuel_consumption = 0.0
+		energy_consumption = 0.0
+		energy_generation = 0.0
+		return
+
+	ship_mass = maxf(float(stats.get("mass", 0.0)), MIN_SHIP_MASS)
+	thrust_force = maxf(float(stats.get("thrust", 0.0)), 0.0)
+	correction_thrust_force = thrust_force * RCS_THRUST_RATIO
+	fuel_consumption = maxf(float(stats.get("fuel_consumption", 0.0)), 0.0)
+	energy_consumption = maxf(float(stats.get("energy_consumption", 0.0)), 0.0)
+	energy_generation = maxf(float(stats.get("energy_generation", 0.0)), 0.0)
 
 
 func _on_click_area_input_event(

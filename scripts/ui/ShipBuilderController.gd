@@ -34,6 +34,23 @@ const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.UTILITY: "Moduły użytkowe",
 }
 
+var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[ModuleData]
+var _category_tabs: CategoryTabBar
+var _module_grid: GridContainer
+
+const GRID_H_SEPARATION := 8
+const SLOT_TARGET_WIDTH := 140.0
+
+
+func get_hull() -> ShipHull:
+	return _ship_hull
+
+
+func get_stats_dictionary() -> Dictionary:
+	if _ship_hull == null:
+		return {}
+	return _ship_hull.get_stats_dictionary()
+
 
 func _ready() -> void:
 	_style_chrome()
@@ -117,32 +134,77 @@ func _populate_inventory() -> void:
 	for child in _inventory.get_children():
 		child.queue_free()
 
-	var by_category: Dictionary = {}
+	_modules_by_category.clear()
 	for module: ModuleData in ModuleCatalog.all_buildable_modules():
-		if not by_category.has(module.category):
-			by_category[module.category] = []
-		(by_category[module.category] as Array).append(module)
+		if not _modules_by_category.has(module.category):
+			_modules_by_category[module.category] = []
+		(_modules_by_category[module.category] as Array).append(module)
 
+	var available: Array[ModuleData.Category] = []
 	for category: ModuleData.Category in CATEGORY_ORDER:
-		if not by_category.has(category):
-			continue
+		if _modules_by_category.has(category):
+			available.append(category)
 
-		var grid := GridContainer.new()
-		grid.columns = 3
-		grid.add_theme_constant_override("h_separation", 8)
-		grid.add_theme_constant_override("v_separation", 8)
+	_inventory.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not _inventory.resized.is_connected(_on_inventory_resized):
+		_inventory.resized.connect(_on_inventory_resized)
 
-		for module: ModuleData in by_category[category]:
-			var slot := ModuleInventorySlot.new()
-			grid.add_child(slot)
-			slot.setup(module)
-			slot.module_selected.connect(_on_inventory_module_selected)
-			slot.drag_started.connect(_on_inventory_drag_started)
+	_category_tabs = CategoryTabBar.new()
+	_category_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_inventory.add_child(_category_tabs)
+	_category_tabs.setup(available, CATEGORY_LABELS, available[0] if not available.is_empty() else ModuleData.Category.HULL)
+	_category_tabs.category_selected.connect(_on_category_selected)
 
-		var section := CollapsibleSection.new()
-		section.resized_height = 0.0
-		_inventory.add_child(section)
-		section.setup(CATEGORY_LABELS.get(category, "Inne"), grid, true)
+	_module_grid = GridContainer.new()
+	_module_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_module_grid.add_theme_constant_override("h_separation", GRID_H_SEPARATION)
+	_module_grid.add_theme_constant_override("v_separation", 8)
+	_inventory.add_child(_module_grid)
+
+	if not available.is_empty():
+		_show_category(available[0])
+	call_deferred("_update_grid_columns")
+
+
+func _on_inventory_resized() -> void:
+	_update_grid_columns()
+
+
+func _update_grid_columns() -> void:
+	if _module_grid == null:
+		return
+	var width: float = _inventory.size.x
+	if width < 1.0:
+		var scroll := _inventory.get_parent() as Control
+		if scroll != null:
+			width = scroll.size.x
+	if width < 1.0:
+		return
+	var cols: int = maxi(1, int(floor((width + GRID_H_SEPARATION) / (SLOT_TARGET_WIDTH + GRID_H_SEPARATION))))
+	if _module_grid.columns != cols:
+		_module_grid.columns = cols
+
+
+func _on_category_selected(category: ModuleData.Category) -> void:
+	_show_category(category)
+
+
+func _show_category(category: ModuleData.Category) -> void:
+	if _module_grid == null:
+		return
+	for child in _module_grid.get_children():
+		child.queue_free()
+
+	_update_grid_columns()
+
+	var modules: Array = _modules_by_category.get(category, [])
+	for module: ModuleData in modules:
+		var slot := ModuleInventorySlot.new()
+		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_module_grid.add_child(slot)
+		slot.setup(module)
+		slot.module_selected.connect(_on_inventory_module_selected)
+		slot.drag_started.connect(_on_inventory_drag_started)
 
 
 func _on_inventory_module_selected(module: ModuleData) -> void:
