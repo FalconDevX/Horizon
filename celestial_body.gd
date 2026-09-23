@@ -538,9 +538,50 @@ func _atmosphere_shell_radius() -> float:
 	return 1.0 + terrain_params.get("relief", 0.0) * 0.45 + ATMOSPHERE_DEPTH
 
 
+## A stand-alone copy of this body's 3D look at unit radius - surface, cloud
+## deck, air and corona sharing the live materials - for the planet catalog.
+## The returned root's first child is the sphere; turn that to spin the globe.
+func make_preview() -> Node3D:
+	var root := Node3D.new()
+	if _sphere_3d == null:
+		return root
+
+	var extent: float = CORONA_EXTENT if is_star else _atmosphere_shell_radius() + 0.1
+	var bounds := AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
+
+	var sphere := MeshInstance3D.new()
+	sphere.mesh = _shared_sphere(true)
+	sphere.material_override = _sphere_3d.material_override
+	sphere.custom_aabb = bounds
+	sphere.basis = _sphere_3d.basis.orthonormalized()
+	root.add_child(sphere)
+
+	for shell: MeshInstance3D in [_clouds_3d, _atmosphere_3d]:
+		if shell == null:
+			continue
+		var copy := MeshInstance3D.new()
+		copy.mesh = sphere.mesh
+		copy.material_override = shell.material_override
+		copy.custom_aabb = bounds
+		sphere.add_child(copy)
+
+	if is_star:
+		var corona := MeshInstance3D.new()
+		corona.mesh = _glow_3d.mesh
+		corona.material_override = _glow_3d.material_override
+		corona.scale = Vector3(CORONA_EXTENT * 2.0, 1.0, CORONA_EXTENT * 2.0)
+		corona.position = Vector3(0.0, -1.5, 0.0)
+		root.add_child(corona)
+
+	return root
+
+
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
 	var seed_offset: float = float(surface_seed % 997) * 1.37
+	# The photosphere churns on its own; spinning the ball as well only makes
+	# the granules smear sideways.
+	surface_spin_speed = 0.0
 
 	var photosphere := ShaderMaterial.new()
 	photosphere.shader = STAR_SHADER

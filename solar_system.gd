@@ -220,6 +220,31 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# The planet catalog sits over everything and keeps the keyboard to itself.
+	if planet_info_panel.visible:
+		if event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_ESCAPE or event.keycode == KEY_I
+		):
+			planet_info_panel.hide_panel()
+			get_viewport().set_input_as_handled()
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_DOWN or event.keycode == KEY_UP):
+			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
+			get_viewport().set_input_as_handled()
+		return
+
+	if (
+		event is InputEventKey
+		and event.pressed
+		and not event.echo
+		and event.keycode == KEY_I
+		and (ship_builder_panel == null or not ship_builder_panel.visible)
+		and (pause_menu == null or not pause_menu.visible)
+		and (settings_menu == null or not settings_menu.visible)
+	):
+		planet_info_panel.toggle()
+		get_viewport().set_input_as_handled()
+		return
+
 	if (
 		event is InputEventKey
 		and event.pressed
@@ -387,6 +412,7 @@ func _ready() -> void:
 	pe_gauge.scrolled.connect(change_autopilot_target_pe)
 	ap_gauge.scrolled.connect(change_autopilot_target_ap)
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
+	planet_info_panel.setup(self)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -2526,19 +2552,7 @@ func _on_orbit_info_pressed() -> void:
 		planet_info_panel.hide_panel()
 		return
 
-	var body: Node2D = get_current_orbit_body()
-	var is_sun: bool = body == sun
-	var body_radius: float = body.get("radius")
-
-	planet_info_panel.show_body(
-		get_body_name(body),
-		body.get("color"),
-		body_radius,
-		body.get("mass"),
-		0.0 if is_sun else get_soi_radius(body),
-		body.get("atmosphere"),
-		is_sun
-	)
+	planet_info_panel.open_on(get_current_orbit_body())
 
 
 func toggle_settings_menu() -> void:
