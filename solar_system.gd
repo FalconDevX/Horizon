@@ -23,6 +23,10 @@ enum AutopilotPhase {
 	ARRIVAL_BURN
 }
 
+## Seed for the whole system. Every planet mixes it with its own surface_seed,
+## so changing it gives a new set of planets. G rerolls it in game.
+@export var world_seed: int = 0
+
 @onready var sun = $Sun
 @onready var planets_container: Node2D = $Planets
 @onready var ship = $Ship
@@ -265,6 +269,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_time_scale(200.0)
 		elif event.keycode == KEY_PERIOD:
 			camera_follow_ship = not camera_follow_ship
+		elif event.keycode == KEY_G:
+			reroll_world()
 
 	if (
 		event is InputEventMouseButton
@@ -299,6 +305,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and is_dragging:
 		var pan_factor: float = settings_mgr.camera_pan_speed if settings_mgr != null else 1.0
 		camera.position -= (event.relative * pan_factor) / camera_zoom
+
+
+## New world seed, and every planet regenerated from it. Printed so a good
+## world can be kept by copying the number into world_seed.
+func reroll_world() -> void:
+	world_seed = randi()
+
+	for planet in planets:
+		planet.call("rebuild_surface")
+
+	print("World seed: %d" % world_seed)
 
 
 func _ready() -> void:

@@ -140,7 +140,7 @@ offset_bottom = 11.0
 theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
 text = "ArrivalMarker"
 
-[node name="Sun" type="Node2D" parent="." unique_id=592866294]
+[node name="Sun" type="Node2D" parent="." unique_id=592866294 groups=["light_sources"]]
 script = ExtResource("1_hbvo3")
 radius = 800.0
 visual_radius = 800.0

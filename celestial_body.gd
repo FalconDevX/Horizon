@@ -4,6 +4,12 @@ extends Node2D
 const GLOW_TEXTURE := preload("res://textures/glow.png")
 const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 
+const LIGHT_GROUP := &"light_sources"
+
+## Screen-space heading of the light when there is no light source, as in the
+## editor with a scene that has no sun: from the upper left.
+const DEFAULT_LIGHT_HEADING := Vector2(-0.70710678, -0.70710678)
+
 @export var radius: float = 20.0:
 	set(value):
 		radius = value
@@ -43,9 +49,11 @@ const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 		queue_redraw()
 
 # Surface. A blob count of 0 means "no surface" - the body falls back to the
-# flat disc, which is what the sun wants. Values are hardcoded per planet in
-# solar_system.tscn for now; a generator will roll them later.
-@export var surface_seed: int = 0
+# flat disc, which is what the sun wants.
+
+## This planet's own seed. It is mixed with the world_seed on the scene root
+## (solar_system.gd), so the same planet looks different in every world.
+@export var surface_seed: int = 42
 
 @export var surface_blob_count: int = 0
 
@@ -68,6 +76,7 @@ var surface_style: int = 0
 @export var surface_spin_axis: Vector3 = Vector3.UP:
 	set(value):
 		surface_spin_axis = value.normalized() if value.length() > 0.0001 else Vector3.UP
+		push_pole_axis()
 
 ## How far the lookup direction is bent before the nearest-blob test. This is
 ## what turns straight Voronoi edges into ragged coastlines. 0.0 disables it.
@@ -88,9 +97,14 @@ var surface_style: int = 0
 		surface_edge_softness = value
 		push_surface_parameter("edge_softness", value)
 
-## One texture per palette slot, as layers of a Texture2DArray. Leave empty for
-## flat colours. Which layer a slot reads is offset per planet, so bodies that
-## rolled the same colour count still differ.
+## Draw terrain textures over the flat palette colours.
+@export var surface_textured := true:
+	set(value):
+		surface_textured = value
+		push_surface_textures()
+
+## Grayscale terrain textures, one layer per PlanetSurface.Terrain in enum
+## order (ocean, sand, mountains). Leave empty to use the noise-generated set.
 @export var surface_textures: Texture2DArray = null:
 	set(value):
 		surface_textures = value
@@ -102,19 +116,105 @@ var surface_style: int = 0
 		surface_texture_scale = value
 		push_surface_parameter("texture_scale", value)
 
-## 1.0 multiplies textures by the planet's generated colour, 0.0 leaves the
-## texture's own colours alone.
-@export_range(0.0, 1.0, 0.01) var surface_texture_tint: float = 1.0:
+## 0.0 shows flat palette colours, 1.0 the full colour ramp.
+@export_range(0.0, 1.0, 0.01) var surface_texture_strength: float = 1.0:
 	set(value):
-		surface_texture_tint = value
-		push_surface_parameter("texture_tint", value)
+		surface_texture_strength = value
+		push_surface_parameter("texture_strength", value)
+
+## Shade each region by a procedural height field seeded from the planet's
+## seed, so every planet gets its own relief. Rendering only - gameplay lookups
+## never see it.
+@export var surface_elevation := true:
+	set(value):
+		surface_elevation = value
+		push_surface_parameter("use_elevation", value)
+
+## Scale of the relief. Higher means smaller, more numerous features.
+@export_range(0.5, 8.0, 0.1) var surface_elevation_frequency: float = 2.0:
+	set(value):
+		surface_elevation_frequency = value
+		push_surface_parameter("elevation_frequency", value)
+
+## Noise layers. Each adds detail at twice the frequency of the last.
+@export_range(1, 8) var surface_elevation_octaves: int = 5:
+	set(value):
+		surface_elevation_octaves = value
+		push_surface_parameter("elevation_octaves", value)
+
+## How much the tiled texture adds on top of the height field, as fine grain.
+@export_range(0.0, 1.0, 0.01) var surface_texture_detail: float = 0.6:
+	set(value):
+		surface_texture_detail = value
+		push_surface_parameter("texture_detail", value)
+
+## Light the surface from the nearest node in LIGHT_GROUP (the sun) instead of
+## only darkening the rim.
+@export var surface_lit := true:
+	set(value):
+		surface_lit = value
+		push_surface_parameter("use_lighting", value)
+
+## Brightness of the night side. 0.0 is black.
+@export_range(0.0, 1.0, 0.01) var surface_ambient: float = 0.15:
+	set(value):
+		surface_ambient = value
+		push_surface_parameter("ambient_light", value)
+
+## How far the light leans out of the orbital plane towards the camera. The
+## sun sits in the plane, so 0 lights exactly half the disc; tilting it keeps
+## more of the surface readable. 90 lights the whole face.
+@export_range(0.0, 90.0, 1.0, "degrees") var surface_light_tilt: float = 25.0:
+	set(value):
+		surface_light_tilt = value
+		push_light_direction()
+
+## How far relief tilts the lighting, so mountains and dunes catch the light.
+## 0.0 is flat. Needs surface_elevation.
+@export_range(0.0, 0.5, 0.005) var surface_bump_strength: float = 0.12:
+	set(value):
+		surface_bump_strength = value
+		push_surface_parameter("bump_strength", value)
+
+## How far out from the coast the water reaches full depth, in the same units
+## as surface_edge_softness. Wider means broader shallows.
+@export_range(0.01, 0.3, 0.005) var surface_ocean_shelf: float = 0.06:
+	set(value):
+		surface_ocean_shelf = value
+		push_surface_parameter("ocean_shelf_width", value)
+
+## Brightness of the sun's reflection on open water.
+@export_range(0.0, 1.0, 0.01) var surface_ocean_glint: float = 0.5:
+	set(value):
+		surface_ocean_glint = value
+		push_surface_parameter("ocean_glint", value)
+
+## Polar ice, sea ice, snowy peaks and tundra, from latitude and altitude.
+@export var surface_biomes := true:
+	set(value):
+		surface_biomes = value
+		push_surface_parameter("use_biomes", value)
+
+## Share of the surface under polar ice at sea level; peaks freeze further
+## from the poles. 0.0 means no ice at all, for hot worlds.
+@export_range(0.0, 1.0, 0.01) var surface_polar_cap: float = 0.12:
+	set(value):
+		surface_polar_cap = value
+		push_surface_parameter("polar_cap", value)
 
 var velocity: Vector2 = Vector2.ZERO
+
+## What lights this body's surface. Found through LIGHT_GROUP on ready.
+var light_source: Node2D = null
 
 ## Orientation of the surface, mapping planet space into view space. This is
 ## the whole surface state: a point on the sphere plus a heading, in one value.
 ## Later this stops auto-spinning and gets driven by the landed ship instead.
 var surface_rotation := Quaternion.IDENTITY
+
+## What the surface was actually generated from: the world seed mixed with
+## surface_seed.
+var generation_seed: int = 0
 
 var surface_blobs := PackedVector4Array()
 
@@ -125,12 +225,18 @@ var surface_palette := PackedColorArray()
 ## The style this body actually ended up with, once AUTO has been rolled out.
 var resolved_style: PlanetSurface.Style = PlanetSurface.Style.AUTO
 
+## What each palette slot is made of, as PlanetSurface.Terrain values, indexed
+## by slot like surface_palette. A blob's terrain is surface_terrain[blob.w] -
+## every blob in a slot shares it, so nothing is stored per blob.
+var surface_terrain := PackedInt32Array()
+
 var surface_sprite: Sprite2D = null
 var surface_material: ShaderMaterial = null
 
 
 func _ready() -> void:
 	if surface_blob_count > 0:
+		light_source = get_tree().get_first_node_in_group(LIGHT_GROUP) as Node2D
 		build_surface()
 
 	set_process(surface_sprite != null and not Engine.is_editor_hint())
@@ -144,25 +250,28 @@ func _process(delta: float) -> void:
 	).normalized()
 
 	push_surface_rotation()
+	push_light_direction()
 
 
 func build_surface() -> void:
 	if surface_sprite != null:
 		return
 
+	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
 	var color_count: int = surface_color_count
 
 	if color_count <= 0:
-		color_count = PlanetSurface.roll_color_count(surface_seed)
+		color_count = PlanetSurface.roll_color_count(generation_seed)
 
 	resolved_style = surface_style as PlanetSurface.Style
 
 	if resolved_style == PlanetSurface.Style.AUTO:
-		resolved_style = PlanetSurface.roll_style(surface_seed)
+		resolved_style = PlanetSurface.roll_style(generation_seed)
 
-	surface_palette = PlanetSurface.generate_palette(surface_seed, color_count)
+	surface_palette = PlanetSurface.generate_palette(generation_seed, color_count)
+	surface_terrain = PlanetSurface.roll_slot_terrain(generation_seed, surface_palette.size())
 	surface_blobs = PlanetSurface.generate_blobs(
-		surface_seed, surface_blob_count, surface_palette.size(), resolved_style
+		generation_seed, surface_blob_count, surface_palette.size(), resolved_style
 	)
 
 	surface_material = ShaderMaterial.new()
@@ -174,8 +283,25 @@ func build_surface() -> void:
 	surface_material.set_shader_parameter("warp_frequency", surface_warp_frequency)
 	surface_material.set_shader_parameter("edge_softness", surface_edge_softness)
 	surface_material.set_shader_parameter("texture_scale", surface_texture_scale)
-	surface_material.set_shader_parameter("texture_tint", surface_texture_tint)
+	surface_material.set_shader_parameter("texture_strength", surface_texture_strength)
+	surface_material.set_shader_parameter("use_elevation", surface_elevation)
+	surface_material.set_shader_parameter(
+		"elevation_offset", PlanetSurface.elevation_offset(generation_seed)
+	)
+	surface_material.set_shader_parameter("elevation_frequency", surface_elevation_frequency)
+	surface_material.set_shader_parameter("elevation_octaves", surface_elevation_octaves)
+	surface_material.set_shader_parameter("texture_detail", surface_texture_detail)
+	surface_material.set_shader_parameter("use_lighting", surface_lit)
+	surface_material.set_shader_parameter("ambient_light", surface_ambient)
+	surface_material.set_shader_parameter("bump_strength", surface_bump_strength)
+	surface_material.set_shader_parameter("ocean_shelf_width", surface_ocean_shelf)
+	surface_material.set_shader_parameter("ocean_glint", surface_ocean_glint)
+	surface_material.set_shader_parameter("use_biomes", surface_biomes)
+	surface_material.set_shader_parameter("polar_cap", surface_polar_cap)
+	push_pole_axis()
+	push_surface_ramps()
 	push_surface_textures()
+	push_light_direction()
 
 	# The sprite only needs to supply a quad and its UVs - the shader writes
 	# COLOR outright and never samples TEXTURE, so which texture this is does
@@ -189,6 +315,27 @@ func build_surface() -> void:
 	update_surface_scale()
 
 
+## Generate the surface again from scratch, e.g. after the world seed changes.
+func rebuild_surface() -> void:
+	if surface_sprite != null:
+		surface_sprite.queue_free()
+		surface_sprite = null
+		surface_material = null
+
+	if surface_blob_count > 0:
+		build_surface()
+
+
+## Read from the scene root, which owns every planet in solar_system.tscn.
+## A body with no world falls back to 0.
+func get_world_seed() -> int:
+	if owner == null:
+		return 0
+
+	var value: Variant = owner.get("world_seed")
+	return int(value) if value is int else 0
+
+
 func palette_to_vectors(palette: PackedColorArray) -> PackedVector4Array:
 	var vectors := PackedVector4Array()
 
@@ -198,19 +345,39 @@ func palette_to_vectors(palette: PackedColorArray) -> PackedVector4Array:
 	return vectors
 
 
+## Per-slot terrain layer and colour ramp. The palette colour is the ramp's
+## middle stop and is already pushed as `palette`, so only the ends go here.
+func push_surface_ramps() -> void:
+	if surface_material == null:
+		return
+
+	var terrain_layers := PackedFloat32Array()
+	var low := PackedVector4Array()
+	var high := PackedVector4Array()
+
+	for slot in range(surface_palette.size()):
+		var terrain: int = surface_terrain[slot] if slot < surface_terrain.size() else 0
+		var ends: Array[Color] = PlanetSurface.ramp_ends(surface_palette[slot], terrain)
+		terrain_layers.append(float(terrain))
+		low.append(Vector4(ends[0].r, ends[0].g, ends[0].b, 1.0))
+		high.append(Vector4(ends[1].r, ends[1].g, ends[1].b, 1.0))
+
+	surface_material.set_shader_parameter("slot_terrain", terrain_layers)
+	surface_material.set_shader_parameter("ramp_low", low)
+	surface_material.set_shader_parameter("ramp_high", high)
+
+
 func push_surface_textures() -> void:
 	if surface_material == null:
 		return
 
-	var layers: int = 0
-	if surface_textures != null:
-		layers = surface_textures.get_layers()
+	var textures: Texture2DArray = surface_textures
+	if textures == null and surface_textured:
+		textures = PlanetSurface.default_material_textures()
 
-	surface_material.set_shader_parameter("surface_textures", surface_textures)
-	surface_material.set_shader_parameter("use_textures", layers > 0)
-	surface_material.set_shader_parameter("texture_layers", maxi(layers, 1))
+	surface_material.set_shader_parameter("surface_textures", textures)
 	surface_material.set_shader_parameter(
-		"texture_offset", PlanetSurface.roll_texture_offset(surface_seed, layers)
+		"use_textures", surface_textured and textures != null
 	)
 
 
@@ -234,6 +401,40 @@ func push_surface_rotation() -> void:
 			surface_rotation.w
 		)
 	)
+
+
+## The spin axis in planet space, which is where the poles are. Spinning is a
+## rotation about this very axis, so it stays put however far the planet
+## turns and only needs pushing when the axis itself changes.
+func push_pole_axis() -> void:
+	if surface_material == null:
+		return
+
+	surface_material.set_shader_parameter(
+		"pole_axis", surface_rotation.inverse() * surface_spin_axis
+	)
+
+
+func push_light_direction() -> void:
+	if surface_material == null:
+		return
+
+	var heading: Vector2 = DEFAULT_LIGHT_HEADING
+
+	if light_source != null and is_instance_valid(light_source):
+		var offset: Vector2 = light_source.global_position - global_position
+		if offset.length_squared() > 0.0001:
+			heading = offset.normalized()
+
+	# 2D screen space points down while view space points up.
+	var tilt: float = deg_to_rad(surface_light_tilt)
+	var direction := Vector3(
+		heading.x * cos(tilt),
+		-heading.y * cos(tilt),
+		sin(tilt)
+	)
+
+	surface_material.set_shader_parameter("light_direction", direction)
 
 
 func update_surface_scale() -> void:
@@ -280,6 +481,52 @@ func color_under(planet_direction: Vector3) -> int:
 		surface_warp_strength,
 		surface_warp_frequency
 	)
+
+
+## Terrain (a PlanetSurface.Terrain value) of a palette slot, or -1.
+func terrain_of_slot(slot: int) -> int:
+	if slot < 0 or slot >= surface_terrain.size():
+		return -1
+
+	return surface_terrain[slot]
+
+
+## Terrain of one blob, or -1. Read through its slot - the slot is the address,
+## and colour and terrain are both properties of it.
+func terrain_of_blob(blob_index: int) -> int:
+	if blob_index < 0 or blob_index >= surface_blobs.size():
+		return -1
+
+	return terrain_of_slot(int(surface_blobs[blob_index].w))
+
+
+## Terrain under a direction in planet space, or -1 if this body has no surface.
+## Same warp-aware lookup as color_under(), so it matches what is drawn.
+func terrain_under(planet_direction: Vector3) -> int:
+	return terrain_of_slot(color_under(planet_direction))
+
+
+## Every palette slot made of a given terrain. With four or more colours the
+## opposite land spans several slots, so this can return more than one.
+func slots_with_terrain(terrain: int) -> PackedInt32Array:
+	var slots := PackedInt32Array()
+
+	for slot in range(surface_terrain.size()):
+		if surface_terrain[slot] == terrain:
+			slots.append(slot)
+
+	return slots
+
+
+## Every blob made of a given terrain, across all slots that share it.
+func blobs_with_terrain(terrain: int) -> PackedInt32Array:
+	var blobs := PackedInt32Array()
+
+	for i in range(surface_blobs.size()):
+		if terrain_of_blob(i) == terrain:
+			blobs.append(i)
+
+	return blobs
 
 
 ## Every blob wearing a given palette colour. Spawning is usually a matter of

@@ -33,6 +33,21 @@ enum Style {
 ## Odds per style, in Style order from SCATTERED.
 const STYLE_ODDS: Array[float] = [0.30, 0.54, 0.16]
 
+## What a palette slot is made of. The values double as layer indices into the
+## material texture array, so the order here is the layer order there. Named
+## Terrain rather than Material because Material is already a Godot class.
+enum Terrain {
+	OCEAN,
+	SAND,
+	MOUNTAINS,
+}
+
+## Side length of each generated material texture, in texels.
+const MATERIAL_TEXTURE_SIZE := 256
+
+## Generated once and shared by every planet; see default_material_textures().
+static var _material_textures: Texture2DArray = null
+
 ## Golden angle (137.5 degrees) as a fraction of a turn. Spacing hues by it
 ## keeps any number of them maximally far apart without a lookup table.
 const GOLDEN_FRACTION := 0.381966
@@ -75,7 +90,12 @@ const COLOR_COUNT_ODDS: Array[float] = [0.54, 0.26, 0.12, 0.05, 0.02, 0.01]
 ## Separate RNG streams, so changing the palette does not reshuffle the points.
 const PALETTE_SALT := 0x9E3779B9
 const COUNT_SALT := 0x85EBCA6B
-const TEXTURE_SALT := 0x27D4EB2F
+const TERRAIN_SALT := 0x27D4EB2F
+const ELEVATION_SALT := 0x165667B1
+
+## Upper bound on each component of the elevation offset. Kept small because
+## the shader's hash loses precision as its input grows.
+const ELEVATION_OFFSET_RANGE := 64.0
 
 # The 60/30/10 split. Every colour past the third takes another ACCENT_SHARE,
 # drawn from the dominant and secondary in a 2:1 ratio.
@@ -98,16 +118,157 @@ static func roll_style(surface_seed: int) -> Style:
 	return Style.CONTINENTS
 
 
-## Which texture layer this planet's first palette slot reads. Purely cosmetic,
-## so it gets its own stream and changing it disturbs nothing else.
-static func roll_texture_offset(surface_seed: int, layers: int) -> int:
-	if layers <= 0:
-		return 0
-
+## What each palette slot is made of, indexed by slot like the palette itself.
+##
+## Two coin flips per planet: whether ocean takes the 60% or the 30%, and
+## whether the main land is sand or mountains. The main land takes whichever of
+## those two slots ocean did not, and every 10% slot gets the opposite land
+## type, so a planet always has one ocean, one main land and one contrast.
+##
+##   ocean world:  60% OCEAN      30% main land   10%+ opposite land
+##   land world:   60% main land  30% OCEAN       10%+ opposite land
+static func roll_slot_terrain(surface_seed: int, color_count: int) -> PackedInt32Array:
+	var count: int = clampi(color_count, 1, MAX_COLORS)
 	var rng := RandomNumberGenerator.new()
-	rng.seed = surface_seed ^ TEXTURE_SALT
+	rng.seed = surface_seed ^ TERRAIN_SALT
 
-	return rng.randi() % layers
+	var ocean_dominant: bool = rng.randf() < 0.5
+	var main_land: int = Terrain.SAND if rng.randf() < 0.5 else Terrain.MOUNTAINS
+	var opposite_land: int = (
+		Terrain.MOUNTAINS if main_land == Terrain.SAND else Terrain.SAND
+	)
+
+	var terrain := PackedInt32Array()
+	terrain.append(Terrain.OCEAN if ocean_dominant else main_land)
+
+	if count >= 2:
+		terrain.append(main_land if ocean_dominant else Terrain.OCEAN)
+
+	for _i in range(count - 2):
+		terrain.append(opposite_land)
+
+	return terrain
+
+
+## The dark and light ends of a slot's colour ramp. The palette colour itself is
+## the middle stop, so everything the palette generator already does - hue
+## choice, the three brightness bands - still decides what the planet looks
+## like; the texture only decides where along the ramp each pixel sits.
+##
+## Each material shapes its ramp differently: oceans go deep, sand stays in a
+## narrow band so it reads as fine grain, and mountains run up to near-white
+## so ridges read as peaks.
+static func ramp_ends(base: Color, material: int) -> Array[Color]:
+	var hue: float = base.h
+	var saturation: float = base.s
+	var value: float = base.v
+
+	var ends: Array[Color] = []
+
+	match material:
+		Terrain.OCEAN:
+			ends.append(Color.from_hsv(hue, minf(1.0, saturation * 1.15), value * 0.35))
+			ends.append(Color.from_hsv(hue, saturation * 0.8, lerpf(value, 1.0, 0.35)))
+		Terrain.SAND:
+			ends.append(Color.from_hsv(hue, saturation, value * 0.7))
+			ends.append(Color.from_hsv(hue, saturation * 0.7, lerpf(value, 1.0, 0.4)))
+		_:
+			ends.append(Color.from_hsv(hue, minf(1.0, saturation * 1.1), value * 0.3))
+			ends.append(Color.from_hsv(hue, saturation * 0.25, lerpf(value, 1.0, 0.75)))
+
+	return ends
+
+
+## The shared grayscale material textures, one layer per Terrain in enum
+## order. Generated from noise on first use and cached, so every planet reads
+## the same three layers and only their colour ramps differ. A hand-made
+## Texture2DArray can replace this any time, as long as its layers follow the
+## same order.
+static func default_material_textures() -> Texture2DArray:
+	if _material_textures != null:
+		return _material_textures
+
+	var images: Array[Image] = [
+		_material_image(_ocean_noise()),
+		_material_image(_sand_noise()),
+		_material_image(_mountain_noise()),
+	]
+
+	var textures := Texture2DArray.new()
+	if textures.create_from_images(images) != OK:
+		push_error("PlanetSurface: could not build the material texture array")
+		return null
+
+	_material_textures = textures
+	return textures
+
+
+static func _material_image(noise: FastNoiseLite) -> Image:
+	# Seamless, because the shader repeats the texture across the planet and a
+	# visible seam would show on every tile.
+	var image: Image = noise.get_seamless_image(MATERIAL_TEXTURE_SIZE, MATERIAL_TEXTURE_SIZE)
+	image.convert(Image.FORMAT_L8)
+	image.generate_mipmaps()
+	return image
+
+
+static func _ocean_noise() -> FastNoiseLite:
+	# Broad, soft swells with the domain warped so they curl like currents.
+	var noise := FastNoiseLite.new()
+	noise.seed = 101
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = 0.012
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 4
+	noise.domain_warp_enabled = true
+	noise.domain_warp_amplitude = 30.0
+	return noise
+
+
+static func _sand_noise() -> FastNoiseLite:
+	# Short, fine ripples with little large-scale variation - grain, not relief.
+	var noise := FastNoiseLite.new()
+	noise.seed = 202
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.frequency = 0.05
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 2
+	return noise
+
+
+static func _mountain_noise() -> FastNoiseLite:
+	# Ridged fractal folds each octave into sharp creases, which is what reads
+	# as ridgelines and valleys rather than soft hills.
+	var noise := FastNoiseLite.new()
+	noise.seed = 303
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.frequency = 0.02
+	noise.fractal_type = FastNoiseLite.FRACTAL_RIDGED
+	noise.fractal_octaves = 5
+	noise.fractal_lacunarity = 2.1
+	return noise
+
+
+## The seed a planet actually generates from: the world seed mixed with the
+## planet's own. The golden-ratio multiply spreads neighbouring planet seeds
+## (1001, 1002, ...) far apart before they meet the world seed.
+static func planet_seed(world_seed: int, local_seed: int) -> int:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed ^ (local_seed * 0x9E3779B1)
+	return rng.randi()
+
+
+## Where in the noise field this planet's height is read from. Shifting the
+## sample point is what gives each planet its own relief from one shader.
+static func elevation_offset(surface_seed: int) -> Vector3:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = surface_seed ^ ELEVATION_SALT
+
+	return Vector3(
+		rng.randf_range(0.0, ELEVATION_OFFSET_RANGE),
+		rng.randf_range(0.0, ELEVATION_OFFSET_RANGE),
+		rng.randf_range(0.0, ELEVATION_OFFSET_RANGE)
+	)
 
 
 static func roll_color_count(surface_seed: int) -> int:

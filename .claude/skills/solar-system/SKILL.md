@@ -141,6 +141,13 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   Turning leaves position untouched because the ship sits on the turn axis.
 - **Per-planet values** (`surface_seed`, `surface_blob_count`, `surface_color_count`) are
   hardcoded in `solar_system.tscn`, as with every other planet property.
+- **Seeds.** `surface_seed` is only the planet's *local* seed. Everything generates
+  from `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, where
+  `world_seed` is an export on the scene root (`solar_system.gd`), read through
+  `owner` in `get_world_seed()` because planets build in their own `_ready`, before
+  the root's. Changing the script default of `surface_seed` does nothing - every
+  planet overrides it in the scene. `G` in game calls `reroll_world()`: new random
+  `world_seed`, every planet `rebuild_surface()`d, seed printed to the output.
 - **Palette.** `PlanetSurface.generate_palette()` rolls HSV colours from the seed in
   three brightness bands — dominant is muted and dark, secondary is analogous and
   mid, accents are golden-angle hues, saturated and bright. The bands are what make the
@@ -175,15 +182,55 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   clump, cell areas vary wildly and the colour split drifts off target — measured worst
   case around 7 points of error versus under 3 for the spiral. Even spacing is what
   makes blob share equal area share.
-- **Textures are optional and purely visual.** `surface_textures` takes a
-  `Texture2DArray` — one layer per palette slot — and stays off (flat colours) while it
-  is null. A sphere has no sensible UVs, so the shader samples **triplanar**: three
-  reads blended by which way the surface faces, no seams and no pole pinching. It is an
-  array rather than separate samplers because GLSL cannot index a sampler array with a
-  value it cannot resolve at compile time. Layers are read at `(color_index +
-  texture_offset) % layers`, the offset rolled per seed. Textures multiply the generated
-  palette colour (`surface_texture_tint`), so the 60/30/10 hue work still shows through.
-  `blob_at()` is untouched — texturing changes no gameplay answer.
+- **Terrain and textures (gradient mapping).** Each palette slot has a terrain —
+  `PlanetSurface.Terrain` OCEAN / SAND / MOUNTAINS — rolled by `roll_slot_terrain()`:
+  ocean takes the 60% or the 30% slot, main land (sand or mountains) takes the other,
+  and every 10% slot is the opposite land. Stored per slot in `surface_terrain`, never
+  per blob: a blob's terrain is `surface_terrain[blob.w]`. Query with
+  `terrain_under()`, `terrain_of_blob()`, `blobs_with_terrain()`, `slots_with_terrain()`.
+- Textures are **grayscale data, not colour**: one `Texture2DArray` layer per terrain,
+  in enum order. The gray is a position on the slot's 3-stop ramp — `ramp_ends()` dark
+  end, palette colour in the middle, light end — so one texture per terrain serves
+  every planet and colours stay fully procedural (any hue, abstract worlds allowed).
+  No `source_color` hint on the sampler for that reason. Sampled triplanar (no UVs on a
+  sphere) using the unwarped direction so material does not swim.
+  `default_material_textures()` generates the three layers from `FastNoiseLite`
+  (seamless, cached in a `static var`); `surface_textures` overrides with authored ones.
+  Rendering only — `blob_at()` and all gameplay lookups are unaffected.
+- **Elevation (rendering only).** `terrain_noise()` in the shader samples 3D gradient
+  noise on the unwarped planet-space direction: layered noise for sand (and seafloor
+  roughness), ridged noise (Lague's "rigid" filter, octave-weighted) for mountains.
+  `land_gray()` turns it into a ramp position, with the texture added on top as grain
+  (`surface_texture_detail`); `relief()` into physical height. Seeded by
+  `PlanetSurface.elevation_offset(surface_seed)`. Hash-based, so it has **no CPU
+  mirror** — unlike the warp, gameplay lookups cannot ask for height.
+- **The noise hash must stay integer (PCG3D).** A float hash tore the noise along
+  lattice planes: the compiler fuses multiply-adds differently per corner offset, so
+  a shared corner hashed differently from each side. Invisible in colour, obvious once
+  slope shading differentiates it. numpy prototypes will not reproduce this.
+- **Slope shading** (`surface_bump_strength`). `slot_surface()` samples relief one
+  `bump_step` (≈ one pixel, from `fwidth` of the direction, computed *before* the
+  discard) along two tangents and tilts the normal down the slope. Water stays flat.
+  Past the terminator the bumped light is faded out, since real relief would be in
+  its own shadow there.
+- **Ocean depth** (`surface_ocean_shelf`). The blob loop also tracks the nearest ocean
+  and nearest land blob; their dot difference is 0 exactly on the coast (that *is* the
+  Voronoi coastline) and grows offshore, so it is a free distance-to-shore. Shallows
+  map to the light end of the ocean ramp. `surface_ocean_glint` adds Blinn-Phong glint
+  off the flat sphere normal, view vector +z.
+- **Cold biomes** (`surface_biomes`, `surface_polar_cap`). Coldness = |latitude| +
+  noise wobble + altitude, against threshold `1 - polar_cap` (a cap's area is
+  proportional to its height, so `polar_cap` is the iced share at sea level). Gives
+  polar ice, sea ice, snowy peaks and a desaturated tundra band. `pole_axis` is
+  `surface_rotation.inverse() * surface_spin_axis` — invariant under the spin, so it
+  is only pushed at build and when the axis changes. Hue-shifting biomes (deserts,
+  jungle) are deliberately absent: they would fight the palette generator.
+- **Lighting.** Planets find the sun through the `light_sources` group (set on `Sun` in
+  `solar_system.tscn`) and push a view-space `light_direction` every frame; the 2D
+  heading to the sun is tilted towards the camera by `surface_light_tilt`, since a sun
+  in the orbital plane would light exactly half the disc. Because the sphere is
+  analytic, `view_dir` is the exact normal — Lambert shading is correct, not faked.
+  When lit, lighting replaces `limb_darkening`. Night side floor: `surface_ambient`.
 - **Edges.** Two separate mechanisms, both tunable per body: `surface_warp_*` bends the
   lookup direction before the nearest-blob test so straight Voronoi edges come out
   ragged, and `surface_edge_softness` blends the nearest against the second-nearest so
@@ -231,4 +278,4 @@ must be a plain snapshot, never a live node.
 There is no test suite. Changes are checked by running the scene in Godot 4.7
 (`run/main_scene = res://solar_system.tscn`). Controls: `F` arm/disarm autopilot,
 `Tab` cycle target, mouse wheel zoom (or altitude while arming), middle-drag pan,
-`1`-`7` time warp, `.` toggle camera follow.
+`1`-`7` time warp, `.` toggle camera follow, `G` reroll the world seed (new planets).
