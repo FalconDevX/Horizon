@@ -23,6 +23,17 @@ enum AutopilotPhase {
 	ARRIVAL_BURN
 }
 
+## Seed for the whole system. Every planet's colours and terrain come from it
+## mixed with the planet's own surface_seed, so changing it gives a new set of
+## planets. N rerolls it in game.
+@export var world_seed: int = 0
+
+## How much of each kind's designed range a planet may use (see the _roll_*()
+## functions in planet_terrain.gd): 0 is every kind's textbook look, 1 the full
+## spread of colours and terrain the kind allows. Discrete rolls - palette
+## family, cryovolcano, terrace count - stay random at any value.
+@export_range(0.0, 1.0, 0.05) var planet_chaos: float = 1.0
+
 @onready var sun = $Sun
 @onready var planets_container: Node2D = $Planets
 @onready var ship = $Ship
@@ -345,6 +356,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				camera_follow_body = null
 			else:
 				camera_follow_ship = not camera_follow_ship
+		elif event.keycode == KEY_N:
+			reroll_world()
 
 	if (
 		event is InputEventMouseButton
@@ -386,6 +399,22 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and is_dragging:
 		var pan_factor: float = settings_mgr.camera_pan_speed if settings_mgr != null else 1.0
 		camera.position -= (event.relative * pan_factor) / camera_zoom
+
+
+## Regenerates every planet from a new world seed. The old world's cached
+## bakes are dropped first - nothing will ask for them again.
+func set_world_seed(value: int) -> void:
+	world_seed = value
+	PlanetTerrain.clear_cache()
+
+	for planet in planets:
+		planet.call("rebuild_surface")
+
+	print("World seed: %d" % world_seed)
+
+
+func reroll_world() -> void:
+	set_world_seed(randi())
 
 
 func _ready() -> void:

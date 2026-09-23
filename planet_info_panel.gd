@@ -2,8 +2,8 @@ extends Control
 
 ## Planet catalog: every body in the system, each with a live 3D view (the
 ## same shaders as in space - drag to turn it, scroll to zoom), its vital
-## numbers read straight off the body, and a description and facts from
-## PlanetLore. Toggled with I (solar_system.gd routes the keys while it is
+## numbers read straight off the body, and a description and facts that
+## PlanetLore writes from its kind and this world's roll. Toggled with I (solar_system.gd routes the keys while it is
 ## open), or opened on the current body by the (i) button in the left panel.
 ## Arrow keys step through the bodies.
 
@@ -275,6 +275,10 @@ func _gui_input(event: InputEvent) -> void:
 
 # ---- numbers ----------------------------------------------------------------
 
+func _lore(body: Node2D) -> Dictionary:
+	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
+
+
 ## Label/value rows for the body, all read live from the simulation.
 func _stats(body: Node2D) -> Array:
 	var gravity: float = _system.get_script().get_script_constant_map()["G"]
@@ -370,7 +374,7 @@ func _draw_list(font: Font) -> void:
 		var swatch: Color = body.get("color")
 		draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, swatch)
 		var name: String = body.get("body_name")
-		var lore: Dictionary = PlanetLore.entry(name)
+		var lore: Dictionary = _lore(body)
 		draw_string(
 			font, row.position + Vector2(38.0, 19.0), name.to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
 			row.size.x - 42.0, 14,
@@ -395,7 +399,7 @@ func _draw_text(font: Font) -> void:
 	var text: Rect2 = _text_rect()
 	var body: Node2D = _bodies[_selected]
 	var name: String = body.get("body_name")
-	var lore: Dictionary = PlanetLore.entry(name)
+	var lore: Dictionary = _lore(body)
 	var x: float = text.position.x
 	var y: float = text.position.y + 18.0
 

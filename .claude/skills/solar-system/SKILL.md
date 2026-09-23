@@ -81,6 +81,19 @@ Current system (sun `Virelia`, mass 1000, radius 800):
 | 5 | Marrow | 163 800 | 260 | 6 |
 | 6 | Vantauri | 295 000 | 700 | 34 |
 | 7 | Nyxholm | 548 500 | 560 | 18 |
+| 8 | Anthea | 5 000 | 160 | 4 |
+| 9 | Dunmere | 131 750 | 320 | 1.8 |
+| 10 | Cindral | 6 900 | 130 | 0.6 |
+| 11 | Vesk | 24 800 | 190 | 1.0 |
+| 12 | Ashkar | 78 000 | 230 | 0.4 |
+| 13 | Oruvel | 850 000 | 520 | 15 |
+
+Cindral, Vesk and Ashkar start at 140, 250 and 60 degrees round their orbits and
+Oruvel at 200; the rest start at 0. Cindral and Vesk squeeze between their neighbours'
+SOIs with ~300-450 to spare - keep them light.
+
+Dunmere's SOI (~10 500) clears Glacenna's and Marrow's by only ~400 each side - SOI
+grows with distance, so outer gaps only fit very light planets.
 
 ### Constraints when touching the planet set
 
@@ -141,6 +154,16 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   Turning leaves position untouched because the ship sits on the turn axis.
 - **Per-planet values** (`surface_seed`, `surface_blob_count`, `surface_color_count`) are
   hardcoded in `solar_system.tscn`, as with every other planet property.
+- **Seeds.** `surface_seed` is only a planet's *local* seed. Everything — blob rolls,
+  terrain colours, the elevation bake, the shaders' `seed_offset` — reads
+  `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, set at the
+  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`),
+  read through `owner` in `get_world_seed()` because planets `_ready` before the root.
+  Changing the script default of `surface_seed` does nothing - every planet overrides
+  it in the scene. `set_world_seed(value)` clears `PlanetTerrain`'s bake cache and
+  calls `rebuild_surface()` on every planet; `N` in game does it with `randi()` and
+  prints the seed. A rebuilt terrain planet keeps its old look until the new bake
+  lands; in-flight bakes go to `_stale_terrain_tasks` and are reaped in `_process`.
 - **Palette.** `PlanetSurface.generate_palette()` rolls HSV colours from the seed in
   three brightness bands — dominant is muted and dark, secondary is analogous and
   mid, accents are golden-angle hues, saturated and bright. The bands are what make the
@@ -203,12 +226,68 @@ At runtime a body with `terrain_kind != None` skips the blob surface entirely an
 uses `planet_terrain.gd` (`PlanetTerrain`) + `planet_terrain.gdshader`. The editor
 still shows the blob preview.
 
-- **Kinds** (`PlanetTerrain.Kind`): Terran, Desert, Volcanic, Ice, Barren, Toxic,
-  Gas giant, Ice giant. `preset()` holds each kind's palette (6-stop height
-  gradient), liquid colours/gloss/emission, caps, atmosphere, clouds, relief and
-  noise frequency; `resolve()` drifts hue/sat/value, coverage and frequency per
-  `surface_seed`. Liquid kinds: Terran (water), Volcanic (lava, emissive), Ice,
-  Toxic (acid). `terrain_liquid_coverage` overrides the share (0 = dry).
+- **Kinds** (`PlanetTerrain.Kind`, order shared with the `terrain_kind` export enum,
+  the bake's constants and the gallery's `KIND_NAMES`): Terran, Desert, Volcanic, Ice,
+  Barren, Toxic, Gas giant, Ice giant, then Frozen (ice + barren moon), Slime (scummed
+  slime with lone sharp dark peaks from `peak_layer()`), Occult (black dust, red eye
+  sigils), Gloom (dark blue, glowing gold cracks, hard lighting), Bloom (navy/crimson
+  flower fields, brown valleys, purple ground mist), Oasis (east-west dunes, muddy
+  glossy puddles filling `pit_layer()` pits - coverage kept to about the pits' own area
+  or the dune troughs flood - and spiky green buds). There are no fixed presets: `resolve()` dispatches to one
+  `_roll_<kind>()` per kind, which builds the whole look from ranges that keep the
+  kind's idea (Terran water always blue-ish, grass green-ish in many shades, desert
+  palette *families* - sand/orange/rust/ochre/rose/salt - always on a strong
+  dark→light value ramp so relief stays readable, giants any-hue colour harmonies).
+  A `Roller` does the draws: `between()` is pulled to its range's middle as
+  `planet_chaos` (export on `solar_system.gd`, default 1.0) drops; discrete picks stay
+  random. Volcanic rolls a `variant`: 35% `"cryo"` (glowing light-blue brine on
+  frost) vs `"lava"`. `crust` (shader `liquid_crust`) is separate from `emission`:
+  lava/cryo crust over, acid does not (a crust on acid reads as polka dots).
+  Liquid kinds: Terran (water), Volcanic (lava or cryo, emissive), Ice, Toxic (acid).
+  `terrain_liquid_coverage` overrides the share (0 = dry).
+- **Bake recipe per planet.** `recipe` (continent warp, mountain-belt thresholds,
+  ridge sharpness) is shared by every rocky kind; `detail` is 16 kind-specific floats
+  sent as `detail[4]` in the bake's `Params` - their meaning is commented per branch
+  of `raw_height()` in `planet_terrain_bake.glsl`, and must match the order the
+  `_roll_*()` writes them. Kind features: Terran/Toxic continents (Toxic with its own
+  finer erosion scale and sinkholes), Desert terraces (3–12 steps), Volcanic cones and
+  calderas, Ice fractures (warped-noise zero lines with raised flanks, not Worley
+  cells), Barren craters + dry riverbeds (`channels()`) + maria basins, giants with
+  uneven band widths, sharpness, turbulence and an optional storm (`params.storm`).
+  `cache_key()` hashes everything the bake reads (`_bake_values()`).
+- **Drawn-on effects** (planet shader only, not in the heightmap, pushed by
+  `_push_terrain_effects()`; all off unless a `_roll_*()` sets them): aurora curtains
+  on the auroral oval (Ice, Frozen), glowing cracks (`cracks_at()`, Gloom), low-ground
+  mist (Bloom, capped at 55% opacity - it is a veil, not a lid), buds (`buds_at()`,
+  Oasis: one jittered spiky dot per 3D cell, each testing the height under its own
+  centre so it is whole or absent, denser in the wet band above the waterline, faded
+  out once under a pixel).
+- **Occult eyes and tentacles are carved *and* drawn.** `_roll_occult()` places up to
+  `MAX_SIGILS` = 8 features with `_spaced_direction()`: eyes, plus 1–2 eyeless tentacle
+  nests (`pupil` < 0). `PlanetTerrain.sigil_arrays()` packs them for both shaders. The
+  bake carves eye craters (`eye_relief()`: bowl, rim, hood, iris ring, pupil pit, drip
+  grooves) and tentacle ridges (`tentacle_ridges()`: curling, tapering, rounded, sucker
+  bumps) via `occult_marks()`; the planet shader mirrors `sigil_frame()`, `eye_lens()`,
+  `eye_parts()` and `tentacle_ridges()` to stain bowls red, tint tentacles dark blood
+  and glow only the iris. Change a shape in one shader and it must change in the
+  other, or the stain slides off the crater. Lighting
+  character is per planet too: `ambient`, `light_wrap`, `terminator_softness`,
+  `shade_contrast` (Gloom runs them hard). Emissive light goes through `emit`, added
+  after lighting; lava's `glow` path is separate.
+- **Scene right now** (temporary until every planet rolls a biome per world): Marrow
+  = Frozen, Duskveil = Slime, Thornix = Occult, Nyxholm = Gloom, plus **Anthea** (Bloom,
+  radius 160, mass 4) appended last at 5000 from the sun - inside Emberrock, outside
+  the corona (4000) - so it orbits ~2.4x faster. Cindral (Barren), Vesk (Toxic),
+  Ashkar (Desert) and Oruvel (Ice giant) give the older kinds a planet each; the three
+  small ones bake at `terrain_resolution = 512` to save memory.
+- **Catalog text** (`scripts/data/PlanetLore.gd`) is written per *kind*, not per planet
+  name, and `describe()` adds what the roll produced (lava vs cryo, liquid share,
+  clouds, aurora, storm) - so a reroll or a kind change never leaves stale text. A new
+  kind needs an entry there too.
+- **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
+  world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
+  --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
+  captioned close-up per planet and `gallery.png`.
 - **Heightmap** is baked on the GPU by `planet_terrain_bake.glsl` (compute, via a
   local `RenderingDevice`, one bake at a time behind `_gpu_mutex`; ~1.2 s for all 8
   at 1024²). Warped fBm continents, ridged-multifractal mountain belts, eroded fBm,
@@ -231,7 +310,8 @@ still shows the blob preview.
   3D `Environment` has glow on at HDR threshold 1.0 so only >1 values bloom.
 - Sea level is the height at which `coverage` of the *area* lies below (weighted
   histogram, cube texels are not equal-area). Liquid is drawn flat at sea level.
-- Bakes are cached statically by `cache_key()` for scene reloads. The body polls the
+- Bakes are cached statically by `cache_key()` for scene reloads (~25 MB of heights
+  each at 1024²), and dropped by `clear_cache()` on a world reroll. The body polls the
   task in `_process` and waits for it in `_exit_tree`.
 - Gameplay: `terrain_height_at(dir)` / `is_liquid_at(dir)` read the same texels.
 - Poles/bands/caps use `surface_spin_axis` as the planet-space pole.
@@ -270,4 +350,4 @@ must be a plain snapshot, never a live node.
 There is no test suite. Changes are checked by running the scene in Godot 4.7
 (`run/main_scene = res://solar_system.tscn`). Controls: `F` arm/disarm autopilot,
 `Tab` cycle target, mouse wheel zoom (or altitude while arming), middle-drag pan,
-`1`-`7` time warp, `.` toggle camera follow.
+`1`-`7` time warp, `.` toggle camera follow, `N` reroll the world seed (new planets).

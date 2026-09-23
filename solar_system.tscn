@@ -207,32 +207,32 @@ position = Vector2(32300, 0)
 script = ExtResource("1_hbvo3")
 radius = 300.0
 visual_radius = 300.0
-color = Color(0.6, 0.48, 0.8, 1)
+color = Color(0.45, 0.6, 0.2, 1)
 mass = 12.0
 body_name = "Duskveil"
-atmosphere = "Dense violet haze"
+atmosphere = "Spore fog, methane"
 show_soi = true
 surface_seed = 1003
 surface_blob_count = 48
 surface_spin_speed = -0.03
 surface_spin_axis = Vector3(0.0, 0.999, 0.052)
-terrain_kind = 6
+terrain_kind = 10
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(57800, 0)
 script = ExtResource("1_hbvo3")
 radius = 500.0
 visual_radius = 500.0
-color = Color(0.85, 0.36, 0.2, 1)
+color = Color(0.4, 0.04, 0.04, 1)
 mass = 25.0
 body_name = "Thornix"
-atmosphere = "Thin, dusty"
+atmosphere = "Thin, red, iron dust"
 show_soi = true
 surface_seed = 1004
 surface_blob_count = 80
 surface_spin_speed = 0.24
 surface_spin_axis = Vector3(-0.423, 0.906, 0.0)
-terrain_kind = 2
+terrain_kind = 11
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
 position = Vector2(102300, 0)
@@ -255,17 +255,17 @@ position = Vector2(163800, 0)
 script = ExtResource("1_hbvo3")
 radius = 260.0
 visual_radius = 260.0
-color = Color(0.55, 0.38, 0.3, 1)
+color = Color(0.7, 0.82, 0.9, 1)
 mass = 6.0
 body_name = "Marrow"
-atmosphere = "None (airless)"
+atmosphere = "Trace oxygen, aurorae"
 show_soi = true
 surface_seed = 1006
 surface_blob_count = 40
 surface_style = 1
 surface_spin_speed = 0.04
 surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
-terrain_kind = 5
+terrain_kind = 9
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(295000, 0)
@@ -289,15 +289,114 @@ position = Vector2(548500, 0)
 script = ExtResource("1_hbvo3")
 radius = 560.0
 visual_radius = 560.0
-color = Color(0.3, 0.48, 0.85, 1)
+color = Color(0.2, 0.3, 0.6, 1)
 mass = 18.0
 body_name = "Nyxholm"
-atmosphere = "Deep hydrogen, stormy"
+atmosphere = "Thin, cold, still"
 show_soi = true
 surface_seed = 1008
 surface_blob_count = 88
 surface_spin_speed = 0.50
 surface_spin_axis = Vector3(0.332, 0.883, 0.332)
+terrain_kind = 12
+
+[node name="Anthea" type="Node2D" parent="Planets"]
+position = Vector2(5000, 0)
+script = ExtResource("1_hbvo3")
+radius = 160.0
+visual_radius = 160.0
+color = Color(0.4, 0.3, 0.6, 1)
+mass = 4.0
+body_name = "Anthea"
+atmosphere = "Sweet, lilac mist"
+show_soi = true
+surface_seed = 1009
+surface_blob_count = 40
+surface_spin_speed = 0.45
+surface_spin_axis = Vector3(0.1, 0.995, 0.0)
+terrain_kind = 13
+
+[node name="Dunmere" type="Node2D" parent="Planets"]
+position = Vector2(131750, 0)
+script = ExtResource("1_hbvo3")
+radius = 320.0
+visual_radius = 320.0
+color = Color(0.6, 0.48, 0.28, 1)
+mass = 1.8
+body_name = "Dunmere"
+atmosphere = "Dry, warm, dusty"
+show_soi = true
+surface_seed = 1010
+surface_blob_count = 48
+surface_spin_speed = 0.2
+surface_spin_axis = Vector3(-0.08, 0.997, 0.0)
+terrain_kind = 14
+
+[node name="Cindral" type="Node2D" parent="Planets"]
+position = Vector2(-5285.7, 4435.2)
+script = ExtResource("1_hbvo3")
+radius = 130.0
+visual_radius = 130.0
+color = Color(0.55, 0.45, 0.38, 1)
+mass = 0.6
+body_name = "Cindral"
+atmosphere = "None (airless), scorched"
+show_soi = true
+surface_seed = 1011
+surface_blob_count = 40
+surface_spin_speed = 0.1
+surface_spin_axis = Vector3(0.05, 0.998, 0.0)
+terrain_kind = 5
+terrain_resolution = 512
+
+[node name="Vesk" type="Node2D" parent="Planets"]
+position = Vector2(-8482.1, -23304.4)
+script = ExtResource("1_hbvo3")
+radius = 190.0
+visual_radius = 190.0
+color = Color(0.55, 0.75, 0.25, 1)
+mass = 1.0
+body_name = "Vesk"
+atmosphere = "Chlorine and sulphur haze"
+show_soi = true
+surface_seed = 1012
+surface_blob_count = 40
+surface_spin_speed = -0.18
+surface_spin_axis = Vector3(0.0, 0.99, 0.12)
+terrain_kind = 6
+terrain_resolution = 512
+
+[node name="Ashkar" type="Node2D" parent="Planets"]
+position = Vector2(39000.0, 67550.0)
+script = ExtResource("1_hbvo3")
+radius = 230.0
+visual_radius = 230.0
+color = Color(0.85, 0.5, 0.25, 1)
+mass = 0.4
+body_name = "Ashkar"
+atmosphere = "Thin, dusty"
+show_soi = true
+surface_seed = 1013
+surface_blob_count = 40
+surface_spin_speed = 0.3
+surface_spin_axis = Vector3(-0.2, 0.98, 0.0)
+terrain_kind = 2
+terrain_resolution = 512
+
+[node name="Oruvel" type="Node2D" parent="Planets"]
+position = Vector2(-798738.7, -290717.1)
+script = ExtResource("1_hbvo3")
+radius = 520.0
+visual_radius = 520.0
+color = Color(0.35, 0.65, 0.85, 1)
+mass = 15.0
+body_name = "Oruvel"
+atmosphere = "Hydrogen, helium, methane"
+show_soi = true
+surface_seed = 1014
+surface_blob_count = 40
+surface_spin_speed = 0.55
+surface_spin_axis = Vector3(0.25, 0.95, 0.18)
 terrain_kind = 8
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]

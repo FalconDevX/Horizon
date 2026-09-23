@@ -86,6 +86,15 @@ const SECONDARY_SHARE := 0.30
 const ACCENT_SHARE := 0.10
 
 
+## The seed a planet actually generates from: the world seed mixed with the
+## planet's own. The golden-ratio multiply spreads neighbouring planet seeds
+## (1001, 1002, ...) far apart before they meet the world seed.
+static func planet_seed(world_seed: int, local_seed: int) -> int:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed ^ (local_seed * 0x9E3779B1)
+	return rng.randi()
+
+
 static func roll_style(surface_seed: int) -> Style:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = surface_seed ^ STYLE_SALT

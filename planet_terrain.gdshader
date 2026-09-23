@@ -32,6 +32,9 @@ uniform float land_stops[6];
 uniform vec3 liquid_shallow : source_color = vec3(0.1, 0.5, 0.6);
 uniform vec3 liquid_deep : source_color = vec3(0.0, 0.05, 0.2);
 uniform float liquid_emission : hint_range(0.0, 4.0) = 0.0;
+// How much of a glowing liquid is crusted over (lava's cooling skin, acid
+// scum). 0 leaves the glow bare.
+uniform float liquid_crust : hint_range(0.0, 1.0) = 1.0;
 uniform float liquid_gloss : hint_range(0.0, 1.0) = 0.8;
 
 uniform vec3 rock_color : source_color = vec3(0.4);
@@ -62,6 +65,64 @@ uniform float ambient : hint_range(0.0, 1.0) = 0.04;
 // Tips the sunlight up toward the camera - see planet_surface_3d.gdshader.
 uniform float light_lift : hint_range(0.0, 2.0) = 0.35;
 uniform vec3 sun_color : source_color = vec3(1.0, 0.96, 0.9);
+// Lighting character. `light_wrap` lets light creep past a slope's own
+// shadow edge, `terminator_softness` scales how gradually day turns to night
+// (1 = default), `shade_contrast` steepens the diffuse falloff. Hard,
+// theatrical worlds run 0 / ~0.15 / ~2.
+uniform float light_wrap : hint_range(0.0, 1.0) = 0.15;
+uniform float terminator_softness : hint_range(0.05, 2.0) = 1.0;
+uniform float shade_contrast : hint_range(0.5, 4.0) = 1.0;
+
+// Aurora: glowing curtains around the poles, drawn as light. 0 = none.
+uniform float aurora_strength : hint_range(0.0, 3.0) = 0.0;
+uniform float aurora_latitude : hint_range(0.0, 1.0) = 0.75;
+uniform float aurora_width : hint_range(0.01, 0.3) = 0.1;
+uniform float aurora_speed = 0.03;
+uniform vec3 aurora_color_a : source_color = vec3(0.2, 1.0, 0.5);
+uniform vec3 aurora_color_b : source_color = vec3(0.2, 0.8, 1.0);
+uniform vec3 aurora_color_c : source_color = vec3(0.9, 0.3, 0.9);
+
+// Glowing cracks drawn over the ground (not carved, so they can glow and need
+// no match in the heightmap). 0 = none.
+uniform float crack_strength : hint_range(0.0, 4.0) = 0.0;
+uniform vec3 crack_color : source_color = vec3(1.0, 0.75, 0.3);
+uniform float crack_scale = 6.0;
+uniform float crack_width = 0.03;
+// Threshold on a slow noise: -1 cracks everywhere, 1 almost nowhere.
+uniform float crack_coverage = 0.0;
+
+// Sigils: glowing eye symbols painted on the ground.
+// Array sizes mirror PlanetTerrain.MAX_SIGILS.
+const int MAX_SIGILS = 8;
+uniform int sigil_count = 0;
+// xyz planet-space centre, w angular radius.
+uniform vec4 sigils[8];
+// x rotation, y pupil (0 round, 1 slit, 2 diamond; <0 tentacle nest, no eye),
+// z drip count, w crater depth (bake only).
+uniform vec4 sigil_styles[8];
+// x count, y curl, z reach (sigil radii), w width.
+uniform vec4 sigil_tentacles[8];
+uniform vec3 sigil_color : source_color = vec3(0.9, 0.05, 0.05);
+uniform float sigil_glow : hint_range(0.0, 4.0) = 0.0;
+
+// Buds: small spiky green dots scattered over dry ground, thickest just above
+// the waterline and never in it. 0 = none.
+uniform float bud_strength : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 bud_color : source_color = vec3(0.35, 0.6, 0.25);
+// Cells per unit of planet-space direction - higher means smaller, more buds.
+uniform float bud_scale = 100.0;
+// Radius as a share of a cell, how spiky the outline is, and how many cells
+// hold a bud where the ground is wettest.
+uniform float bud_size : hint_range(0.05, 0.45) = 0.25;
+uniform float bud_spike : hint_range(0.0, 0.4) = 0.12;
+uniform float bud_density : hint_range(0.0, 1.0) = 0.5;
+// How high above the waterline (in 0..1 height) the wet band reaches.
+uniform float bud_reach : hint_range(0.0, 0.5) = 0.08;
+
+// Mist pooling in the low ground and drifting. 0 = none.
+uniform float mist_strength : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 mist_color : source_color = vec3(0.8, 0.7, 1.0);
+uniform float mist_height : hint_range(0.01, 1.0) = 0.25;
 
 global uniform vec3 sun_position;
 
@@ -219,6 +280,214 @@ vec3 land_gradient(float x) {
 	return c;
 }
 
+// ---- drawn-on effects -------------------------------------------------------
+
+float sd_segment(vec2 p, vec2 a, vec2 b) {
+	vec2 pa = p - a;
+	vec2 ba = b - a;
+	float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+	return length(pa - ba * h);
+}
+
+// Occult eye craters. The bake carves them (planet_terrain_bake.glsl); these
+// mirror its sigil_frame(), eye_lens() and eye_parts() so the red staining
+// and glow land exactly on the carved shapes.
+
+// A sigil's own frame: radius-1 units, upright relative to the pole.
+vec2 sigil_frame(vec3 d, vec4 s, float angle) {
+	vec3 up = abs(dot(pole_axis, s.xyz)) < 0.95 ? pole_axis : vec3(1.0, 0.0, 0.0);
+	vec3 east = normalize(cross(up, s.xyz));
+	vec3 north = cross(s.xyz, east);
+	vec2 q = vec2(dot(d, east), dot(d, north)) / s.w;
+	return mat2(vec2(cos(angle), sin(angle)), vec2(-sin(angle), cos(angle))) * q;
+}
+
+float eye_lens(vec2 q) {
+	return max(length(q - vec2(0.0, -0.675)) - 1.125, length(q - vec2(0.0, 0.675)) - 1.125);
+}
+
+// x = how far inside the almond, y = pupil, z = drips, w = iris ring.
+vec4 eye_parts(vec2 q, vec4 style) {
+	float inside = 1.0 - smoothstep(-0.3, 0.0, eye_lens(q));
+
+	float pupil_d;
+	if (style.y < 0.5) {
+		pupil_d = length(q) - 0.13;
+	} else if (style.y < 1.5) {
+		pupil_d = max(abs(q.x) - 0.05, abs(q.y) - 0.3);
+	} else {
+		pupil_d = abs(q.x) + abs(q.y) * 0.6 - 0.16;
+	}
+	float pupil = 1.0 - smoothstep(-0.03, 0.04, pupil_d);
+
+	float drips_d = 1e3;
+	int count = int(style.z);
+	for (int i = 0; i < 5; i++) {
+		if (i >= count) {
+			break;
+		}
+		float x = (float(i) - float(count - 1) * 0.5) * 0.28;
+		float length_i = 0.35 + 0.3 * fract(sin(float(i) * 12.9898 + style.x * 7.0) * 43758.5453);
+		vec2 top = vec2(x, -0.3);
+		vec2 end = vec2(x, -0.3 - length_i);
+		drips_d = min(drips_d, min(sd_segment(q, top, end) - 0.04, length(q - end) - 0.08));
+	}
+	float drips = 1.0 - smoothstep(-0.02, 0.05, drips_d);
+
+	float iris = exp(-pow((length(q) - 0.3) / 0.05, 2.0));
+	return vec4(inside, pupil, drips, iris);
+}
+
+// Mirror of tentacle_ridges() in the bake: 0..1 across each tentacle.
+float tentacle_ridges(vec2 q, vec4 t, float start, float phase) {
+	float r = length(q);
+	if (r < start || r > t.z) {
+		return 0.0;
+	}
+	float theta = atan(q.y, q.x);
+	float along = (r - start) / max(t.z - start, 1e-3);
+	float height = 0.0;
+
+	int count = int(t.x);
+	for (int k = 0; k < 8; k++) {
+		if (k >= count) {
+			break;
+		}
+		float fk = float(k);
+		float base = phase + fk * 6.2831853 / float(count) + 0.35 * sin(fk * 5.1 + phase);
+		float path = base + t.y * along * along + 0.25 * sin(along * 7.0 + fk * 2.3);
+		float off_path = abs(mod(theta - path + 3.14159265, 6.2831853) - 3.14159265) * r;
+		float width = t.w * (1.0 - along) + 0.015;
+		float across = clamp(off_path / width, 0.0, 1.0);
+		float ridge = sqrt(1.0 - across * across);
+		float suckers = 0.88 + 0.12 * sin(along * 55.0 + fk);
+		height = max(height, ridge * sqrt(1.0 - along) * suckers);
+	}
+	return height;
+}
+
+// Every eye crater and tentacle at d: x = red stain (the bowl and the
+// drips), y = glow (the iris only), z = the dark pupil, w = tentacle.
+vec4 eyes_at(vec3 d) {
+	vec4 total = vec4(0.0);
+	for (int i = 0; i < MAX_SIGILS; i++) {
+		if (i >= sigil_count) {
+			break;
+		}
+		vec4 s = sigils[i];
+		vec4 style = sigil_styles[i];
+		vec4 t = sigil_tentacles[i];
+		if (dot(d, s.xyz) < cos(min(s.w * (t.z + 0.3), 3.0))) {
+			continue;
+		}
+		vec2 q = sigil_frame(d, s, style.x);
+		bool has_eye = style.y > -0.5;
+		float tentacle = tentacle_ridges(q, t, has_eye ? 0.95 : 0.2, style.x * 3.0 + float(i) * 1.7);
+		if (has_eye) {
+			vec4 e = eye_parts(q, style);
+			total = max(total, vec4(max(e.x, e.z), e.w, e.y, tentacle));
+		} else {
+			total.w = max(total.w, max(tentacle, exp(-dot(q, q) / 0.09)));
+		}
+	}
+	return total;
+}
+
+// Glowing cracks: the zero lines of warped noise, like the bake's ice
+// fractures but drawn. Never thinner than about a pixel, so they do not
+// break up at a distance. x = the line, y = its halo.
+vec2 cracks_at(vec3 d, float footprint) {
+	vec3 p = d * crack_scale + seed_offset * 0.21;
+	vec3 w = vec3(noised(p * 0.5 + 5.0).x, noised(p * 0.5 + 9.0).x, noised(p * 0.5 + 13.0).x) * 1.2;
+	float a = abs(noised(p + w).x);
+	float b = abs(noised(p * 2.3 + w * 1.7 + 31.0).x);
+	float width = max(crack_width, footprint * crack_scale * 0.6);
+	float line = max(1.0 - smoothstep(0.0, width, a), (1.0 - smoothstep(0.0, width * 0.6, b)) * 0.4);
+	float halo = max(1.0 - smoothstep(0.0, width * 4.0, a), (1.0 - smoothstep(0.0, width * 2.5, b)) * 0.25);
+	float region = smoothstep(crack_coverage - 0.1, crack_coverage + 0.1, noised(d * 1.3 + 71.0 + seed_offset).x);
+	return vec2(line, halo) * region;
+}
+
+// Buds at d, tangent frame (t, b): x = cover, y = how far toward the bud's
+// centre (0 at the rim, 1 in the middle). One bud per 3D cell at most, jittered;
+// each checks the height under its own centre, so a bud is either whole or
+// absent rather than clipped by the waterline. Fades out once a bud would be
+// under a pixel.
+vec2 buds_at(vec3 d, vec3 t, vec3 b, float footprint) {
+	float fade = 1.0 - smoothstep(0.15, 0.45, footprint * bud_scale);
+	if (fade <= 0.0) {
+		return vec2(0.0);
+	}
+
+	vec3 shift = vec3(seed_offset * 0.19);
+	vec3 p = d * bud_scale + shift;
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float sea = has_liquid ? sea_level : 0.0;
+	vec2 best = vec2(0.0);
+
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 h = hash3(cell + o + vec3(0.0, 0.0, 911.0));
+				if (h.x > bud_density) {
+					continue;
+				}
+				vec3 centre = o + 0.5 + (hash3(cell + o) - 0.5) * 0.8;
+
+				// Wettest just above the water, thinning with height; none in it.
+				float height = height_lod(normalize(cell + centre - shift), 2.0);
+				float wet = 1.0 - smoothstep(0.0, bud_reach, height - sea);
+				if (height < sea || h.x > bud_density * mix(0.3, 1.0, wet)) {
+					continue;
+				}
+
+				vec3 offset = centre - local;
+				float radius = bud_size * mix(0.6, 1.2, h.y);
+				float angle = atan(dot(offset, b), dot(offset, t));
+				float spikes = 1.0 + bud_spike * sin(angle * (7.0 + floor(h.z * 6.0)) + h.y * 6.2832);
+				float reach = length(offset) / (radius * spikes);
+				if (reach < 1.0) {
+					best = max(best, vec2(1.0 - smoothstep(0.8, 1.0, reach), 1.0 - reach));
+				}
+			}
+		}
+	}
+
+	return best * fade;
+}
+
+// Aurora light at d: curtains streaked along the auroral oval, drifting, their
+// colour sliding between the three stops and going violet at the poleward edge.
+vec3 aurora_at(vec3 d, float latitude) {
+	float offset = abs(latitude) - aurora_latitude;
+	float oval = exp(-pow(offset / aurora_width, 2.0));
+	if (oval < 0.01) {
+		return vec3(0.0);
+	}
+
+	vec3 helper = abs(pole_axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+	vec3 e1 = normalize(cross(pole_axis, helper));
+	vec3 e2 = cross(pole_axis, e1);
+	float lon = atan(dot(d, e2), dot(d, e1));
+	vec2 ring = vec2(cos(lon), sin(lon));
+	float t = TIME * aurora_speed;
+
+	float body = clamp(0.5 + noised(vec3(ring * 6.0, t) + seed_offset).x * 1.4, 0.0, 1.0);
+	float streak = pow(0.5 + 0.5 * sin(lon * 40.0 + noised(vec3(ring * 3.0, t * 0.7)).x * 8.0), 3.0);
+	float curtain = oval * body * mix(1.0, streak, 0.6);
+
+	float mixer = clamp(0.5 + noised(vec3(ring * 2.0, t * 0.5) + 17.0).x * 1.4, 0.0, 1.0);
+	vec3 color = mix(
+		mix(aurora_color_a, aurora_color_b, clamp(mixer * 2.0, 0.0, 1.0)),
+		aurora_color_c,
+		clamp(mixer * 2.0 - 1.0, 0.0, 1.0)
+	);
+	color = mix(color, aurora_color_c, smoothstep(0.0, aurora_width, offset) * 0.6);
+	return color * curtain;
+}
+
 // ---------------------------------------------------------------------------
 
 void vertex() {
@@ -259,6 +528,8 @@ void fragment() {
 	vec3 n = d;
 	float gloss = 0.0;
 	float glow = 0.0;
+	// Light the surface gives off by itself, added after lighting.
+	vec3 emit = vec3(0.0);
 	bool liquid = false;
 	float ground_h = 0.0;
 
@@ -312,7 +583,7 @@ void fragment() {
 			if (liquid_emission > 0.0) {
 				// Lava: a cooling crust drifting over the glow.
 				float crust = smoothstep(-0.05, 0.15,
-					fbm(d + vec3(0.0, TIME * 0.002, 0.0), 4, 60.0, footprint));
+					fbm(d + vec3(0.0, TIME * 0.002, 0.0), 4, 60.0, footprint)) * liquid_crust;
 				col = mix(col, rock_color * 0.5, crust * 0.85);
 				glow = liquid_emission * (1.0 - crust * 0.9) * mix(1.0, 0.55, depth);
 				gloss *= 1.0 - crust;
@@ -360,6 +631,33 @@ void fragment() {
 			// Hollows darker, crests a touch brighter.
 			col *= 1.0 - 0.3 * max(cavity, 0.0);
 			col *= 1.0 + 0.15 * max(-cavity, 0.0);
+
+			if (bud_strength > 0.0) {
+				// A dab of paint: pigment pooled darker at the rim, lighter in
+				// the middle.
+				vec2 bud = buds_at(d, t, b, footprint);
+				vec3 bud_col = bud_color * mix(0.55, 1.15, bud.y) * (0.9 + 0.2 * grain);
+				col = mix(col, bud_col, bud.x * bud_strength);
+			}
+
+			if (crack_strength > 0.0) {
+				vec2 crack = cracks_at(d, footprint);
+				col = mix(col, crack_color, crack.x);
+				emit += crack_color * crack_strength * (crack.x + crack.y * 0.12);
+			}
+		}
+
+		if (sigil_count > 0) {
+			// Stain the carved crater red but keep the ground's own texture and
+			// lighting, so it reads as part of the terrain; only the iris and
+			// the drips give off a faint, slow-pulsing light.
+			vec4 eye = eyes_at(d);
+			float pulse = 0.75 + 0.25 * sin(TIME * 1.1 + seed_offset);
+			// Tentacles darkened toward dried blood, eye bowls stained solid red.
+			col = mix(col, sigil_color * 0.12 + col * 0.4, smoothstep(0.0, 0.4, eye.w) * 0.8);
+			col = mix(col, sigil_color * (0.35 + 0.15 * grain), eye.x * 0.9);
+			col = mix(col, vec3(0.005), eye.z);
+			emit += sigil_color * sigil_glow * pulse * eye.y * (1.0 - eye.z);
 		}
 	}
 
@@ -381,10 +679,11 @@ void fragment() {
 
 	float sphere_light = dot(sw, L);
 	// Terrain slopes cannot light up the night side past the terminator.
-	float day = smoothstep(-0.12, 0.2, sphere_light);
-	// A little wrap, as scattered light would give: shadowed slopes on the day
-	// side go dim, not pitch black.
-	float diffuse = clamp(dot(nw, L) * 0.85 + 0.15, 0.0, 1.0) * day;
+	float day = smoothstep(-0.12 * terminator_softness, 0.2 * terminator_softness, sphere_light);
+	// Some wrap, as scattered light would give: shadowed slopes on the day
+	// side go dim, not pitch black - unless the planet is meant to be harsh.
+	float diffuse = clamp(dot(nw, L) * (1.0 - light_wrap) + light_wrap, 0.0, 1.0);
+	diffuse = pow(diffuse, shade_contrast) * day;
 	float sky_fill = atmo_strength * 0.06 * day * (0.5 + 0.5 * dot(nw, sw));
 
 	// Shadows of the cloud shell (planet_clouds.gdshader) cast along the
@@ -406,13 +705,30 @@ void fragment() {
 		lit = mix(lit, atmo_color * 0.6 * day, fresnel * gloss * 0.6);
 	}
 
-	lit += col * glow;
+	lit += col * glow + emit;
+
+	// Mist pooling in the low ground, drifting and thinning as it goes.
+	if (mist_strength > 0.0 && !liquid) {
+		float t = TIME * 0.02;
+		float drift = fbm(d + vec3(t, -t * 0.7, t * 0.4) + seed_offset * 0.3, 4, 6.0, footprint);
+		float low = 1.0 - smoothstep(0.0, mist_height, ground_h);
+		// Never fully opaque - the ground always shows through.
+		float mist = clamp(low * smoothstep(-0.1, 0.25, drift) * mist_strength, 0.0, 0.55);
+		vec3 mist_lit = mist_color * (0.15 + 0.85 * max(sphere_light, 0.0) * day);
+		lit = mix(lit, mist_lit, mist);
+	}
 
 	float facing = clamp(dot(sw, V), 0.0, 1.0);
 	float rim = pow(1.0 - facing, 3.0);
 	float atmo_light = smoothstep(-0.25, 0.6, sphere_light);
 	lit = mix(lit, atmo_color * (0.1 + 0.9 * atmo_light), atmo_haze * (0.5 + 0.5 * rim));
 	lit += atmo_color * rim * atmo_strength * atmo_light;
+
+	// Aurora last, over the haze (the cloud shell is drawn on top of this
+	// surface separately), strongest on the night side where nothing drowns it.
+	if (aurora_strength > 0.0 && !is_gas) {
+		lit += aurora_at(d, latitude) * aurora_strength * (1.0 - 0.7 * day);
+	}
 
 	ALBEDO = lit;
 }
