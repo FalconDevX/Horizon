@@ -403,16 +403,9 @@ void fragment() {
 		// every bump would flip between rock and grass and read as spots.
 		float slope = 1.0 - dot(n_macro, d) + (1.0 - dot(n, n_macro)) * 0.25;
 
-		// Second difference a few texels wide, off a blurrier mip so it finds
-		// valleys and crests rather than every texel's grain: > 0 in hollows.
-		float cavity_eps = max(texel * 6.0, footprint * 2.0);
-		float cavity_lod = log2(cavity_eps / texel) - 1.0;
-		float h_c = height_lod(d, cavity_lod);
-		float curvature = height_lod(normalize(d + t * cavity_eps), cavity_lod)
-			+ height_lod(normalize(d - t * cavity_eps), cavity_lod)
-			+ height_lod(normalize(d + b * cavity_eps), cavity_lod)
-			+ height_lod(normalize(d - b * cavity_eps), cavity_lod) - 4.0 * h_c;
-		float cavity = clamp(curvature * 60.0, -1.0, 1.0);
+		// Second difference in texels: > 0 in hollows, < 0 on crests.
+		float curvature = (h_t1 + h_t0 + h_b1 + h_b0 - 4.0 * h) * (texel * texel) / (eps * eps);
+		float cavity = clamp(curvature * 900.0, -1.0, 1.0);
 
 		if (liquid) {
 			float depth = clamp((sea_level - h_fine) / max(sea_level, 1e-3), 0.0, 1.0);
@@ -468,8 +461,8 @@ void fragment() {
 			col *= 0.92 + 0.16 * grain;
 
 			// Hollows darker, crests a touch brighter.
-			col *= 1.0 - 0.3 * max(cavity, 0.0);
-			col *= 1.0 + 0.15 * max(-cavity, 0.0);
+			col *= 1.0 - 0.45 * max(cavity, 0.0);
+			col *= 1.0 + 0.2 * max(-cavity, 0.0);
 		}
 	}
 

@@ -5,6 +5,11 @@ const GLOW_TEXTURE := preload("res://textures/glow.png")
 const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 const SURFACE_SHADER_3D := preload("res://planet_surface_3d.gdshader")
 const TERRAIN_SHADER := preload("res://planet_terrain.gdshader")
+const STAR_SHADER := preload("res://planet_star.gdshader")
+const CORONA_SHADER := preload("res://planet_corona.gdshader")
+
+## The corona plane's half-width, in stellar radii. Planets' glow is 2.
+const CORONA_EXTENT := 5.0
 
 ## Maps the surface's view space (x right, y up the screen, z toward the
 ## viewer) into the 3D world seen by the top-down camera (x right, -z up the
@@ -13,14 +18,13 @@ const TERRAIN_SHADER := preload("res://planet_terrain.gdshader")
 ## is_surface_point_visible() and surface_point_to_local() need no changes.
 const VIEW_TO_WORLD := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 
-const SPHERE_SEGMENTS_LOW := 32
-const SPHERE_RINGS_LOW := 16
-const SPHERE_SEGMENTS_HIGH := 192
-const SPHERE_RINGS_HIGH := 96
+## Quads along one edge of each cube face of the sphere mesh.
+const SPHERE_SUBDIVISIONS_LOW := 12
+const SPHERE_SUBDIVISIONS_HIGH := 160
 
 ## Shared by every body; each one just scales and rotates its instance.
-static var _sphere_low: SphereMesh = null
-static var _sphere_high: SphereMesh = null
+static var _sphere_low: ArrayMesh = null
+static var _sphere_high: ArrayMesh = null
 
 @export var radius: float = 20.0:
 	set(value):
@@ -73,6 +77,10 @@ var fov_contact: int = 0:
 # flat disc, which is what the sun wants. Values are hardcoded per planet in
 # solar_system.tscn for now; a generator will roll them later.
 @export var surface_seed: int = 0
+
+## Draws the body as a star: a churning photosphere and a corona around it
+## (planet_star.gdshader, planet_corona.gdshader) instead of a flat ball.
+@export var is_star: bool = false
 
 @export var surface_blob_count: int = 0
 
@@ -162,7 +170,7 @@ var surface_style: int = 0
 var terrain_kind: int = 0
 
 ## Texels along one edge of each of the six heightmap faces.
-@export_range(32, 512, 16) var terrain_resolution: int = 192
+@export_range(32, 1024, 16) var terrain_resolution: int = 1024
 
 ## Share of the surface under liquid, 0..1. Negative keeps the kind's own
 ## (seed-jittered) value; 0 dries out a kind that would have a sea.
@@ -210,13 +218,16 @@ func _ready() -> void:
 	if not Engine.is_editor_hint():
 		_build_visual_3d()
 
-	if _uses_terrain():
+	if is_star and _sphere_3d != null:
+		build_star()
+	elif _uses_terrain():
 		build_terrain()
 	elif surface_blob_count > 0:
 		build_surface()
 
 	set_process(
-		(surface_material != null or terrain_material != null) and not Engine.is_editor_hint()
+		(surface_material != null or terrain_material != null or is_star)
+		and not Engine.is_editor_hint()
 	)
 	set_physics_process(_anchor_3d != null)
 
@@ -306,7 +317,9 @@ func _update_visual_colors() -> void:
 	if flat != null:
 		flat.albedo_color = color
 
-	(_glow_3d.material_override as StandardMaterial3D).albedo_color = Color(color, 0.6)
+	var glow := _glow_3d.material_override as StandardMaterial3D
+	if glow != null:
+		glow.albedo_color = Color(color, 0.6)
 
 
 # The shader pushes vertices out past the unit sphere, which the mesh's own
@@ -332,29 +345,71 @@ func set_detail_high(high: bool) -> void:
 	if _sphere_3d == null:
 		return
 
-	var mesh: SphereMesh = _shared_sphere(high)
+	var mesh: ArrayMesh = _shared_sphere(high)
 	if _sphere_3d.mesh != mesh:
 		_sphere_3d.mesh = mesh
 
 
-static func _shared_sphere(high: bool) -> SphereMesh:
+static func _shared_sphere(high: bool) -> ArrayMesh:
 	if high:
 		if _sphere_high == null:
-			_sphere_high = _make_sphere(SPHERE_SEGMENTS_HIGH, SPHERE_RINGS_HIGH)
+			_sphere_high = _make_sphere(SPHERE_SUBDIVISIONS_HIGH)
 		return _sphere_high
 
 	if _sphere_low == null:
-		_sphere_low = _make_sphere(SPHERE_SEGMENTS_LOW, SPHERE_RINGS_LOW)
+		_sphere_low = _make_sphere(SPHERE_SUBDIVISIONS_LOW)
 	return _sphere_low
 
 
-static func _make_sphere(segments: int, rings: int) -> SphereMesh:
-	var sphere := SphereMesh.new()
-	sphere.radius = 1.0
-	sphere.height = 2.0
-	sphere.radial_segments = segments
-	sphere.rings = rings
-	return sphere
+## Unit cube-sphere: the six faces of PlanetTerrain's cube, each a grid of
+## `subdivisions` quads pushed out onto the sphere. Spread evenly in angle
+## (tan), so there is no crowding at the poles like a UV sphere has and every
+## part of the heightmap gets the same vertex density.
+static func _make_sphere(subdivisions: int) -> ArrayMesh:
+	var side: int = subdivisions + 1
+	var vertices := PackedVector3Array()
+	var indices := PackedInt32Array()
+
+	for face in range(6):
+		var forward: Vector3 = PlanetTerrain.FACE_FORWARD[face]
+		var right: Vector3 = PlanetTerrain.FACE_RIGHT[face]
+		var up: Vector3 = PlanetTerrain.FACE_UP[face]
+		var first: int = vertices.size()
+
+		for y in range(side):
+			var v: float = _cube_coordinate(y, subdivisions)
+			for x in range(side):
+				var u: float = _cube_coordinate(x, subdivisions)
+				vertices.append((forward + right * u + up * v).normalized())
+
+		# right x up = forward on every face, so this winding is clockwise
+		# seen from outside - Godot's front face.
+		for y in range(subdivisions):
+			for x in range(subdivisions):
+				var a: int = first + y * side + x
+				var c: int = a + side
+				indices.append_array([c, c + 1, a + 1, c, a + 1, a])
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Grid line `i` of `subdivisions` across a cube face, -1..1, even in angle.
+## The edges are pinned to exactly +-1 so neighbouring faces share vertices
+## bit for bit and the seams cannot crack.
+static func _cube_coordinate(i: int, subdivisions: int) -> float:
+	if i == 0:
+		return -1.0
+	if i == subdivisions:
+		return 1.0
+	return tan((float(i) / subdivisions * 2.0 - 1.0) * PI / 4.0)
 
 
 func build_surface() -> void:
@@ -411,6 +466,26 @@ func build_surface() -> void:
 	update_surface_scale()
 
 
+## Swaps the flat ball and its glow sprite for the star shaders.
+func build_star() -> void:
+	var seed_offset: float = float(surface_seed % 997) * 1.37
+
+	var photosphere := ShaderMaterial.new()
+	photosphere.shader = STAR_SHADER
+	photosphere.set_shader_parameter("star_color", color)
+	photosphere.set_shader_parameter("pole_axis", surface_spin_axis)
+	photosphere.set_shader_parameter("seed_offset", seed_offset)
+	_sphere_3d.material_override = photosphere
+
+	var corona := ShaderMaterial.new()
+	corona.shader = CORONA_SHADER
+	corona.set_shader_parameter("star_color", color)
+	corona.set_shader_parameter("extent", CORONA_EXTENT)
+	corona.set_shader_parameter("seed_offset", seed_offset)
+	_glow_3d.material_override = corona
+	update_surface_scale()
+
+
 ## Sets up the heightmap planet. Everything but the heightmap is known at once;
 ## the heightmap bakes on a worker thread (or comes from the cache), and until
 ## it lands the body stays the plain flat-coloured ball.
@@ -436,6 +511,9 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("liquid_emission", p["emission"])
 	terrain_material.set_shader_parameter("liquid_gloss", p["gloss"])
 	terrain_material.set_shader_parameter("rock_color", p["rock"])
+	terrain_material.set_shader_parameter("dry_color", p["dry"])
+	terrain_material.set_shader_parameter("dry_amount", p["dry_amount"])
+	terrain_material.set_shader_parameter("strata", p["strata"])
 	terrain_material.set_shader_parameter("slope_rock", p["slope_rock"])
 	terrain_material.set_shader_parameter("cap_color", p["cap"])
 	terrain_material.set_shader_parameter("cap_latitude", p["cap_latitude"])
@@ -478,6 +556,8 @@ func _apply_terrain(data: Dictionary) -> void:
 
 	if not data.has("texture"):
 		data["texture"] = PlanetTerrain.make_texture(data)
+		# The GPU has its copy now; the CPU keeps only `faces`, for gameplay.
+		data.erase("images")
 		PlanetTerrain.store(_terrain_key, data)
 
 	terrain_data = data
@@ -561,7 +641,7 @@ func update_surface_scale() -> void:
 	# when zoomed out.
 	if _sphere_3d != null:
 		_apply_sphere_transform()
-		var glow_diameter: float = get_draw_radius() * 4.0
+		var glow_diameter: float = get_draw_radius() * (CORONA_EXTENT if is_star else 2.0) * 2.0
 		_glow_3d.scale = Vector3(glow_diameter, 1.0, glow_diameter)
 		_glow_3d.position = Vector3(0.0, -get_draw_radius() * (1.0 + _visual_relief()) - 1.0, 0.0)
 		return

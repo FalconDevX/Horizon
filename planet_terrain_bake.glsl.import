@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://xsg0m83xb647"
+path="res://.godot/imported/planet_terrain_bake.glsl-629e62e2376b65b2868e8cafdda774fd.res"
+
+[deps]
+
+source_file="res://planet_terrain_bake.glsl"
+dest_files=["res://.godot/imported/planet_terrain_bake.glsl-629e62e2376b65b2868e8cafdda774fd.res"]
+
+[params]
+
