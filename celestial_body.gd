@@ -8,6 +8,10 @@ const TERRAIN_SHADER := preload("res://planet_terrain.gdshader")
 const STAR_SHADER := preload("res://planet_star.gdshader")
 const CORONA_SHADER := preload("res://planet_corona.gdshader")
 const CLOUDS_SHADER := preload("res://planet_clouds.gdshader")
+const ATMOSPHERE_SHADER := preload("res://planet_atmosphere.gdshader")
+
+## How far the atmosphere's glow reaches past the surface, in radii.
+const ATMOSPHERE_DEPTH := 0.12
 
 ## How far the cloud deck floats above the lowlands, in radii.
 const CLOUD_CLEARANCE := 0.01
@@ -209,6 +213,9 @@ var _sphere_3d: MeshInstance3D = null
 var _glow_3d: MeshInstance3D = null
 ## The cloud deck, a child of the sphere so it spins and scales with it.
 var _clouds_3d: MeshInstance3D = null
+## The atmosphere's glow shell, likewise. Only worlds with weather (or giants)
+## get one - an airless rock shows a hard edge against space.
+var _atmosphere_3d: MeshInstance3D = null
 
 ## Resolved terrain look (PlanetTerrain.resolve) and, once baked, the heightmap
 ## itself (PlanetTerrain.bake). Empty until then.
@@ -339,6 +346,9 @@ func _update_visual_bounds() -> void:
 	if _clouds_3d != null:
 		extent += CLOUD_CLEARANCE
 		_clouds_3d.custom_aabb = AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
+	if _atmosphere_3d != null:
+		extent = _atmosphere_shell_radius()
+		_atmosphere_3d.custom_aabb = AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
 
 
 func _visual_relief() -> float:
@@ -359,6 +369,8 @@ func set_detail_high(high: bool) -> void:
 		_sphere_3d.mesh = mesh
 	if _clouds_3d != null and _clouds_3d.mesh != mesh:
 		_clouds_3d.mesh = mesh
+	if _atmosphere_3d != null and _atmosphere_3d.mesh != mesh:
+		_atmosphere_3d.mesh = mesh
 
 
 static func _shared_sphere(high: bool) -> ArrayMesh:
@@ -502,6 +514,29 @@ func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
 	_update_visual_bounds()
 
 
+## The air: an additive glow shell reaching ATMOSPHERE_DEPTH past the ground
+## (planet_atmosphere.gdshader).
+func _build_atmosphere(p: Dictionary) -> void:
+	var material := ShaderMaterial.new()
+	material.shader = ATMOSPHERE_SHADER
+	material.set_shader_parameter("shell_radius", _atmosphere_shell_radius())
+	material.set_shader_parameter("scale_height", ATMOSPHERE_DEPTH * 0.25)
+	material.set_shader_parameter("atmo_color", p["atmo"])
+	material.set_shader_parameter("strength", maxf(p["atmo_strength"], 0.4))
+
+	_atmosphere_3d = MeshInstance3D.new()
+	_atmosphere_3d.mesh = _sphere_3d.mesh
+	_atmosphere_3d.material_override = material
+	_atmosphere_3d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_atmosphere_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_sphere_3d.add_child(_atmosphere_3d)
+	_update_visual_bounds()
+
+
+func _atmosphere_shell_radius() -> float:
+	return 1.0 + terrain_params.get("relief", 0.0) * 0.45 + ATMOSPHERE_DEPTH
+
+
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
 	var seed_offset: float = float(surface_seed % 997) * 1.37
@@ -565,6 +600,8 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("cyclones", cyclones)
 	if p["clouds"] > 0.0:
 		_build_clouds(p, cyclones)
+	if p["clouds"] > 0.0 or PlanetTerrain.is_gas(kind):
+		_build_atmosphere(p)
 	terrain_material.set_shader_parameter("seed_offset", float(surface_seed % 997) * 1.37)
 
 	_update_visual_bounds()
