@@ -50,7 +50,7 @@ static func engines() -> Array[ModuleData]:
 		_engine("Plasma", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
 		# Fusion:          thrust ***** fuel *      energy ***** mass *****
 		_engine("Fusion", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
-		# Corrective / RCS — mounts on the three RCS edges only.
+		# Corrective / RCS — truss adjacent to normal deck only.
 		_corrective_engine("Corrective Engine", &"engine_corrective", 4.0, 0.8, 1.0, 2.0, 60.0, _shape_1x1()),
 	]
 
@@ -345,19 +345,13 @@ static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = 
 
 	var deck := Color(0.32, 0.4, 0.52)
 	var mount := Color(0.55, 0.34, 0.22)
-	var rcs := Color(0.28, 0.48, 0.55)
 	for i in local_shape.size():
 		var local: Vector2i = local_shape[i]
 		var c: Vector2i = placed[i]
 		var floor := hull.get_local_floor(local)
 		var base := deck
-		match floor:
-			HullData.FloorType.ENGINE_MOUNT:
-				base = mount
-			HullData.FloorType.RCS_MOUNT:
-				base = rcs
-			_:
-				base = deck
+		if floor == HullData.FloorType.ENGINE_MOUNT:
+			base = mount
 		var ox := c.x * cell_px
 		var oy := c.y * cell_px
 		for py in cell_px:
