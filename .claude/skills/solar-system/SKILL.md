@@ -209,11 +209,26 @@ still shows the blob preview.
   noise frequency; `resolve()` drifts hue/sat/value, coverage and frequency per
   `surface_seed`. Liquid kinds: Terran (water), Volcanic (lava, emissive), Ice,
   Toxic (acid). `terrain_liquid_coverage` overrides the share (0 = dry).
-- **Heightmap** is baked from FastNoiseLite on `WorkerThreadPool` (~1 s for all 8
-  at 192²) into 6 cube-sphere faces, uploaded as a 6-layer `Texture2DArray`. The
-  face layout is our own (`FACE_FORWARD/RIGHT/UP` ↔ `face_uv()` in the shader),
+- **Heightmap** is baked on the GPU by `planet_terrain_bake.glsl` (compute, via a
+  local `RenderingDevice`, one bake at a time behind `_gpu_mutex`; ~1.2 s for all 8
+  at 1024²). Warped fBm continents, ridged-multifractal mountain belts, eroded fBm,
+  per-cell craters (summed over neighbours - no Voronoi seams). No RenderingDevice
+  (headless, Compatibility) → `bake()` returns `{}` and the body stays a flat ball.
+  Do not use `.length()` on SSBO arrays there - the D3D12 backend can't translate it.
+  6 cube-sphere faces, uploaded as a mipmapped 6-layer `Texture2DArray`. The
+  face layout is our own (`FACE_FORWARD/RIGHT/UP` ↔ `face_uv()` in both shaders),
   not the GPU cubemap convention; edge texels lie on the cube edges so faces meet
-  without seams. Keep `PlanetTerrain.face_uv()` and the shader's `face_uv()` in sync.
+  without seams. Keep `PlanetTerrain.face_uv()` and the shaders' in sync.
+- **Mesh** is a cube-sphere (`_make_sphere()`, equal-angle, 12 / 160 quads per face
+  edge), displaced in the vertex shader at LOD 0 (any blurrier mip cracks seams).
+- **Shading** (`planet_terrain.gdshader`): bicubic height near the camera (bilinear
+  within 3 texels of a face edge), procedural sub-texel detail faded by pixel
+  footprint, cavity from a blurrier mip, dry biome, rock strata, surf, lava crust,
+  waves + fresnel, cloud shadows. `relief` is the silhouette height, `bump` only
+  steepens the lighting.
+- **Stars**: `is_star` (the Sun) uses `planet_star.gdshader` (granulation, spots,
+  limb darkening, HDR ~1.25) and `planet_corona.gdshader` on the glow plane; the
+  3D `Environment` has glow on at HDR threshold 1.0 so only >1 values bloom.
 - Sea level is the height at which `coverage` of the *area* lies below (weighted
   histogram, cube texels are not equal-area). Liquid is drawn flat at sea level.
 - Bakes are cached statically by `cache_key()` for scene reloads. The body polls the
