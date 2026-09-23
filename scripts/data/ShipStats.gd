@@ -20,6 +20,8 @@ var occupied_cells: int = 0
 var capacity: int = 0
 var max_heat: float = 0.0 ## Highest engine overheat limit among engines
 var hulls_linked: bool = true
+## Every hull has ≥1 corrective engine on top, right and bottom RCS edges.
+var rcs_sides_ok: bool = true
 
 
 func to_dictionary() -> Dictionary:
@@ -44,6 +46,7 @@ func to_dictionary() -> Dictionary:
 		"net_energy": energy_generation - energy_consumption,
 		"thrust_to_weight": thrust / maxf(mass, 0.001),
 		"hulls_linked": hulls_linked,
+		"rcs_sides_ok": rcs_sides_ok,
 	}
 
 
@@ -67,4 +70,5 @@ func duplicate_stats() -> ShipStats:
 	copy.capacity = capacity
 	copy.max_heat = max_heat
 	copy.hulls_linked = hulls_linked
+	copy.rcs_sides_ok = rcs_sides_ok
 	return copy

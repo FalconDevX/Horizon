@@ -310,7 +310,9 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 		return
 	var link := ""
 	if not _ship_hull.are_hulls_connected():
-		link = " ⚠ Hulls not connected - use a Connector."
+		link += " ⚠ Hulls not connected - use a Connector."
+	if not _ship_hull.are_rcs_sides_covered():
+		link += " ⚠ Each hull needs a corrective engine on all 3 RCS sides."
 	if module == null:
 		_hint.text = "Wheel = zoom. Middle-drag = pan. Holding a module: wheel = rotate.%s" % link
 	else:
@@ -327,7 +329,7 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "deck"
 			ModuleData.Category.ENGINE:
 				if module.is_corrective_engine:
-					floor_hint = "RCS mount (must touch an RCS edge)"
+					floor_hint = "RCS mount (one per top / right / bottom edge)"
 				else:
 					floor_hint = "deck / mounts (must touch a main engine mount)"
 			_:

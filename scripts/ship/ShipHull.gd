@@ -7,7 +7,7 @@ extends Node2D
 ## Rules:
 ##   - Hull pieces may not touch each other edge-to-edge (must use a connector).
 ##   - Left edge is ENGINE_MOUNT; main engines must cover at least one.
-##   - Top / right / bottom edges are RCS_MOUNT; corrective engines only, must cover at least one.
+##   - Top / right / bottom edges are RCS_MOUNT; each hull needs ≥1 corrective engine per side.
 ##   - Weapons mount next to hull floor (not on the floor).
 ##   - Moving a hull keeps its attached modules (cargo).
 
@@ -566,6 +566,34 @@ func are_hulls_connected() -> bool:
 	return true
 
 
+## Every placed hull must have at least one corrective engine on each RCS edge
+## (top, right, bottom in hull-local space).
+func are_rcs_sides_covered() -> bool:
+	for m: PlacedModule in _modules.values():
+		if m.data == null or m.data.category != ModuleData.Category.HULL:
+			continue
+		if m.data.hull_data == null:
+			continue
+		if not _hull_has_all_rcs_sides(m):
+			return false
+	return true
+
+
+func _hull_has_all_rcs_sides(hull: PlacedModule) -> bool:
+	var hd: HullData = hull.data.hull_data
+	var covered: Array[bool] = [false, false, false]
+	for m: PlacedModule in _modules.values():
+		if m.data == null or not m.data.is_rcs_engine():
+			continue
+		for cell: Vector2i in m.get_occupied_cells():
+			if get_structure_at(cell) != hull:
+				continue
+			var side := hd.get_rcs_side(world_to_hull_local(hull, cell))
+			if side >= 0 and side < covered.size():
+				covered[side] = true
+	return covered[0] and covered[1] and covered[2]
+
+
 func world_to_hull_local(hull: PlacedModule, world_cell: Vector2i) -> Vector2i:
 	var hd: HullData = hull.data.hull_data
 	var rel := world_cell - hull.origin
@@ -791,5 +819,6 @@ func _recalculate_stats() -> void:
 			stats.max_heat = d.max_heat
 	stats.health += stats.durability
 	stats.hulls_linked = are_hulls_connected()
+	stats.rcs_sides_ok = are_rcs_sides_covered()
 	_cached_stats = stats
 	stats_changed.emit(stats.to_dictionary())

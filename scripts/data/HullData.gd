@@ -39,6 +39,20 @@ func get_local_floor(local_cell: Vector2i) -> FloorType:
 	return FloorType.DECK
 
 
+## Which RCS edge a local cell belongs to: 0=top, 1=right, 2=bottom, -1=none.
+## Corners on the right go to top/bottom so each side needs its own thruster.
+func get_rcs_side(local_cell: Vector2i) -> int:
+	if get_local_floor(local_cell) != FloorType.RCS_MOUNT:
+		return -1
+	if local_cell.y == 0:
+		return 0
+	if local_cell.y == grid_size.y - 1:
+		return 2
+	if local_cell.x == grid_size.x - 1:
+		return 1
+	return -1
+
+
 ## Deck cells that may hold general equipment (not RCS-only tiles).
 static func is_deck_floor(floor: FloorType) -> bool:
 	return floor == FloorType.DECK or floor == FloorType.ENGINE_MOUNT
