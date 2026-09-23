@@ -232,6 +232,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if ship_builder_panel != null and ship_builder_panel.visible:
 		return
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_G:
+		_try_fire_fov_weapon()
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventKey and event.keycode == KEY_F:
 		if event.pressed and not event.echo:
 			if autopilot_active:
@@ -414,6 +419,7 @@ func _process(delta: float) -> void:
 	update_target_orbit_visual()
 	update_route_planning(delta)
 	update_interplanetary_route_visual()
+	update_fov_gameplay()
 	update_hud()
 
 	if camera_follow_ship:
@@ -1842,6 +1848,16 @@ func update_hud() -> void:
 	soi_label.text = hud_row("SOI", get_current_soi())
 	soi_label.add_theme_color_override("font_color", COLOR_MONO)
 
+	if ship.fov_devices.size() > 0:
+		var fov_bits: PackedStringArray = []
+		if not ship.radar_contacts.is_empty():
+			fov_bits.append("RAD " + ", ".join(ship.radar_contacts))
+		if not ship.weapon_locks.is_empty():
+			fov_bits.append("LOCK " + ", ".join(ship.weapon_locks) + " [G]")
+		if fov_bits.is_empty():
+			fov_bits.append("scanning…")
+		soi_label.text = hud_row("SOI", get_current_soi()) + "\n" + hud_row("Sensors", " | ".join(fov_bits))
+
 	if trajectory_status == "IMPACT":
 		trajectory_label.text = hud_row("Trajectory", "IMPACT - " + trajectory_target)
 		trajectory_label.add_theme_color_override("font_color", COLOR_MONO)
@@ -2560,6 +2576,70 @@ func _sync_ship_from_builder() -> void:
 	if ship == null or _builder_controller == null:
 		return
 	ship.apply_module_stats(_builder_controller.get_stats_dictionary())
+	ship.apply_fov_devices(_builder_controller.get_fov_devices())
+
+
+func update_fov_gameplay() -> void:
+	if ship == null:
+		return
+	if ship.fov_devices.is_empty():
+		ship.clear_fov_contacts()
+		for body in celestial_bodies:
+			if body.get("fov_contact") != null:
+				body.set("fov_contact", 0)
+		return
+
+	var has_radar := false
+	for device in ship.fov_devices:
+		if str(device.get("kind", "")) == "radar":
+			has_radar = true
+			break
+
+	var radar: Array[String] = []
+	var locks: Array[String] = []
+	for body in celestial_bodies:
+		var body_name: String = str(body.get("body_name"))
+		var in_radar := false
+		var in_weapon := false
+		for device in ship.fov_devices:
+			var kind := str(device.get("kind", ""))
+			if not ship.is_body_in_device_fov(device, body.position):
+				continue
+			if kind == "radar":
+				in_radar = true
+			elif kind == "weapon":
+				in_weapon = true
+
+		var contact := 0
+		if in_radar:
+			radar.append(body_name)
+			contact = 1
+		# With radars fitted, weapons only lock bodies the sensors already see.
+		# Without any radar, weapons lock on their own FOV.
+		var can_lock := in_weapon and (in_radar or not has_radar)
+		if can_lock:
+			locks.append(body_name)
+			contact = 2
+		body.set("fov_contact", contact)
+
+	ship.set_fov_contacts(radar, locks)
+
+
+func _try_fire_fov_weapon() -> void:
+	if ship == null or ship.weapon_locks.is_empty():
+		return
+	var best_body: Node2D = null
+	var best_dist := INF
+	for body in celestial_bodies:
+		var body_name: String = str(body.get("body_name"))
+		if not ship.weapon_locks.has(body_name):
+			continue
+		var dist: float = ship.position.distance_to(body.position)
+		if dist < best_dist:
+			best_dist = dist
+			best_body = body
+	if best_body != null:
+		ship.try_fire_at(best_body.position)
 
 
 func _on_setting_changed(key: String, value: Variant) -> void:

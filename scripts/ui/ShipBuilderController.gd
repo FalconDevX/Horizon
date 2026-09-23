@@ -15,6 +15,7 @@ signal closed
 @onready var _right_column: Control = %RightColumn
 @onready var _grid_scroll: PannableScrollContainer = %GridScroll
 @onready var _center_view_btn: Button = %CenterViewButton
+@onready var _rotate_view_btn: Button = %RotateViewButton
 @onready var _close_btn: Button = %CloseButton
 @onready var _title: Label = %Title
 @onready var _exit_confirm: Control = %ExitConfirm
@@ -31,6 +32,7 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.BATTERY,
 	ModuleData.Category.SHIELD,
 	ModuleData.Category.WEAPON,
+	ModuleData.Category.RADAR,
 	ModuleData.Category.UTILITY,
 ]
 
@@ -42,6 +44,7 @@ const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.BATTERY: "Batteries",
 	ModuleData.Category.SHIELD: "Shields",
 	ModuleData.Category.WEAPON: "Weapons",
+	ModuleData.Category.RADAR: "Radars",
 	ModuleData.Category.UTILITY: "Utilities",
 }
 
@@ -61,6 +64,12 @@ func get_stats_dictionary() -> Dictionary:
 	if _ship_hull == null:
 		return {}
 	return _ship_hull.get_stats_dictionary()
+
+
+func get_fov_devices() -> Array[Dictionary]:
+	if _ship_hull == null:
+		return []
+	return _ship_hull.get_fov_devices()
 
 
 func _ready() -> void:
@@ -83,6 +92,8 @@ func _ready() -> void:
 
 	if _center_view_btn != null:
 		_center_view_btn.pressed.connect(_on_center_view_pressed)
+	if _rotate_view_btn != null:
+		_rotate_view_btn.pressed.connect(_on_rotate_view_pressed)
 
 	if _close_btn != null:
 		_close_btn.pressed.connect(_show_exit_confirm)
@@ -100,6 +111,11 @@ func _ready() -> void:
 func _on_center_view_pressed() -> void:
 	if _grid_scroll != null:
 		_grid_scroll.center_view()
+
+
+func _on_rotate_view_pressed() -> void:
+	if _grid_ui != null:
+		_grid_ui.rotate_view(1)
 
 
 func _show_exit_confirm() -> void:
@@ -147,6 +163,7 @@ func _style_chrome() -> void:
 		_hint.add_theme_font_size_override("font_size", 11)
 		_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
 	_style_topbar_button(_center_view_btn)
+	_style_topbar_button(_rotate_view_btn)
 	_style_topbar_button(_close_btn)
 	_style_exit_confirm()
 
@@ -293,7 +310,9 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 		return
 	var link := ""
 	if not _ship_hull.are_hulls_connected():
-		link = " ⚠ Hulls not connected - use a Connector."
+		link += " ⚠ Hulls not connected - use a Connector."
+	if not _ship_hull.are_rcs_sides_covered():
+		link += " ⚠ Each hull needs a corrective engine on all 3 RCS sides."
 	if module == null:
 		_hint.text = "Wheel = zoom. Middle-drag = pan. Holding a module: wheel = rotate.%s" % link
 	else:
@@ -306,14 +325,25 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
 				floor_hint = "next to a deck (not on the floor)"
+			ModuleData.Category.RADAR:
+				floor_hint = "deck"
+			ModuleData.Category.ENGINE:
+				if module.is_corrective_engine:
+					floor_hint = "RCS mount (one per top / right / bottom edge)"
+				else:
+					floor_hint = "deck / mounts (must touch a main engine mount)"
 			_:
 				if module.is_deck_equipment():
 					floor_hint = "deck"
-		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s" % [
+		var fov_hint := ""
+		if module.has_fov():
+			fov_hint = " | FOV %.0f° / %.0f SU" % [module.fov_angle_deg, module.fov_range]
+		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s%s" % [
 			module.title,
 			floor_hint,
 			rotation * 90,
 			bounds.x,
 			bounds.y,
+			fov_hint,
 			link,
 		]

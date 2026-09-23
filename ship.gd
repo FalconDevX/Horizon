@@ -24,6 +24,16 @@ const MIN_SHIP_MASS := 1.0
 ## RCS scales with main thrust so module builds keep a usable attitude/translation ratio.
 const RCS_THRUST_RATIO := 1.0 / 6.0
 
+## FOV devices synced from the shipyard (weapons + radars).
+var fov_devices: Array[Dictionary] = []
+## Body names currently inside at least one radar cone.
+var radar_contacts: Array[String] = []
+## Body names inside a weapon cone (engageable).
+var weapon_locks: Array[String] = []
+var _fire_flash_timer := 0.0
+var _fire_flash_to := Vector2.ZERO
+var show_fov_cones := true
+
 var velocity := Vector2.ZERO
 var throttle := 0.0
 var autopilot_thrust := Vector2.ZERO
@@ -64,17 +74,90 @@ func apply_module_stats(stats: Dictionary) -> void:
 		energy_generation = 0.0
 		energy_capacity = 0.0
 		shield_strength = 0.0
+		apply_fov_devices([])
 		return
 
 	ship_mass = maxf(float(stats.get("mass", 0.0)), MIN_SHIP_MASS)
 	thrust_force = maxf(float(stats.get("thrust", 0.0)), 0.0)
-	correction_thrust_force = thrust_force * RCS_THRUST_RATIO
+	var rcs: float = maxf(float(stats.get("correction_thrust", 0.0)), 0.0)
+	# Fallback keeps attitude control usable before any Corrective Engine is fitted.
+	correction_thrust_force = rcs if rcs > 0.0 else thrust_force * RCS_THRUST_RATIO
 	fuel_consumption = maxf(float(stats.get("fuel_consumption", 0.0)), 0.0)
 	fuel_capacity = maxf(float(stats.get("fuel_capacity", 0.0)), 0.0)
 	energy_consumption = maxf(float(stats.get("energy_consumption", 0.0)), 0.0)
 	energy_generation = maxf(float(stats.get("energy_generation", 0.0)), 0.0)
 	energy_capacity = maxf(float(stats.get("energy_capacity", 0.0)), 0.0)
 	shield_strength = maxf(float(stats.get("shield_strength", 0.0)), 0.0)
+
+
+func apply_fov_devices(devices: Array) -> void:
+	fov_devices.clear()
+	for item in devices:
+		if typeof(item) != TYPE_DICTIONARY:
+			continue
+		fov_devices.append((item as Dictionary).duplicate(true))
+	radar_contacts.clear()
+	weapon_locks.clear()
+	queue_redraw()
+
+
+func clear_fov_contacts() -> void:
+	radar_contacts.clear()
+	weapon_locks.clear()
+
+
+func set_fov_contacts(radar: Array[String], weapons: Array[String]) -> void:
+	radar_contacts = radar.duplicate()
+	weapon_locks = weapons.duplicate()
+	queue_redraw()
+
+
+func device_world_origin(device: Dictionary) -> Vector2:
+	var local_origin: Vector2 = device.get("local_origin", Vector2.ZERO)
+	return global_position + local_origin.rotated(rotation)
+
+
+func device_world_facing(device: Dictionary) -> Vector2:
+	var local_facing: Vector2 = device.get("local_facing", Vector2.RIGHT)
+	return local_facing.rotated(rotation)
+
+
+func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
+	var origin := device_world_origin(device)
+	var facing := device_world_facing(device)
+	var half := deg_to_rad(float(device.get("angle_deg", 0.0))) * 0.5
+	var range_su := float(device.get("range", 0.0))
+	if not FovUtil.is_point_in_cone(origin, facing, half, range_su, body_pos):
+		return false
+	# Hull blocks LOS in ship-local space.
+	var local_origin: Vector2 = device.get("local_origin", Vector2.ZERO)
+	var to_local: Vector2 = (body_pos - global_position).rotated(-rotation)
+	var hull_rects: Array = device.get("hull_rects", [])
+	var ignore_rects: Array = device.get("ignore_rects", [])
+	if hull_rects.is_empty():
+		return true
+	return FovUtil.has_clear_los(local_origin, to_local, hull_rects, ignore_rects)
+
+
+func try_fire_at(world_pos: Vector2) -> bool:
+	if weapon_locks.is_empty():
+		return false
+	var best_range := INF
+	var fired := false
+	for device in fov_devices:
+		if str(device.get("kind", "")) != "weapon":
+			continue
+		if not is_body_in_device_fov(device, world_pos):
+			continue
+		var dist := device_world_origin(device).distance_to(world_pos)
+		if dist < best_range:
+			best_range = dist
+			_fire_flash_to = to_local(world_pos)
+			_fire_flash_timer = 0.35
+			fired = true
+	if fired:
+		queue_redraw()
+	return fired
 
 
 func _on_click_area_input_event(
@@ -207,7 +290,9 @@ func get_autopilot_acceleration(max_force: float, is_main_engine: bool) -> Vecto
 	)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _fire_flash_timer > 0.0:
+		_fire_flash_timer = maxf(0.0, _fire_flash_timer - delta)
 	queue_redraw()
 	_update_rcs_sound()
 
@@ -256,6 +341,8 @@ var MARKER_POINTS := PackedVector2Array([
 
 
 func _draw() -> void:
+	_draw_fov_cones()
+
 	var front_pos: Vector2
 	var back_pos: Vector2
 	var left_pos: Vector2
@@ -292,11 +379,59 @@ func _draw() -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		draw_line(Vector2.ZERO, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.35), 1.0)
 
+	if _fire_flash_timer > 0.0:
+		var alpha := clampf(_fire_flash_timer / 0.35, 0.0, 1.0)
+		draw_line(Vector2.ZERO, _fire_flash_to, Color(1.0, 0.45, 0.2, 0.85 * alpha), 2.0)
+
 	var combined: Vector2 = autopilot_rcs_local_command + manual_rcs_local_command
 	_draw_rcs_thruster(front_pos, Vector2.RIGHT, combined.x < -RCS_ACTIVE_THRESHOLD, 0.0)
 	_draw_rcs_thruster(back_pos, Vector2.LEFT, combined.x > RCS_ACTIVE_THRESHOLD, 1.7)
 	_draw_rcs_thruster(left_pos, Vector2.UP, combined.y < -RCS_ACTIVE_THRESHOLD, 3.4)
 	_draw_rcs_thruster(right_pos, Vector2.DOWN, combined.y > RCS_ACTIVE_THRESHOLD, 5.1)
+
+
+func _draw_fov_cones() -> void:
+	if not show_fov_cones or fov_devices.is_empty():
+		return
+	# Ship visual scale (screen-space sizing) must not stretch world-SU cones.
+	var inv_scale := 1.0 / maxf(scale.x, 0.0001)
+	for device in fov_devices:
+		var local_origin: Vector2 = device.get("local_origin", Vector2.ZERO) * inv_scale
+		var local_facing: Vector2 = device.get("local_facing", Vector2.RIGHT)
+		var angle_deg := float(device.get("angle_deg", 0.0))
+		var range_su := float(device.get("range", 0.0)) * inv_scale
+		var is_weapon := str(device.get("kind", "")) == "weapon"
+		var fill := (
+			Color(0.9, 0.25, 0.2, 0.08) if is_weapon
+			else Color(0.25, 0.75, 0.85, 0.07)
+		)
+		var outline := (
+			Color(0.95, 0.4, 0.3, 0.35) if is_weapon
+			else Color(0.45, 0.9, 1.0, 0.3)
+		)
+		var hull_rects: Array = _scale_rects(device.get("hull_rects", []), inv_scale)
+		var ignore_rects: Array = _scale_rects(device.get("ignore_rects", []), inv_scale)
+		FovUtil.draw_cone_rects(
+			self,
+			local_origin,
+			local_facing,
+			angle_deg,
+			range_su,
+			fill,
+			outline,
+			1.0,
+			hull_rects,
+			ignore_rects
+		)
+
+
+func _scale_rects(rects: Array, inv_scale: float) -> Array:
+	var out: Array = []
+	for item in rects:
+		if item is Rect2:
+			var r: Rect2 = item
+			out.append(Rect2(r.position * inv_scale, r.size * inv_scale))
+	return out
 
 
 func _image_to_local(frac: Vector2, draw_size: Vector2) -> Vector2:

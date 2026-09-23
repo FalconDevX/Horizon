@@ -2,10 +2,12 @@ class_name ShipHull
 extends Node2D
 ## Shipyard build grid with two layers:
 ##   structure  - HULL pieces + CONNECTOR
-##   equipment  - engines/utilities on DECK; weapons on empty cells adjacent to DECK
+##   equipment  - engines/utilities on DECK / mounts; weapons on empty cells adjacent to DECK
 ##
 ## Rules:
 ##   - Hull pieces may not touch each other edge-to-edge (must use a connector).
+##   - Left edge is ENGINE_MOUNT; main engines must cover at least one.
+##   - Top / right / bottom edges are RCS_MOUNT; each hull needs ≥1 corrective engine per side.
 ##   - Weapons mount next to hull floor (not on the floor).
 ##   - Moving a hull keeps its attached modules (cargo).
 
@@ -14,7 +16,7 @@ signal module_attached(module: PlacedModule)
 signal module_detached(module: PlacedModule)
 signal module_destroyed(module: PlacedModule)
 
-@export var build_grid_size: Vector2i = Vector2i(40, 28)
+@export var build_grid_size: Vector2i = Vector2i(40, 40)
 @export var cell_size: Vector2 = Vector2(48, 48)
 @export var show_debug_grid: bool = false
 
@@ -54,6 +56,75 @@ func get_stats_dictionary() -> Dictionary:
 	return _cached_stats.to_dictionary()
 
 
+## Runtime FOV payloads for the orbital ship (weapons + radars).
+## Each entry: id, kind, angle_deg, range, local_facing, local_origin, damage, title
+func get_fov_devices() -> Array[Dictionary]:
+	var devices: Array[Dictionary] = []
+	var centroid := _structure_centroid_cells()
+	var hull_rects := get_hull_blocker_rects_local(centroid)
+	for module: PlacedModule in _modules.values():
+		if module.data == null or not module.data.has_fov():
+			continue
+		if not (module.data.is_weapon() or module.data.is_radar()):
+			continue
+		var muzzle: Vector2 = FovUtil.module_muzzle_cell(module.origin, module.data, module.rotation)
+		var offset_cells := muzzle - centroid
+		var kind := "radar" if module.data.is_radar() else "weapon"
+		var ignore_rects: Array = []
+		for cell: Vector2i in module.get_occupied_cells():
+			var c := Vector2(cell) + Vector2(0.5, 0.5) - centroid
+			var local := c * FovUtil.WORLD_UNITS_PER_CELL
+			var half := FovUtil.WORLD_UNITS_PER_CELL * 0.5
+			ignore_rects.append(Rect2(local - Vector2(half, half), Vector2(half, half) * 2.0))
+		devices.append({
+			"id": module.data.id,
+			"title": module.data.title,
+			"kind": kind,
+			"instance_id": module.instance_id,
+			"angle_deg": module.data.fov_angle_deg,
+			"range": module.data.fov_range,
+			"local_facing": FovUtil.local_facing(module.rotation),
+			"local_origin": offset_cells * FovUtil.WORLD_UNITS_PER_CELL,
+			"damage": module.data.damage,
+			"reload_time": module.data.reload_time,
+			"hull_rects": hull_rects,
+			"ignore_rects": ignore_rects,
+		})
+	return devices
+
+
+## Hull + connector cells as local-space AABBs around the build centroid (ship-local units).
+func get_hull_blocker_rects_local(centroid: Vector2 = Vector2.INF) -> Array:
+	if centroid.x == INF:
+		centroid = _structure_centroid_cells()
+	var rects: Array = []
+	var half := FovUtil.WORLD_UNITS_PER_CELL * 0.5
+	for cell: Vector2i in _structure.keys():
+		var c := Vector2(cell) + Vector2(0.5, 0.5) - centroid
+		var local := c * FovUtil.WORLD_UNITS_PER_CELL
+		rects.append(Rect2(local - Vector2(half, half), Vector2(half, half) * 2.0))
+	return rects
+
+
+## Structure cells for shipyard LOS (hull + connector).
+func get_structure_blocker_cells() -> Dictionary:
+	var cells: Dictionary = {}
+	for cell: Vector2i in _structure.keys():
+		cells[cell] = true
+	return cells
+
+
+func _structure_centroid_cells() -> Vector2:
+	var sum := Vector2.ZERO
+	var count := 0
+	for cell: Vector2i in _structure.keys():
+		sum += Vector2(cell) + Vector2(0.5, 0.5)
+		count += 1
+	if count == 0:
+		return Vector2(build_grid_size) * 0.5
+	return sum / float(count)
+
+
 func get_all_modules() -> Array[PlacedModule]:
 	var list: Array[PlacedModule] = []
 	for module: PlacedModule in _modules.values():
@@ -89,12 +160,23 @@ func get_floor_type(cell: Vector2i) -> HullData.FloorType:
 	if structure.data.category == ModuleData.Category.CONNECTOR:
 		return HullData.FloorType.CONNECTOR
 	if structure.data.category == ModuleData.Category.HULL:
-		return HullData.FloorType.DECK
+		if structure.data.hull_data == null:
+			return HullData.FloorType.DECK
+		var local := world_to_hull_local(structure, cell)
+		return structure.data.hull_data.get_local_floor(local)
 	return HullData.FloorType.EMPTY
 
 
 func is_deck_cell(cell: Vector2i) -> bool:
-	return get_floor_type(cell) == HullData.FloorType.DECK
+	return HullData.is_deck_floor(get_floor_type(cell))
+
+
+func is_engine_mount_cell(cell: Vector2i) -> bool:
+	return get_floor_type(cell) == HullData.FloorType.ENGINE_MOUNT
+
+
+func is_rcs_mount_cell(cell: Vector2i) -> bool:
+	return get_floor_type(cell) == HullData.FloorType.RCS_MOUNT
 
 
 ## Empty cell orthogonally adjacent to at least one hull deck cell.
@@ -130,7 +212,7 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 			)
 		_:
 			if data.is_deck_equipment():
-				return get_floor_type(cell) == HullData.FloorType.DECK and get_equipment_at(cell) == null
+				return _equipment_floor_ok(data, cell) and get_equipment_at(cell) == null
 			return false
 
 
@@ -159,6 +241,13 @@ func can_place(
 
 	if data.category == ModuleData.Category.HULL:
 		if _hull_would_touch_other_hull(cells, ignore_instance_id):
+			return false
+
+	if data.is_main_engine():
+		if not _cells_touch_floor(cells, HullData.FloorType.ENGINE_MOUNT):
+			return false
+	elif data.is_rcs_engine():
+		if not _cells_touch_floor(cells, HullData.FloorType.RCS_MOUNT):
 			return false
 
 	return true
@@ -210,8 +299,25 @@ func can_place_hull_with_cargo(
 					if c_data.is_deck_equipment():
 						if not hull_cells.has(cell):
 							return false
+						var local_floor := world_delta_to_local(cell - origin, rotation, hull_module.hull_data)
+						if not _equipment_floor_type_ok(
+							c_data, hull_module.hull_data.get_local_floor(local_floor)
+						):
+							return false
 					else:
 						return false
+		if c_data.category == ModuleData.Category.ENGINE:
+			var cargo_cells := c_data.get_occupied_cells(world_origin, c_rot)
+			if c_data.is_main_engine():
+				if not _cells_touch_floor_on_hull(
+					cargo_cells, origin, rotation, hull_module.hull_data, HullData.FloorType.ENGINE_MOUNT
+				):
+					return false
+			elif c_data.is_rcs_engine():
+				if not _cells_touch_floor_on_hull(
+					cargo_cells, origin, rotation, hull_module.hull_data, HullData.FloorType.RCS_MOUNT
+				):
+					return false
 	return true
 
 
@@ -333,6 +439,91 @@ func clear_modules() -> void:
 	_recalculate_stats()
 
 
+## Rotate every placed module 90° * steps clockwise around the ship's own center.
+## The ship stays where it is; only orientation changes (grid itself does not spin).
+func rotate_build(steps: int = 1) -> void:
+	steps = posmod(steps, 4)
+	for _i in steps:
+		_rotate_build_once()
+
+
+func _rotate_build_once() -> void:
+	if _modules.is_empty():
+		return
+
+	var min_c := Vector2i(999999, 999999)
+	var max_c := Vector2i(-999999, -999999)
+	var has_cells := false
+	for module: PlacedModule in _modules.values():
+		if module.data == null:
+			continue
+		for cell: Vector2i in module.get_occupied_cells():
+			has_cells = true
+			min_c = Vector2i(mini(min_c.x, cell.x), mini(min_c.y, cell.y))
+			max_c = Vector2i(maxi(max_c.x, cell.x), maxi(max_c.y, cell.y))
+	if not has_cells:
+		return
+
+	var planned: Array = []
+	var new_min := Vector2i(999999, 999999)
+	var new_max := Vector2i(-999999, -999999)
+	for module: PlacedModule in _modules.values():
+		if module.data == null:
+			continue
+		var new_cells: Array[Vector2i] = []
+		for cell: Vector2i in module.get_occupied_cells():
+			var rotated := rotate_cell_in_bounds(cell, min_c, max_c)
+			new_cells.append(rotated)
+			new_min = Vector2i(mini(new_min.x, rotated.x), mini(new_min.y, rotated.y))
+			new_max = Vector2i(maxi(new_max.x, rotated.x), maxi(new_max.y, rotated.y))
+		var new_origin := new_cells[0]
+		for cell: Vector2i in new_cells:
+			new_origin = Vector2i(mini(new_origin.x, cell.x), mini(new_origin.y, cell.y))
+		planned.append({
+			"module": module,
+			"origin": new_origin,
+			"rotation": posmod(module.rotation + 1, 4),
+		})
+
+	var shift := Vector2i.ZERO
+	if new_min.x < 0:
+		shift.x = -new_min.x
+	elif new_max.x >= build_grid_size.x:
+		shift.x = build_grid_size.x - 1 - new_max.x
+	if new_min.y < 0:
+		shift.y = -new_min.y
+	elif new_max.y >= build_grid_size.y:
+		shift.y = build_grid_size.y - 1 - new_max.y
+
+	_structure.clear()
+	_equipment.clear()
+	for item in planned:
+		var module: PlacedModule = item["module"]
+		module.origin = item["origin"] + shift
+		module.rotation = int(item["rotation"])
+		for cell: Vector2i in module.get_occupied_cells():
+			if not is_cell_in_bounds(cell):
+				continue
+			if module.data.is_structure():
+				_structure[cell] = module
+			else:
+				_equipment[cell] = module
+	_recalculate_stats()
+
+
+## One 90° clockwise step of a cell inside a selection bbox, keeping the selection centered.
+static func rotate_cell_in_bounds(cell: Vector2i, bmin: Vector2i, bmax: Vector2i) -> Vector2i:
+	var w: int = bmax.x - bmin.x + 1
+	var h: int = bmax.y - bmin.y + 1
+	var sum_x: int = bmin.x + bmax.x
+	var sum_y: int = bmin.y + bmax.y
+	var new_min_x: int = int(floor(float(sum_x - h + 1) / 2.0))
+	var new_min_y: int = int(floor(float(sum_y - w + 1) / 2.0))
+	var lx: int = cell.x - bmin.x
+	var ly: int = cell.y - bmin.y
+	return Vector2i(new_min_x + (h - 1 - ly), new_min_y + lx)
+
+
 func world_to_cell(local_pos: Vector2) -> Vector2i:
 	return Vector2i(floori(local_pos.x / cell_size.x), floori(local_pos.y / cell_size.y))
 
@@ -373,6 +564,34 @@ func are_hulls_connected() -> bool:
 			if not visited.has(cell):
 				return false
 	return true
+
+
+## Every placed hull must have at least one corrective engine on each RCS edge
+## (top, right, bottom in hull-local space).
+func are_rcs_sides_covered() -> bool:
+	for m: PlacedModule in _modules.values():
+		if m.data == null or m.data.category != ModuleData.Category.HULL:
+			continue
+		if m.data.hull_data == null:
+			continue
+		if not _hull_has_all_rcs_sides(m):
+			return false
+	return true
+
+
+func _hull_has_all_rcs_sides(hull: PlacedModule) -> bool:
+	var hd: HullData = hull.data.hull_data
+	var covered: Array[bool] = [false, false, false]
+	for m: PlacedModule in _modules.values():
+		if m.data == null or not m.data.is_rcs_engine():
+			continue
+		for cell: Vector2i in m.get_occupied_cells():
+			if get_structure_at(cell) != hull:
+				continue
+			var side := hd.get_rcs_side(world_to_hull_local(hull, cell))
+			if side >= 0 and side < covered.size():
+				covered[side] = true
+	return covered[0] and covered[1] and covered[2]
 
 
 func world_to_hull_local(hull: PlacedModule, world_cell: Vector2i) -> Vector2i:
@@ -472,8 +691,50 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 			return is_weapon_mount_cell(cell, ignore_instance_id)
 		_:
 			if data.is_deck_equipment():
-				return get_floor_type(cell) == HullData.FloorType.DECK
+				return _equipment_floor_ok(data, cell)
 			return false
+
+
+func _equipment_floor_ok(data: ModuleData, cell: Vector2i) -> bool:
+	return _equipment_floor_type_ok(data, get_floor_type(cell))
+
+
+func _equipment_floor_type_ok(data: ModuleData, floor: HullData.FloorType) -> bool:
+	if data.is_rcs_engine():
+		return floor == HullData.FloorType.RCS_MOUNT or floor == HullData.FloorType.DECK
+	if data.is_main_engine():
+		# May overhang onto RCS / deck tiles, but must still touch an ENGINE_MOUNT.
+		return (
+			floor == HullData.FloorType.ENGINE_MOUNT
+			or floor == HullData.FloorType.RCS_MOUNT
+			or floor == HullData.FloorType.DECK
+		)
+	# General deck gear may sit on DECK / ENGINE_MOUNT, never on RCS-only tiles.
+	return HullData.is_deck_floor(floor)
+
+
+func _cells_touch_floor(cells: Array[Vector2i], floor: HullData.FloorType) -> bool:
+	for cell: Vector2i in cells:
+		if get_floor_type(cell) == floor:
+			return true
+	return false
+
+
+## Same rule while a hull+cargo ghost is being relocated (floor not yet written).
+func _cells_touch_floor_on_hull(
+	cells: Array[Vector2i],
+	hull_origin: Vector2i,
+	hull_rotation: int,
+	hull: HullData,
+	floor: HullData.FloorType
+) -> bool:
+	if hull == null:
+		return false
+	for cell: Vector2i in cells:
+		var local := world_delta_to_local(cell - hull_origin, hull_rotation, hull)
+		if hull.get_local_floor(local) == floor:
+			return true
+	return false
 
 
 func _hull_would_touch_other_hull(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
@@ -543,7 +804,10 @@ func _recalculate_stats() -> void:
 		if d.is_equipment():
 			stats.occupied_cells += d.get_cell_count()
 		stats.energy_consumption += d.energy_consumption
-		stats.thrust += d.thrust
+		if d.is_rcs_engine():
+			stats.correction_thrust += d.thrust
+		else:
+			stats.thrust += d.thrust
 		stats.fuel_consumption += d.fuel_consumption
 		stats.fuel_capacity += d.fuel_capacity
 		stats.damage += d.damage
@@ -551,9 +815,10 @@ func _recalculate_stats() -> void:
 		stats.energy_capacity += d.capacity
 		stats.shield_strength += d.shield_strength
 		stats.repair_rate += d.repair_rate
-		if d.category == ModuleData.Category.ENGINE and d.max_heat > stats.max_heat:
+		if d.is_main_engine() and d.max_heat > stats.max_heat:
 			stats.max_heat = d.max_heat
 	stats.health += stats.durability
 	stats.hulls_linked = are_hulls_connected()
+	stats.rcs_sides_ok = are_rcs_sides_covered()
 	_cached_stats = stats
 	stats_changed.emit(stats.to_dictionary())

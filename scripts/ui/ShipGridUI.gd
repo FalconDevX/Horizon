@@ -18,15 +18,23 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var invalid_tint := Color(0.95, 0.2, 0.2, 0.55)
 @export var empty_tint := Color(0.1, 0.12, 0.16, 0.85)
 @export var deck_tint := Color(0.22, 0.3, 0.4, 0.85)
+@export var engine_mount_tint := Color(0.45, 0.28, 0.18, 0.9)
+@export var rcs_mount_tint := Color(0.22, 0.42, 0.48, 0.9)
 @export var connector_tint := Color(0.85, 0.7, 0.15, 0.8)
 @export var occupied_tint := Color(0.35, 0.55, 0.85, 0.45)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
 @export var mount_tint := Color(0.35, 0.28, 0.22, 0.35) ## subtle hint for weapon-adjacent cells
+@export var weapon_fov_fill := Color(0.9, 0.25, 0.2, 0.18)
+@export var weapon_fov_outline := Color(0.95, 0.4, 0.3, 0.75)
+@export var radar_fov_fill := Color(0.25, 0.75, 0.85, 0.16)
+@export var radar_fov_outline := Color(0.45, 0.9, 1.0, 0.7)
 
 var _hover_origin: Vector2i = Vector2i(-999, -999)
 var _hover_module: ModuleData = null
 var _hover_rotation: int = 0
 var _hover_valid: bool = false
+## Placed FOV module under the cursor when the hand is empty.
+var _inspect_module: PlacedModule = null
 
 var _held_module: ModuleData = null
 var _held_rotation: int = 0
@@ -89,12 +97,25 @@ func _sync_control_size() -> void:
 	var g := ship_hull.get_grid_size()
 	custom_minimum_size = Vector2(g) * cell_size
 	size = custom_minimum_size
+	rotation = 0.0
+	pivot_offset = Vector2.ZERO
 	if _preview != null:
 		_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_preview.size = size
 	var host := get_parent() as BuildAreaHost
 	if host != null:
 		host.refresh()
+
+
+## Rotate placed hulls/modules on the fixed square grid (grid itself stays put).
+func rotate_view(steps: int = 1) -> void:
+	if ship_hull == null:
+		return
+	ship_hull.rotate_build(steps)
+	_rebuild_all_sprites()
+	queue_redraw()
+	if _preview != null:
+		_preview.queue_redraw()
 
 
 func bind_hull(hull: ShipHull) -> void:
@@ -157,7 +178,6 @@ func adjust_zoom(steps: int) -> void:
 
 func get_zoom() -> float:
 	return _zoom
-	_preview.queue_redraw()
 
 
 func hold_module(module: ModuleData, rotation: int = 0, cargo: Array = [], pick_rotation: int = -1) -> void:
@@ -176,6 +196,7 @@ func clear_hold() -> void:
 	_held_rotation = 0
 	_held_cargo.clear()
 	_held_pick_rotation = 0
+	_inspect_module = null
 	_clear_hover()
 	hold_changed.emit(null, 0)
 
@@ -262,11 +283,14 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var motion := event as InputEventMouseMotion
 		if _held_module != null:
+			_inspect_module = null
 			_hover_module = _held_module
 			_hover_rotation = _held_rotation
 			_hover_origin = _centered_origin(motion.position, _held_module, _held_rotation)
 			_refresh_hover_validity()
 			_preview.queue_redraw()
+		else:
+			_update_inspect_at(motion.position)
 		return
 
 	if event is InputEventMouseButton:
@@ -404,6 +428,10 @@ func _draw() -> void:
 			match floor:
 				HullData.FloorType.DECK:
 					fill = deck_tint
+				HullData.FloorType.ENGINE_MOUNT:
+					fill = engine_mount_tint
+				HullData.FloorType.RCS_MOUNT:
+					fill = rcs_mount_tint
 				HullData.FloorType.CONNECTOR:
 					fill = connector_tint
 				_:
@@ -417,6 +445,8 @@ func _draw() -> void:
 
 
 func _draw_preview() -> void:
+	_draw_fov_preview()
+
 	if _hover_module == null or ship_hull == null:
 		return
 	var shape := _hover_module.get_shape(_hover_rotation)
@@ -453,6 +483,66 @@ func _draw_preview() -> void:
 				var tint := valid_tint if _hover_valid else invalid_tint
 				tint.a = 0.4
 				_preview.draw_rect(rect, tint, true)
+
+
+func _draw_fov_preview() -> void:
+	var data: ModuleData = null
+	var origin := Vector2i.ZERO
+	var rotation := 0
+	var ignore_cells: Dictionary = {}
+	if _hover_module != null and _hover_module.has_fov():
+		data = _hover_module
+		origin = _hover_origin
+		rotation = _hover_rotation
+		for off: Vector2i in data.get_shape(rotation):
+			ignore_cells[origin + off] = true
+	elif _inspect_module != null and _inspect_module.data != null and _inspect_module.data.has_fov():
+		data = _inspect_module.data
+		origin = _inspect_module.origin
+		rotation = _inspect_module.rotation
+		for cell: Vector2i in _inspect_module.get_occupied_cells():
+			ignore_cells[cell] = true
+	else:
+		return
+
+	var muzzle_cell := FovUtil.module_muzzle_cell(origin, data, rotation)
+	var origin_px := muzzle_cell * cell_size
+	var facing := FovUtil.local_facing(rotation)
+	var length := FovUtil.builder_preview_length(data.fov_range, cell_size.x)
+	var fill := weapon_fov_fill if data.is_weapon() else radar_fov_fill
+	var outline := weapon_fov_outline if data.is_weapon() else radar_fov_outline
+	var blocked: Dictionary = {}
+	if ship_hull != null:
+		blocked = ship_hull.get_structure_blocker_cells()
+	FovUtil.draw_cone(
+		_preview,
+		origin_px,
+		facing,
+		data.fov_angle_deg,
+		length,
+		fill,
+		outline,
+		2.0,
+		blocked,
+		ignore_cells,
+		cell_size.x
+	)
+
+
+func _update_inspect_at(local_pos: Vector2) -> void:
+	if ship_hull == null:
+		_inspect_module = null
+		_preview.queue_redraw()
+		return
+	var cell := ship_hull.world_to_cell(local_pos)
+	var module := ship_hull.get_module_at(cell)
+	var next: PlacedModule = null
+	if module != null and module.data != null and module.data.has_fov():
+		next = module
+	if next == _inspect_module:
+		return
+	_inspect_module = next
+	_preview.queue_redraw()
 
 
 func _on_module_attached(module: PlacedModule) -> void:
@@ -566,5 +656,6 @@ func _clear_hover() -> void:
 		_hover_rotation = 0
 		_hover_origin = Vector2i(-999, -999)
 		_hover_valid = false
+		_inspect_module = null
 	if _preview != null:
 		_preview.queue_redraw()

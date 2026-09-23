@@ -6,6 +6,7 @@ var mass: float = 0.0
 var health: float = 0.0
 var durability: float = 0.0
 var thrust: float = 0.0
+var correction_thrust: float = 0.0
 var fuel_consumption: float = 0.0
 var fuel_capacity: float = 0.0
 var energy_consumption: float = 0.0
@@ -19,6 +20,8 @@ var occupied_cells: int = 0
 var capacity: int = 0
 var max_heat: float = 0.0 ## Highest engine overheat limit among engines
 var hulls_linked: bool = true
+## Every hull has ≥1 corrective engine on top, right and bottom RCS edges.
+var rcs_sides_ok: bool = true
 
 
 func to_dictionary() -> Dictionary:
@@ -27,6 +30,7 @@ func to_dictionary() -> Dictionary:
 		"health": health,
 		"durability": durability,
 		"thrust": thrust,
+		"correction_thrust": correction_thrust,
 		"fuel_consumption": fuel_consumption,
 		"fuel_capacity": fuel_capacity,
 		"energy_consumption": energy_consumption,
@@ -42,6 +46,7 @@ func to_dictionary() -> Dictionary:
 		"net_energy": energy_generation - energy_consumption,
 		"thrust_to_weight": thrust / maxf(mass, 0.001),
 		"hulls_linked": hulls_linked,
+		"rcs_sides_ok": rcs_sides_ok,
 	}
 
 
@@ -51,6 +56,7 @@ func duplicate_stats() -> ShipStats:
 	copy.health = health
 	copy.durability = durability
 	copy.thrust = thrust
+	copy.correction_thrust = correction_thrust
 	copy.fuel_consumption = fuel_consumption
 	copy.fuel_capacity = fuel_capacity
 	copy.energy_consumption = energy_consumption
@@ -64,4 +70,5 @@ func duplicate_stats() -> ShipStats:
 	copy.capacity = capacity
 	copy.max_heat = max_heat
 	copy.hulls_linked = hulls_linked
+	copy.rcs_sides_ok = rcs_sides_ok
 	return copy

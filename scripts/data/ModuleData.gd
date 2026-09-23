@@ -11,6 +11,7 @@ enum Category {
 	BATTERY,
 	SHIELD,
 	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
+	RADAR,
 }
 
 @export var title: String = "Module"
@@ -31,6 +32,8 @@ enum Category {
 @export var thrust: float = 0.0
 @export var fuel_consumption: float = 0.0
 @export var max_heat: float = 100.0
+## When true, this engine is RCS-only and mounts on RCS_MOUNT tiles.
+@export var is_corrective_engine: bool = false
 
 @export_group("Weapon")
 @export var damage: float = 0.0
@@ -45,6 +48,12 @@ enum Category {
 
 @export_group("Shield")
 @export var shield_strength: float = 0.0
+
+@export_group("Field of View")
+## Full cone angle in real degrees (same in builder preview and on the map).
+@export var fov_angle_deg: float = 0.0
+## Detection / engagement range in world SU. Builder preview scales this down.
+@export var fov_range: float = 0.0
 
 @export_group("Extras")
 @export var custom_stats: Dictionary = {}
@@ -62,10 +71,12 @@ func is_equipment() -> bool:
 		or category == Category.FUEL_TANK
 		or category == Category.BATTERY
 		or category == Category.SHIELD
+		or category == Category.RADAR
 	)
 
 
-## Engines, utilities, tanks, batteries and shields mount on hull deck cells.
+## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
+## Main engines must cover an ENGINE_MOUNT; corrective engines must cover an RCS_MOUNT.
 func is_deck_equipment() -> bool:
 	return (
 		category == Category.ENGINE
@@ -73,7 +84,28 @@ func is_deck_equipment() -> bool:
 		or category == Category.FUEL_TANK
 		or category == Category.BATTERY
 		or category == Category.SHIELD
+		or category == Category.RADAR
 	)
+
+
+func has_fov() -> bool:
+	return fov_angle_deg > 0.0 and fov_range > 0.0
+
+
+func is_radar() -> bool:
+	return category == Category.RADAR
+
+
+func is_weapon() -> bool:
+	return category == Category.WEAPON
+
+
+func is_main_engine() -> bool:
+	return category == Category.ENGINE and not is_corrective_engine
+
+
+func is_rcs_engine() -> bool:
+	return category == Category.ENGINE and is_corrective_engine
 
 
 func get_cell_count() -> int:
@@ -175,6 +207,10 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 			return repair_rate
 		"shield_strength":
 			return shield_strength
+		"fov_angle_deg":
+			return fov_angle_deg
+		"fov_range":
+			return fov_range
 		_:
 			return default
 
@@ -197,5 +233,7 @@ func category_name() -> String:
 			return "Shield"
 		Category.CONNECTOR:
 			return "Connector"
+		Category.RADAR:
+			return "Radar"
 		_:
 			return "Unknown"

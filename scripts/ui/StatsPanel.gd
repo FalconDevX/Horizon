@@ -17,6 +17,7 @@ const DISPLAY_KEYS: Array[String] = [
 	"durability",
 	"health",
 	"thrust",
+	"correction_thrust",
 	"fuel_consumption",
 	"fuel_capacity",
 	"energy_consumption",
@@ -32,6 +33,7 @@ const DISPLAY_KEYS: Array[String] = [
 	"module_count",
 	"thrust_to_weight",
 	"hulls_linked",
+	"rcs_sides_ok",
 ]
 
 
@@ -137,7 +139,7 @@ func _on_stats_changed(new_stats: Dictionary) -> void:
 		if not _labels.has(key):
 			continue
 		var value: Variant = new_stats.get(key, 0)
-		if key == "hulls_linked":
+		if key == "hulls_linked" or key == "rcs_sides_ok":
 			_labels[key].text = "YES" if bool(value) else "NO"
 		elif typeof(value) == TYPE_FLOAT:
 			_labels[key].text = "%.2f" % value
