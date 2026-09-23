@@ -373,6 +373,29 @@ static func _dispatch(
 	return bytes
 
 
+## Up to four cyclones for the cloud deck (planet_clouds.gdshaderinc): a centre
+## on the sphere and a spin that turns the way the hemisphere's Coriolis force
+## would. Wetter skies brew more. Unused slots are zero, which the shader skips.
+static func roll_cyclones(terrain_seed: int, pole: Vector3, coverage: float) -> PackedVector4Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(terrain_seed ^ PALETTE_SALT ^ 0x2545F491)
+	var cyclones := PackedVector4Array()
+	cyclones.resize(4)
+
+	var count: int = 0 if coverage <= 0.0 else clampi(roundi(coverage * 6.0) - rng.randi_range(0, 1), 1, 4)
+	var helper: Vector3 = Vector3.RIGHT if absf(pole.x) < 0.9 else Vector3.BACK
+	var east: Vector3 = pole.cross(helper).normalized()
+	for i in range(count):
+		var hemisphere: float = 1.0 if rng.randf() < 0.5 else -1.0
+		var latitude: float = rng.randf_range(0.2, 0.6) * hemisphere
+		var around: Vector3 = east.rotated(pole, rng.randf() * TAU)
+		var centre: Vector3 = (around * sqrt(1.0 - latitude * latitude) + pole * latitude).normalized()
+		var spin: float = rng.randf_range(4.0, 7.0) * hemisphere
+		cyclones[i] = Vector4(centre.x, centre.y, centre.z, spin)
+
+	return cyclones
+
+
 ## One oval storm for the giants, parked at a random southern-ish latitude.
 static func _roll_storm(terrain_seed: int, pole: Vector3) -> Dictionary:
 	var rng := RandomNumberGenerator.new()

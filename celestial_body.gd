@@ -7,6 +7,10 @@ const SURFACE_SHADER_3D := preload("res://planet_surface_3d.gdshader")
 const TERRAIN_SHADER := preload("res://planet_terrain.gdshader")
 const STAR_SHADER := preload("res://planet_star.gdshader")
 const CORONA_SHADER := preload("res://planet_corona.gdshader")
+const CLOUDS_SHADER := preload("res://planet_clouds.gdshader")
+
+## How far the cloud deck floats above the lowlands, in radii.
+const CLOUD_CLEARANCE := 0.01
 
 ## The corona plane's half-width, in stellar radii. Planets' glow is 2.
 const CORONA_EXTENT := 5.0
@@ -203,6 +207,8 @@ var surface_material: ShaderMaterial = null
 var _anchor_3d: Node3D = null
 var _sphere_3d: MeshInstance3D = null
 var _glow_3d: MeshInstance3D = null
+## The cloud deck, a child of the sphere so it spins and scales with it.
+var _clouds_3d: MeshInstance3D = null
 
 ## Resolved terrain look (PlanetTerrain.resolve) and, once baked, the heightmap
 ## itself (PlanetTerrain.bake). Empty until then.
@@ -330,6 +336,9 @@ func _update_visual_bounds() -> void:
 
 	var extent: float = 1.0 + _visual_relief()
 	_sphere_3d.custom_aabb = AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
+	if _clouds_3d != null:
+		extent += CLOUD_CLEARANCE
+		_clouds_3d.custom_aabb = AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
 
 
 func _visual_relief() -> float:
@@ -348,6 +357,8 @@ func set_detail_high(high: bool) -> void:
 	var mesh: ArrayMesh = _shared_sphere(high)
 	if _sphere_3d.mesh != mesh:
 		_sphere_3d.mesh = mesh
+	if _clouds_3d != null and _clouds_3d.mesh != mesh:
+		_clouds_3d.mesh = mesh
 
 
 static func _shared_sphere(high: bool) -> ArrayMesh:
@@ -466,6 +477,31 @@ func build_surface() -> void:
 	update_surface_scale()
 
 
+## The cloud deck: the same mesh as the planet, pushed out past its peaks by
+## the shader, drawn see-through on top (planet_clouds.gdshader).
+func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
+	var material := ShaderMaterial.new()
+	material.shader = CLOUDS_SHADER
+	# Over the plains, not the summits: only the odd peak ever reaches this
+	# high, and a deck at full relief would hover visibly off the limb.
+	material.set_shader_parameter("shell_height", p["relief"] * 0.45 + CLOUD_CLEARANCE)
+	material.set_shader_parameter("pole_axis", surface_spin_axis)
+	material.set_shader_parameter("seed_offset", float(surface_seed % 997) * 1.37)
+	material.set_shader_parameter("cloud_color", p["cloud_color"])
+	material.set_shader_parameter("cloud_coverage", p["clouds"])
+	material.set_shader_parameter("cyclones", cyclones)
+	material.set_shader_parameter("atmo_color", p["atmo"])
+	material.set_shader_parameter("atmo_strength", p["atmo_strength"])
+
+	_clouds_3d = MeshInstance3D.new()
+	_clouds_3d.mesh = _sphere_3d.mesh
+	_clouds_3d.material_override = material
+	_clouds_3d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_clouds_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_sphere_3d.add_child(_clouds_3d)
+	_update_visual_bounds()
+
+
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
 	var seed_offset: float = float(surface_seed % 997) * 1.37
@@ -473,7 +509,6 @@ func build_star() -> void:
 	var photosphere := ShaderMaterial.new()
 	photosphere.shader = STAR_SHADER
 	photosphere.set_shader_parameter("star_color", color)
-	photosphere.set_shader_parameter("pole_axis", surface_spin_axis)
 	photosphere.set_shader_parameter("seed_offset", seed_offset)
 	_sphere_3d.material_override = photosphere
 
@@ -521,8 +556,15 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("atmo_color", p["atmo"])
 	terrain_material.set_shader_parameter("atmo_strength", p["atmo_strength"])
 	terrain_material.set_shader_parameter("atmo_haze", p["haze"])
+	# The terrain needs the weather too, for the shadows the clouds cast.
+	var cyclones: PackedVector4Array = PlanetTerrain.roll_cyclones(
+		surface_seed, surface_spin_axis, p["clouds"]
+	)
 	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
 	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
+	terrain_material.set_shader_parameter("cyclones", cyclones)
+	if p["clouds"] > 0.0:
+		_build_clouds(p, cyclones)
 	terrain_material.set_shader_parameter("seed_offset", float(surface_seed % 997) * 1.37)
 
 	_update_visual_bounds()
