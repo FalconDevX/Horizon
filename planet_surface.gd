@@ -8,13 +8,15 @@ extends RefCounted
 ## the NEAREST blob - a spherical Voronoi lookup. Nothing stores the shapes of
 ## the regions; they are implied by the nearest-blob rule.
 ##
-## The same lookup runs per pixel on the GPU in planet_surface.gdshader, so the
-## CPU and the shader always agree about what is where. Keep blob_at() and the
-## loop in the shader in sync.
+## The same lookup runs on the GPU in planet_surface_common.gdshaderinc (shared
+## by both planet shaders), so the CPU and the shader always agree about what
+## is where. Keep blob_at() and the loop in the shader in sync, and
+## elevation_at() in sync with planet_surface_3d.gdshader.
 
 const MAX_BLOBS := 256
 const MAX_COLORS := 8
 const WARP_OCTAVES := 3
+const RIDGE_OCTAVES := 4
 
 ## How a planet lays its colours out. Every style produces the same thing - a
 ## list of directions with colour indices - so the shader, the warp and the
@@ -620,7 +622,7 @@ static func random_unit_vector(rng: RandomNumberGenerator) -> Vector3:
 
 
 static func surface_warp(p: Vector3, base_frequency: float) -> Vector3:
-	# Must stay identical to surface_warp() in planet_surface.gdshader.
+	# Must stay identical to surface_warp() in planet_surface_common.gdshaderinc.
 	#
 	# Built from sines rather than a hash on purpose. A hash is chaotic, so the
 	# shader's 32-bit floats and GDScript's 64-bit floats would diverge into
@@ -661,7 +663,7 @@ static func blob_at(
 	warp_strength: float = 0.0,
 	warp_frequency: float = 3.0
 ) -> int:
-	# Mirror of the loop in planet_surface.gdshader. This is the gameplay-side
+	# Mirror of the loop in planet_surface_common.gdshaderinc. This is the gameplay-side
 	# query: "which blob is the ship standing on". Returns -1 if there are none.
 	# Pass the body's warp settings or the answer will disagree with the pixels.
 	var warped: Vector3 = warped_direction(direction, warp_strength, warp_frequency)
@@ -691,6 +693,84 @@ static func color_index_at(
 		return -1
 
 	return int(blobs[index].w)
+
+
+## Ground height of a palette slot, 0..1. Slot 0 is the dominant colour and
+## becomes the lowlands; accents are the mountains. Mirror of slot_height() in
+## planet_surface_3d.gdshader.
+static func slot_height(color_index: int) -> float:
+	return minf(float(color_index), 2.0) * 0.5
+
+
+## How wide the terrain-height blend between neighbouring blobs is, in the same
+## dot-difference units as edge_softness. Scaled to the cell size, so ground
+## reaches full height about 60% of the way into a cell whether the planet has
+## twenty blobs or two hundred.
+static func height_blend_for(blob_count: int) -> float:
+	return 0.6 * (1.0 - cos(2.0 * mean_cell_radius(blob_count)))
+
+
+## Ridged sine noise in 0..1. Must stay identical to ridge_field() in
+## planet_surface_3d.gdshader.
+static func ridge_field(p: Vector3, base_frequency: float) -> float:
+	var sum := 0.0
+	var amplitude := 0.5
+	var frequency: float = base_frequency
+
+	for _i in range(RIDGE_OCTAVES):
+		var n: float = (
+			sin(p.x * frequency + 0.7)
+			* sin(p.y * frequency * 1.17 + 2.9)
+			* sin(p.z * frequency * 0.93 + 4.3)
+		)
+		sum += amplitude * (1.0 - absf(n))
+		amplitude *= 0.5
+		frequency *= 2.03
+		p = Vector3(p.y, p.z, p.x)
+
+	return sum / 0.9375
+
+
+## Terrain height 0..1 under a direction - multiply by the body's relief and
+## radius for a distance above the base sphere. Mirror of surface_elevation()
+## in planet_surface_3d.gdshader, so a landed ship sits on the ground it sees.
+static func elevation_at(
+	blobs: PackedVector4Array,
+	direction: Vector3,
+	warp_strength: float,
+	warp_frequency: float,
+	height_blend: float,
+	ridge_frequency: float
+) -> float:
+	if blobs.is_empty():
+		return 0.0
+
+	var warped: Vector3 = warped_direction(direction, warp_strength, warp_frequency)
+	var best := 0
+	var second := 0
+	var best_dot := -2.0
+	var second_dot := -2.0
+
+	for i in range(blobs.size()):
+		var blob: Vector4 = blobs[i]
+		var towards: float = warped.dot(Vector3(blob.x, blob.y, blob.z))
+
+		if towards > best_dot:
+			second_dot = best_dot
+			second = best
+			best_dot = towards
+			best = i
+		elif towards > second_dot:
+			second_dot = towards
+			second = i
+
+	var near_height: float = slot_height(int(blobs[best].w))
+	var far_height: float = slot_height(int(blobs[second].w))
+	var weight: float = 0.5 + 0.5 * smoothstep(0.0, maxf(height_blend, 1e-5), best_dot - second_dot)
+	var base: float = lerpf(far_height, near_height, weight)
+
+	var ridge: float = ridge_field(direction, ridge_frequency)
+	return (base * (0.6 + 0.4 * ridge) + 0.1 * ridge) / 1.1
 
 
 ## Mean angular radius of one cell. Each covers 4*PI/count of the sphere, so a
