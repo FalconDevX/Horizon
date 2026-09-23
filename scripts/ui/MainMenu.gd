@@ -13,10 +13,10 @@ const SUBTITLE := "EXPLORE   ORBIT   ENGINEER"
 const VERSION_TAG := "HORIZON   v0.1.0"
 
 const CONTRIBUTORS := [
-	{"rank": "#1", "name": "FalconDevX", "commits": "4 commits"},
-	{"rank": "#2", "name": "Gawronek-8", "commits": "2 commits"},
-	{"rank": "#3", "name": "claude", "commits": "2 commits"},
-	{"rank": "#4", "name": "DawidWy", "commits": "1 commit"},
+	{"rank": "#1", "name": "FalconDevX"},
+	{"rank": "#2", "name": "Gawronek-8"},
+	{"rank": "#3", "name": "claude"},
+	{"rank": "#4", "name": "DawidWy"},
 ]
 
 const MENU_MARGIN := 110.0
@@ -164,7 +164,6 @@ func _draw_credits_panel() -> void:
 		var row_y: float = list_top + i * row_h
 		draw_string(font, Vector2(30.0, row_y), entry.rank, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_FAINT)
 		draw_string(font, Vector2(66.0, row_y), entry.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COLOR_TEXT_PRIMARY)
-		draw_string(font, Vector2(260.0, row_y - 3.0), entry.commits, HORIZONTAL_ALIGNMENT_RIGHT, panel_size.x - 30.0 - 260.0, 11, COLOR_TEXT_SECONDARY)
 
 	var footer_y: float = list_top + CONTRIBUTORS.size() * row_h + 18.0
 	draw_line(Vector2(30.0, footer_y), Vector2(panel_size.x - 30.0, footer_y), Color(COLOR_TEXT_FAINT, 0.5), 1.0)
