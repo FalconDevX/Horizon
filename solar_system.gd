@@ -85,6 +85,13 @@ const HOME_PLANET_INDEX := 1
 var camera_zoom := 1.0
 var is_dragging := false
 var camera_follow_ship := false
+## The body the camera stays centred on after it was clicked, until the view is
+## panned (middle mouse) or released with the period key. Null = none.
+var camera_follow_body: Node2D = null
+
+## Extra reach, in screen pixels, for clicking a body drawn only a few pixels
+## across.
+const BODY_PICK_SCREEN_RADIUS := 14.0
 var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
@@ -334,7 +341,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_7:
 			set_time_scale(200.0)
 		elif event.keycode == KEY_PERIOD:
-			camera_follow_ship = not camera_follow_ship
+			if camera_follow_body != null:
+				camera_follow_body = null
+			else:
+				camera_follow_ship = not camera_follow_ship
 
 	if (
 		event is InputEventMouseButton
@@ -364,6 +374,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			is_dragging = event.pressed
 
 			if event.pressed:
+				camera_follow_ship = false
+				camera_follow_body = null
+
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			var picked: Node2D = _body_under_mouse()
+			if picked != null:
+				camera_follow_body = picked
 				camera_follow_ship = false
 
 	if event is InputEventMouseMotion and is_dragging:
@@ -485,7 +502,10 @@ func _process(delta: float) -> void:
 	update_fov_gameplay()
 	update_hud()
 
-	if camera_follow_ship:
+	if camera_follow_body != null:
+		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
+		camera.position = camera.position.lerp(camera_follow_body.global_position, catch_up_body)
+	elif camera_follow_ship:
 		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
 		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
 		camera.position = camera.position.lerp(follow_pos, catch_up)
@@ -2561,6 +2581,23 @@ func update_trajectory_status(
 
 func _on_ship_clicked() -> void:
 	camera_follow_ship = true
+	camera_follow_body = null
+
+
+## The sun or planet drawn under the mouse, if any - the nearest one when
+## several overlap the click.
+func _body_under_mouse() -> Node2D:
+	var point: Vector2 = get_global_mouse_position()
+	var pick_reach: float = BODY_PICK_SCREEN_RADIUS / camera_zoom
+	var best: Node2D = null
+	var best_distance: float = INF
+	for body in celestial_bodies:
+		var drawn_radius: float = body.get("visual_radius")
+		var distance: float = point.distance_to(body.global_position)
+		if distance <= drawn_radius + pick_reach and distance < best_distance:
+			best = body
+			best_distance = distance
+	return best
 
 
 ## Date and mission-day readout under the panel title.
