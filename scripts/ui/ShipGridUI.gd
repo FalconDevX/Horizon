@@ -16,17 +16,25 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var zoom_step: float = 1.12
 @export var valid_tint := Color(0.2, 0.9, 0.35, 0.55)
 @export var invalid_tint := Color(0.95, 0.2, 0.2, 0.55)
-@export var empty_tint := Color(0.1, 0.12, 0.16, 0.85)
-@export var deck_tint := Color(0.22, 0.3, 0.4, 0.85)
-@export var connector_tint := Color(0.85, 0.7, 0.15, 0.8)
-@export var occupied_tint := Color(0.35, 0.55, 0.85, 0.45)
+@export var empty_tint := Color(0.25, 0.4, 0.7, 0.16)
+@export var deck_tint := Color(0.3, 0.5, 0.85, 0.22)
+@export var engine_mount_tint := Color(0.35, 0.6, 0.95, 0.3)
+@export var rcs_mount_tint := Color(0.3, 0.55, 0.9, 0.26)
+@export var connector_tint := Color(0.4, 0.65, 0.95, 0.26)
+@export var occupied_tint := Color(0.35, 0.55, 0.85, 0.2)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
-@export var mount_tint := Color(0.35, 0.28, 0.22, 0.35) ## subtle hint for weapon-adjacent cells
+@export var mount_tint := Color(0.3, 0.5, 0.85, 0.16) ## subtle hint for weapon-adjacent cells
+@export var weapon_fov_fill := Color(0.9, 0.25, 0.2, 0.18)
+@export var weapon_fov_outline := Color(0.95, 0.4, 0.3, 0.75)
+@export var radar_fov_fill := Color(0.25, 0.75, 0.85, 0.16)
+@export var radar_fov_outline := Color(0.45, 0.9, 1.0, 0.7)
 
 var _hover_origin: Vector2i = Vector2i(-999, -999)
 var _hover_module: ModuleData = null
 var _hover_rotation: int = 0
 var _hover_valid: bool = false
+## Placed FOV module under the cursor when the hand is empty.
+var _inspect_module: PlacedModule = null
 
 var _held_module: ModuleData = null
 var _held_rotation: int = 0
@@ -39,6 +47,7 @@ var _texture_cache: Dictionary = {}
 var _preview: Control ## draws green/red above sprites
 var _scroll_parent: PannableScrollContainer
 var _zoom: float = 1.0
+var _view_rotation_steps: int = 0 ## Cosmetic only — build data & placement logic stay unrotated.
 
 
 func _ready() -> void:
@@ -89,12 +98,38 @@ func _sync_control_size() -> void:
 	var g := ship_hull.get_grid_size()
 	custom_minimum_size = Vector2(g) * cell_size
 	size = custom_minimum_size
+	_apply_view_rotation()
 	if _preview != null:
 		_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_preview.size = size
 	var host := get_parent() as BuildAreaHost
 	if host != null:
 		host.refresh()
+
+
+## Cosmetic 90°-per-step counter-clockwise spin of the whole view (grid, sprites,
+## preview all inherit this node's transform). Build data and placement logic
+## never see it — Godot delivers _gui_input positions already in local,
+## unrotated space, so mount/edge rules stay left-to-right as always.
+func rotate_view(steps: int = 1) -> void:
+	if ship_hull == null:
+		return
+	_view_rotation_steps = posmod(_view_rotation_steps + steps, 4)
+	_apply_view_rotation()
+
+
+func _apply_view_rotation() -> void:
+	pivot_offset = _ship_center_px()
+	rotation = -_view_rotation_steps * (PI / 2.0)
+
+
+func _ship_center_px() -> Vector2:
+	if ship_hull == null:
+		return size * 0.5
+	var bounds := ship_hull.get_occupied_bounds()
+	if bounds.size == Vector2i.ZERO:
+		return size * 0.5
+	return (Vector2(bounds.position) + Vector2(bounds.size) * 0.5) * cell_size
 
 
 func bind_hull(hull: ShipHull) -> void:
@@ -157,7 +192,6 @@ func adjust_zoom(steps: int) -> void:
 
 func get_zoom() -> float:
 	return _zoom
-	_preview.queue_redraw()
 
 
 func hold_module(module: ModuleData, rotation: int = 0, cargo: Array = [], pick_rotation: int = -1) -> void:
@@ -176,6 +210,7 @@ func clear_hold() -> void:
 	_held_rotation = 0
 	_held_cargo.clear()
 	_held_pick_rotation = 0
+	_inspect_module = null
 	_clear_hover()
 	hold_changed.emit(null, 0)
 
@@ -211,7 +246,7 @@ func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
 		_hover_rotation = _held_rotation
 	else:
 		_hover_rotation = int(data.get("rotation", 0))
-	_hover_origin = _position_to_origin(at_position)
+	_hover_origin = _centered_origin(at_position, module, _hover_rotation)
 	_hover_valid = ship_hull.can_place(module, _hover_origin, _hover_rotation)
 	_preview.queue_redraw()
 	return _hover_valid
@@ -224,7 +259,7 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 		return
 
 	var rotation := _held_rotation if _held_module == module else int(data.get("rotation", 0))
-	var origin := _position_to_origin(at_position)
+	var origin := _centered_origin(at_position, module, rotation)
 	var placed := ship_hull.attach_module(module, origin, rotation)
 	if placed != null:
 		placement_succeeded.emit(placed)
@@ -262,11 +297,14 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var motion := event as InputEventMouseMotion
 		if _held_module != null:
+			_inspect_module = null
 			_hover_module = _held_module
 			_hover_rotation = _held_rotation
-			_hover_origin = _position_to_origin(motion.position)
+			_hover_origin = _centered_origin(motion.position, _held_module, _held_rotation)
 			_refresh_hover_validity()
 			_preview.queue_redraw()
+		else:
+			_update_inspect_at(motion.position)
 		return
 
 	if event is InputEventMouseButton:
@@ -276,26 +314,12 @@ func _gui_input(event: InputEvent) -> void:
 
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var dir := -1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1
-			# Ctrl → zoom. Holding module → rotate. Shift → horizontal scroll. Else → vertical.
-			if mb.ctrl_pressed:
+			# Ctrl always zooms. Otherwise: holding a module rotates it, empty hand zooms.
+			# Panning is middle-mouse-drag only - the wheel never scrolls the view.
+			if mb.ctrl_pressed or _held_module == null:
 				adjust_zoom(-dir) # wheel up → zoom in
-			elif _held_module != null and not mb.shift_pressed:
+			else:
 				rotate_held(dir)
-			elif _scroll_parent != null:
-				if mb.shift_pressed:
-					_scroll_parent.scroll_horizontal_by(dir * PannableScrollContainer.WHEEL_STEP)
-				else:
-					_scroll_parent.scroll_vertical_by(dir * PannableScrollContainer.WHEEL_STEP)
-			accept_event()
-			return
-
-		# Mouse tilt wheel (if available).
-		if mb.button_index == MOUSE_BUTTON_WHEEL_LEFT and _scroll_parent != null:
-			_scroll_parent.scroll_horizontal_by(-PannableScrollContainer.WHEEL_STEP)
-			accept_event()
-			return
-		if mb.button_index == MOUSE_BUTTON_WHEEL_RIGHT and _scroll_parent != null:
-			_scroll_parent.scroll_horizontal_by(PannableScrollContainer.WHEEL_STEP)
 			accept_event()
 			return
 
@@ -363,7 +387,7 @@ func _handle_left_click(cell: Vector2i) -> void:
 		return
 
 	if _held_module != null:
-		var origin := cell
+		var origin := _hover_origin
 		if _held_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
 			if ship_hull.can_place_hull_with_cargo(
 				_held_module, origin, _held_rotation, _held_cargo, _held_pick_rotation
@@ -404,6 +428,16 @@ func _refresh_hover_validity() -> void:
 		_hover_valid = ship_hull.can_place(_hover_module, _hover_origin, _hover_rotation)
 
 
+## Snaps a cell to integer pixel bounds so adjacent cells always share an edge —
+## plain `Vector2(cell) * cell_size` leaves sub-pixel gaps at fractional zoom levels.
+func _cell_rect(cell: Vector2i) -> Rect2:
+	var x0 := roundi(cell.x * cell_size.x)
+	var y0 := roundi(cell.y * cell_size.y)
+	var x1 := roundi((cell.x + 1) * cell_size.x)
+	var y1 := roundi((cell.y + 1) * cell_size.y)
+	return Rect2(x0, y0, x1 - x0, y1 - y0)
+
+
 func _draw() -> void:
 	if ship_hull == null:
 		return
@@ -412,12 +446,16 @@ func _draw() -> void:
 	for y in grid.y:
 		for x in grid.x:
 			var cell := Vector2i(x, y)
-			var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+			var rect := _cell_rect(cell)
 			var floor := ship_hull.get_floor_type(cell)
 			var fill := empty_tint
 			match floor:
 				HullData.FloorType.DECK:
 					fill = deck_tint
+				HullData.FloorType.ENGINE_MOUNT:
+					fill = engine_mount_tint
+				HullData.FloorType.RCS_MOUNT:
+					fill = rcs_mount_tint
 				HullData.FloorType.CONNECTOR:
 					fill = connector_tint
 				_:
@@ -431,12 +469,14 @@ func _draw() -> void:
 
 
 func _draw_preview() -> void:
+	_draw_fov_preview()
+
 	if _hover_module == null or ship_hull == null:
 		return
 	var shape := _hover_module.get_shape(_hover_rotation)
 	for offset: Vector2i in shape:
 		var cell := _hover_origin + offset
-		var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+		var rect := _cell_rect(cell)
 		var blocked := (
 			not ship_hull.is_cell_in_bounds(cell)
 			or not ship_hull.is_floor_compatible(_hover_module, cell)
@@ -463,10 +503,70 @@ func _draw_preview() -> void:
 			)
 			for off: Vector2i in c_data.get_shape(c_rot):
 				var cell := world_origin + off
-				var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+				var rect := _cell_rect(cell)
 				var tint := valid_tint if _hover_valid else invalid_tint
 				tint.a = 0.4
 				_preview.draw_rect(rect, tint, true)
+
+
+func _draw_fov_preview() -> void:
+	var data: ModuleData = null
+	var origin := Vector2i.ZERO
+	var rotation := 0
+	var ignore_cells: Dictionary = {}
+	if _hover_module != null and _hover_module.has_fov():
+		data = _hover_module
+		origin = _hover_origin
+		rotation = _hover_rotation
+		for off: Vector2i in data.get_shape(rotation):
+			ignore_cells[origin + off] = true
+	elif _inspect_module != null and _inspect_module.data != null and _inspect_module.data.has_fov():
+		data = _inspect_module.data
+		origin = _inspect_module.origin
+		rotation = _inspect_module.rotation
+		for cell: Vector2i in _inspect_module.get_occupied_cells():
+			ignore_cells[cell] = true
+	else:
+		return
+
+	var muzzle_cell := FovUtil.module_muzzle_cell(origin, data, rotation)
+	var origin_px := muzzle_cell * cell_size
+	var facing := FovUtil.local_facing(rotation)
+	var length := FovUtil.builder_preview_length(data.fov_range, cell_size.x)
+	var fill := weapon_fov_fill if data.is_weapon() else radar_fov_fill
+	var outline := weapon_fov_outline if data.is_weapon() else radar_fov_outline
+	var blocked: Dictionary = {}
+	if ship_hull != null:
+		blocked = ship_hull.get_structure_blocker_cells()
+	FovUtil.draw_cone(
+		_preview,
+		origin_px,
+		facing,
+		data.fov_angle_deg,
+		length,
+		fill,
+		outline,
+		2.0,
+		blocked,
+		ignore_cells,
+		cell_size.x
+	)
+
+
+func _update_inspect_at(local_pos: Vector2) -> void:
+	if ship_hull == null:
+		_inspect_module = null
+		_preview.queue_redraw()
+		return
+	var cell := ship_hull.world_to_cell(local_pos)
+	var module := ship_hull.get_module_at(cell)
+	var next: PlacedModule = null
+	if module != null and module.data != null and module.data.has_fov():
+		next = module
+	if next == _inspect_module:
+		return
+	_inspect_module = next
+	_preview.queue_redraw()
 
 
 func _on_module_attached(module: PlacedModule) -> void:
@@ -519,7 +619,7 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 
 	var tex: Texture2D
 	if data.category == ModuleData.Category.HULL and data.hull_data != null:
-		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x))
+		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x), true)
 	elif rotation == 0 and data.texture != null:
 		tex = data.texture
 	else:
@@ -561,6 +661,16 @@ func _position_to_origin(at_position: Vector2) -> Vector2i:
 	)
 
 
+## Cell under the cursor, offset so the module's footprint is centered on the
+## cursor instead of anchored at its top-left cell.
+func _centered_origin(at_position: Vector2, module: ModuleData, rotation: int) -> Vector2i:
+	var cell := _position_to_origin(at_position)
+	if module == null:
+		return cell
+	var bounds := module.get_bounding_size(rotation)
+	return cell - Vector2i(bounds.x / 2, bounds.y / 2)
+
+
 func _clear_hover() -> void:
 	if _held_module != null:
 		_hover_module = _held_module
@@ -570,5 +680,6 @@ func _clear_hover() -> void:
 		_hover_rotation = 0
 		_hover_origin = Vector2i(-999, -999)
 		_hover_valid = false
+		_inspect_module = null
 	if _preview != null:
 		_preview.queue_redraw()

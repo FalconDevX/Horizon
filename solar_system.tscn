@@ -16,6 +16,9 @@
 [ext_resource type="Script" path="res://music_toast.gd" id="14_music_toast"]
 [ext_resource type="Script" path="res://settings_menu.gd" id="15_settings_menu"]
 [ext_resource type="PackedScene" path="res://scenes/builder/ShipBuilder.tscn" id="16_ship_builder"]
+[ext_resource type="Script" path="res://pause_menu.gd" id="17_pause_menu"]
+[ext_resource type="Script" path="res://resource_bars_panel.gd" id="18_resource_bars"]
+[ext_resource type="PackedScene" path="res://scenes/hud/EnemyMenu.tscn" id="19_enemy_menu"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship"]
 radius = 20.0
@@ -36,6 +39,11 @@ content_margin_bottom = 8.0
 
 [sub_resource type="StyleBoxLine" id="StyleBoxLine_hud_sep"]
 color = Color(0.32, 0.5, 0.72, 0.45)
+
+[sub_resource type="Environment" id="Environment_world3d"]
+background_mode = 3
+background_canvas_max_layer = -5
+tonemap_mode = 0
 
 [node name="SolarSystem" type="Node2D" unique_id=459036639]
 script = ExtResource("1_hp4wh")
@@ -63,54 +71,58 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.0, 0.0, 0.0, 0.5)
 
-[node name="OrbitLines" type="Node2D" parent="." unique_id=1305353892]
+[node name="BehindWorld" type="CanvasLayer" parent="."]
+layer = -5
+follow_viewport_enabled = true
 
-[node name="TrajectoryPrediction" type="Line2D" parent="." unique_id=555732344]
+[node name="OrbitLines" type="Node2D" parent="BehindWorld" unique_id=1305353892]
+
+[node name="TrajectoryPrediction" type="Line2D" parent="BehindWorld" unique_id=555732344]
 width = 2.0
 default_color = Color(0.85, 0.9, 1, 0.55)
 antialiased = true
 
-[node name="OsculatingOrbitLine" type="Line2D" parent="." unique_id=217950049]
+[node name="OsculatingOrbitLine" type="Line2D" parent="BehindWorld" unique_id=217950049]
 width = 1.5
 default_color = Color(0.85, 0.85, 0.85, 0.5)
 antialiased = true
 
-[node name="TargetOrbit" type="Line2D" parent="." unique_id=722839800]
+[node name="TargetOrbit" type="Line2D" parent="BehindWorld" unique_id=722839800]
 visible = false
 width = 2.0
 default_color = Color(0.55, 1, 0.62, 0.8)
 antialiased = true
 
-[node name="InterplanetaryRoute" type="Line2D" parent="." unique_id=616883616]
+[node name="InterplanetaryRoute" type="Line2D" parent="BehindWorld" unique_id=616883616]
 visible = false
 width = 2.0
 default_color = Color(1, 0.41, 0.7, 0.85)
 antialiased = true
 
-[node name="PeriapsisMarker" type="Node2D" parent="." unique_id=72141260]
+[node name="PeriapsisMarker" type="Node2D" parent="BehindWorld" unique_id=72141260]
 visible = false
 
-[node name="Label" type="Label" parent="PeriapsisMarker" unique_id=1509998926]
+[node name="Label" type="Label" parent="BehindWorld/PeriapsisMarker" unique_id=1509998926]
 offset_left = 6.0
 offset_top = -12.0
 offset_right = 27.0
 offset_bottom = 11.0
 text = "PE"
 
-[node name="ApoapsisMarker" type="Node2D" parent="." unique_id=1056636234]
+[node name="ApoapsisMarker" type="Node2D" parent="BehindWorld" unique_id=1056636234]
 visible = false
 
-[node name="Label" type="Label" parent="ApoapsisMarker" unique_id=988720973]
+[node name="Label" type="Label" parent="BehindWorld/ApoapsisMarker" unique_id=988720973]
 offset_left = 6.0
 offset_top = -12.0
 offset_right = 27.0
 offset_bottom = 11.0
 text = "AP"
 
-[node name="DepartureBurnMarker" type="Node2D" parent="." unique_id=1031075272]
+[node name="DepartureBurnMarker" type="Node2D" parent="BehindWorld" unique_id=1031075272]
 visible = false
 
-[node name="Label" type="Label" parent="DepartureBurnMarker" unique_id=1463624216]
+[node name="Label" type="Label" parent="BehindWorld/DepartureBurnMarker" unique_id=1463624216]
 offset_left = 6.0
 offset_top = -12.0
 offset_right = 27.0
@@ -118,10 +130,10 @@ offset_bottom = 11.0
 theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
 text = "DepartureBurnMarker"
 
-[node name="TransferBurnMarker" type="Node2D" parent="." unique_id=2087320388]
+[node name="TransferBurnMarker" type="Node2D" parent="BehindWorld" unique_id=2087320388]
 visible = false
 
-[node name="Label" type="Label" parent="TransferBurnMarker" unique_id=120431003]
+[node name="Label" type="Label" parent="BehindWorld/TransferBurnMarker" unique_id=120431003]
 offset_left = 6.0
 offset_top = -12.0
 offset_right = 27.0
@@ -129,10 +141,10 @@ offset_bottom = 11.0
 theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
 text = "TransferBurnMarker"
 
-[node name="ArrivalMarker" type="Node2D" parent="." unique_id=2076522040]
+[node name="ArrivalMarker" type="Node2D" parent="BehindWorld" unique_id=2076522040]
 visible = false
 
-[node name="Label" type="Label" parent="ArrivalMarker" unique_id=646834989]
+[node name="Label" type="Label" parent="BehindWorld/ArrivalMarker" unique_id=646834989]
 offset_left = 6.0
 offset_top = -12.0
 offset_right = 27.0
@@ -140,7 +152,7 @@ offset_bottom = 11.0
 theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
 text = "ArrivalMarker"
 
-[node name="Sun" type="Node2D" parent="." unique_id=592866294 groups=["light_sources"]]
+[node name="Sun" type="Node2D" parent="." unique_id=592866294]
 script = ExtResource("1_hbvo3")
 radius = 800.0
 visual_radius = 800.0
@@ -289,6 +301,18 @@ bus = &"SFX"
 shape = SubResource("CircleShape2D_ship")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=641785987]
+
+[node name="Camera3D" type="Camera3D" parent="."]
+physics_interpolation_mode = 2
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 50000, 0)
+projection = 1
+current = true
+size = 1000.0
+near = 1.0
+far = 100000.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world3d")
 
 [node name="MusicPlayer" type="AudioStreamPlayer" parent="." unique_id=987654321]
 bus = &"Music"
@@ -468,6 +492,20 @@ script = ExtResource("6_orbit_value")
 label_text = "AP"
 accent_color = Color(0.95, 0.75, 0.4, 1)
 
+[node name="ResourceBarsPanel" type="Control" parent="HUD"]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -428.0
+offset_top = -324.0
+offset_right = -238.0
+offset_bottom = -28.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("18_resource_bars")
+
 [node name="AutopilotPanel" type="Control" parent="HUD" unique_id=299792458]
 anchor_left = 1.0
 anchor_right = 1.0
@@ -528,6 +566,19 @@ grow_vertical = 0
 mouse_filter = 1
 script = ExtResource("11_time_warp")
 
+[node name="EnemyMenuPanel" parent="HUD" instance=ExtResource("19_enemy_menu")]
+visible = false
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -346.0
+offset_right = 336.0
+offset_bottom = -86.0
+grow_horizontal = 1
+grow_vertical = 0
+
 [node name="VersionLabel" type="Label" parent="HUD" unique_id=161803402]
 anchor_left = 1.0
 anchor_top = 1.0
@@ -576,3 +627,50 @@ script = ExtResource("15_settings_menu")
 
 [node name="ShipBuilderPanel" parent="HUD" instance=ExtResource("16_ship_builder")]
 visible = false
+
+[node name="PauseMenu" type="Control" parent="HUD"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -150.0
+offset_top = -110.0
+offset_right = 150.0
+offset_bottom = 110.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+visible = false
+script = ExtResource("17_pause_menu")
+
+[node name="Margin" type="MarginContainer" parent="HUD/PauseMenu"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="HUD/PauseMenu/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="HUD/PauseMenu/Margin/VBox"]
+layout_mode = 2
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
+theme_override_font_sizes/font_size = 18
+text = "PAUSED"
+
+[node name="SettingsButton" type="Button" parent="HUD/PauseMenu/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Settings"
+
+[node name="ExitButton" type="Button" parent="HUD/PauseMenu/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Save and Exit"

@@ -24,26 +24,33 @@ enum AutopilotPhase {
 }
 
 ## Seed for the whole system. Every planet mixes it with its own surface_seed,
-## so changing it gives a new set of planets. G rerolls it in game.
+## so changing it gives a new set of planets. N rerolls it in game.
 @export var world_seed: int = 0
 
 @onready var sun = $Sun
 @onready var planets_container: Node2D = $Planets
 @onready var ship = $Ship
 @onready var camera: Camera2D = $Camera2D
-@onready var orbit_lines_container: Node2D = $OrbitLines
-@onready var trajectory_prediction: Line2D = $TrajectoryPrediction
-@onready var osculating_orbit_line: Line2D = $OsculatingOrbitLine
-@onready var target_orbit: Line2D = $TargetOrbit
-@onready var interplanetary_route_line: Line2D = $InterplanetaryRoute
-@onready var departure_burn_marker: Node2D = $DepartureBurnMarker
-@onready var transfer_burn_marker: Node2D = $TransferBurnMarker
-@onready var arrival_marker: Node2D = $ArrivalMarker
-@onready var periapsis_marker: Node2D = $PeriapsisMarker
-@onready var apoapsis_marker: Node2D = $ApoapsisMarker
+## Draws the 3D bodies. Slaved to `camera` every frame (see _sync_camera_3d),
+## which stays the authority for everything else: 2D overlays, mouse aiming,
+## clicks, zoom and pan.
+@onready var camera_3d: Camera3D = $Camera3D
+# Everything under BehindWorld used to be drawn before the planets; that layer
+# sits behind the 3D view so it still passes under them.
+@onready var orbit_lines_container: Node2D = $BehindWorld/OrbitLines
+@onready var trajectory_prediction: Line2D = $BehindWorld/TrajectoryPrediction
+@onready var osculating_orbit_line: Line2D = $BehindWorld/OsculatingOrbitLine
+@onready var target_orbit: Line2D = $BehindWorld/TargetOrbit
+@onready var interplanetary_route_line: Line2D = $BehindWorld/InterplanetaryRoute
+@onready var departure_burn_marker: Node2D = $BehindWorld/DepartureBurnMarker
+@onready var transfer_burn_marker: Node2D = $BehindWorld/TransferBurnMarker
+@onready var arrival_marker: Node2D = $BehindWorld/ArrivalMarker
+@onready var periapsis_marker: Node2D = $BehindWorld/PeriapsisMarker
+@onready var apoapsis_marker: Node2D = $BehindWorld/ApoapsisMarker
 @onready var speed_gauge: Control = $HUD/SpeedGauge
 @onready var hud_status: Control = $HUD/HudStatus
 @onready var autopilot_panel: Control = $HUD/AutopilotPanel
+@onready var resource_bars_panel: Control = $HUD/ResourceBarsPanel
 @onready var ship_blueprint_panel: Control = $HUD/ShipBlueprintPanel
 @onready var time_warp_panel: Control = $HUD/TimeWarpPanel
 @onready var main_thruster_toggle: CheckButton = $HUD/AutopilotPanel/MainThrusterToggle
@@ -59,14 +66,18 @@ enum AutopilotPhase {
 @onready var eccentricity_label: Label = $HUD/PanelContainer/VBoxContainer/EccentricityLabel
 @onready var music_player: AudioStreamPlayer = $MusicPlayer
 @onready var settings_menu: Control = $HUD/SettingsMenu
+@onready var pause_menu: Control = $HUD/PauseMenu
 @onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
+@onready var enemy_menu_panel: EnemyMenu = $HUD/EnemyMenuPanel
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
 @onready var background_mask: ColorRect = $Background/BackgroundMask
 
 var settings_mgr: SettingsManager
 var music_mgr: MusicManager
+var _settings_opened_from_pause: bool = false
 var _is_first_track_notification := true
+var _builder_controller: ShipBuilderController
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -78,6 +89,7 @@ const HOME_PLANET_INDEX := 1
 var camera_zoom := 1.0
 var is_dragging := false
 var camera_follow_ship := false
+var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
 var trajectory_candidate_status := ""
@@ -135,6 +147,11 @@ const TARGET_ORBIT_FLASH_FADE := 4.0
 const ZOOM_MIN := 0.001
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
+## On-screen radius, in pixels, above which a body switches to its fine sphere.
+const DETAIL_HIGH_SCREEN_RADIUS := 40.0
+## How far above the orbital plane the top-down 3D camera sits. Only needs to
+## clear the tallest mountain; orthographic, so it does not change the size.
+const CAMERA_3D_HEIGHT := 50000.0
 const ZOOM_STEP := 1.2
 const PREDICTION_STEPS := 6000
 const PREDICTION_DT := 0.8
@@ -214,11 +231,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		and event.keycode == KEY_ESCAPE
 		and (ship_builder_panel == null or not ship_builder_panel.visible)
 	):
-		toggle_settings_menu()
+		_handle_escape()
 		get_viewport().set_input_as_handled()
 		return
 
 	if settings_menu != null and settings_menu.visible:
+		return
+
+	if pause_menu != null and pause_menu.visible:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_B:
@@ -226,7 +246,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+		toggle_enemy_menu()
+		get_viewport().set_input_as_handled()
+		return
+
 	if ship_builder_panel != null and ship_builder_panel.visible:
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_G:
+		_try_fire_fov_weapon()
+		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventKey and event.keycode == KEY_F:
@@ -251,7 +281,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_W:
 			if settings_mgr != null and settings_mgr.auto_drop_warp_on_thrust and time_scale > 1.0:
 				set_time_scale(1.0)
-		elif event.keycode == KEY_SPACE or event.keycode == KEY_P or event.keycode == KEY_0:
+		elif event.keycode == KEY_P or event.keycode == KEY_0:
+			toggle_pause()
+		elif event.keycode == KEY_SPACE and _test_enemy == null:
 			toggle_pause()
 		elif event.keycode == KEY_1:
 			set_time_scale(1.0)
@@ -269,7 +301,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_time_scale(200.0)
 		elif event.keycode == KEY_PERIOD:
 			camera_follow_ship = not camera_follow_ship
-		elif event.keycode == KEY_G:
+		elif event.keycode == KEY_N:
 			reroll_world()
 
 	if (
@@ -376,13 +408,23 @@ func _ready() -> void:
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
 	settings_mgr = SettingsManager.new()
+	# In-flight music defaults to off regardless of the saved preference (the
+	# main menu keeps its own default). Not saved, so it doesn't clobber what
+	# the player picked in the menu - only this scene's starting state.
+	settings_mgr.music_muted = true
+	settings_mgr.apply_audio_settings()
 	music_mgr = MusicManager.new()
 	add_child(music_mgr)
 	music_mgr.setup(music_player, settings_mgr.autoplay_music)
 
 	settings_menu.setup(settings_mgr, music_mgr)
 	settings_button.pressed.connect(toggle_settings_menu)
+	settings_menu.closed.connect(_on_settings_menu_closed)
+	pause_menu.settings_requested.connect(_on_pause_settings_requested)
+	pause_menu.exit_requested.connect(_on_pause_exit_requested)
 	ship_builder_panel.closed.connect(close_ship_builder)
+	enemy_menu_panel.enemy_selected.connect(_on_enemy_selected)
+	_bind_ship_builder_to_ship()
 	if time_warp_panel != null:
 		var gear_icon: Texture2D = time_warp_panel._load_icon("res://textures/icons/settings.svg")
 		if gear_icon != null:
@@ -415,11 +457,26 @@ func _process(delta: float) -> void:
 	update_target_orbit_visual()
 	update_route_planning(delta)
 	update_interplanetary_route_visual()
+	update_fov_gameplay()
 	update_hud()
 
 	if camera_follow_ship:
 		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
-		camera.position = camera.position.lerp(ship.position, catch_up)
+		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
+		camera.position = camera.position.lerp(follow_pos, catch_up)
+
+	_sync_camera_3d()
+
+
+# The top-down orthographic 3D camera shows exactly what the Camera2D shows:
+# the orbital plane (x, y) is the 3D plane (x, 0, z=y), and an ortho `size` is
+# the visible height in world units, which is the 2D view height over zoom.
+func _sync_camera_3d() -> void:
+	# Settle the 2D camera now, so both read the same frame's position.
+	camera.force_update_scroll()
+	var center: Vector2 = camera.get_screen_center_position()
+	camera_3d.position = Vector3(center.x, CAMERA_3D_HEIGHT, center.y)
+	camera_3d.size = get_viewport().get_visible_rect().size.y / camera.zoom.y
 
 
 func update_screen_space_visuals() -> void:
@@ -443,6 +500,7 @@ func update_screen_space_visuals() -> void:
 		)
 		if not is_equal_approx(body.get("visual_radius"), drawn_radius):
 			body.set("visual_radius", drawn_radius)
+		body.call("set_detail_high", drawn_radius * camera_zoom > DETAIL_HIGH_SCREEN_RADIUS)
 
 	var screen_scale := Vector2(inverse_zoom, inverse_zoom)
 	periapsis_marker.scale = screen_scale
@@ -1791,6 +1849,10 @@ const COLOR_BAD := Color(0.95, 0.45, 0.3)
 const COLOR_ORBIT_INFO := Color(0.4, 0.9, 1)
 const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
 
+const PLACEHOLDER_FUEL_PCT := 0.82
+const PLACEHOLDER_ENERGY_PCT := 0.95
+const PLACEHOLDER_SHIELD_PCT := 1.0
+
 
 func update_hud() -> void:
 	var speed: float = ship.velocity.length()
@@ -1806,6 +1868,8 @@ func update_hud() -> void:
 	time_warp_panel.set_state(time_scale)
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship_blueprint_panel.set_state(main_engine_display, rcs_command)
+	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
+	resource_bars_panel.set_state(PLACEHOLDER_FUEL_PCT, PLACEHOLDER_ENERGY_PCT, PLACEHOLDER_SHIELD_PCT)
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
 
@@ -1837,6 +1901,16 @@ func update_hud() -> void:
 	soi_label.text = hud_row("SOI", get_current_soi())
 	soi_label.add_theme_color_override("font_color", COLOR_MONO)
 
+	if ship.fov_devices.size() > 0:
+		var fov_bits: PackedStringArray = []
+		if not ship.radar_contacts.is_empty():
+			fov_bits.append("RAD " + ", ".join(ship.radar_contacts))
+		if not ship.weapon_locks.is_empty():
+			fov_bits.append("LOCK " + ", ".join(ship.weapon_locks) + " [G]")
+		if fov_bits.is_empty():
+			fov_bits.append("scanning…")
+		soi_label.text = hud_row("SOI", get_current_soi()) + "\n" + hud_row("Sensors", " | ".join(fov_bits))
+
 	if trajectory_status == "IMPACT":
 		trajectory_label.text = hud_row("Trajectory", "IMPACT - " + trajectory_target)
 		trajectory_label.add_theme_color_override("font_color", COLOR_MONO)
@@ -1864,10 +1938,10 @@ func update_hud() -> void:
 	update_autopilot_hud()
 
 
-# Dwukolumnowy wiersz "Label    Value" zamiast "● Label: Value" - działa
-# tylko dlatego, że Theme_hud ma czcionkę monospace (Cascadia Mono/
-# Consolas/Courier New), więc stałe wyrównanie spacjami faktycznie się
-# wyrównuje w kolumny, tak jak w referencyjnym wzorze HUD-u.
+# A two-column "Label    Value" row instead of "* Label: Value" - this only
+# works because Theme_hud uses a monospace font (Cascadia Mono/Consolas/
+# Courier New), so fixed space-padding actually lines up into columns,
+# matching the reference HUD look.
 const HUD_LABEL_WIDTH := 14
 
 
@@ -2488,7 +2562,34 @@ func toggle_settings_menu() -> void:
 	if settings_menu.visible:
 		settings_menu.close_menu()
 	else:
+		_settings_opened_from_pause = false
 		settings_menu.open_menu()
+
+
+func _handle_escape() -> void:
+	if settings_menu.visible:
+		settings_menu.close_menu()
+		return
+	if pause_menu.visible:
+		pause_menu.close()
+		return
+	pause_menu.open()
+
+
+func _on_pause_settings_requested() -> void:
+	pause_menu.close()
+	_settings_opened_from_pause = true
+	settings_menu.open_menu()
+
+
+func _on_settings_menu_closed() -> void:
+	if _settings_opened_from_pause:
+		_settings_opened_from_pause = false
+		pause_menu.open()
+
+
+func _on_pause_exit_requested() -> void:
+	get_tree().change_scene_to_file("res://scenes/menu/MainMenu.tscn")
 
 
 func toggle_ship_builder() -> void:
@@ -2505,6 +2606,131 @@ func open_ship_builder() -> void:
 
 func close_ship_builder() -> void:
 	ship_builder_panel.visible = false
+	_sync_ship_from_builder()
+
+
+func toggle_enemy_menu() -> void:
+	if enemy_menu_panel == null:
+		return
+	if enemy_menu_panel.visible:
+		enemy_menu_panel.visible = false
+	else:
+		enemy_menu_panel.refresh()
+		enemy_menu_panel.visible = true
+
+
+## Spawns the chosen sandbox enemy at the player ship's position and hands
+## WASD/Space control to it (see simulation_step's _test_enemy guard).
+func _on_enemy_selected(enemy_id: String) -> void:
+	var entry: Dictionary = {}
+	for candidate: Dictionary in EnemyCatalog.all_enemies():
+		if str(candidate.get("id", "")) == enemy_id:
+			entry = candidate
+			break
+	if entry.is_empty():
+		return
+
+	if _test_enemy != null:
+		_test_enemy.queue_free()
+		_test_enemy = null
+
+	var scene: PackedScene = entry.get("scene")
+	if scene == null:
+		return
+
+	var enemy := scene.instantiate() as Enemy
+	ship.get_parent().add_child(enemy)
+	enemy.global_position = ship.global_position
+	enemy.rotation = ship.rotation
+	_test_enemy = enemy
+
+	enemy_menu_panel.visible = false
+
+
+func _bind_ship_builder_to_ship() -> void:
+	_builder_controller = ship_builder_panel as ShipBuilderController
+	if _builder_controller == null:
+		return
+	var hull: ShipHull = _builder_controller.get_hull()
+	if hull == null:
+		return
+	if not hull.stats_changed.is_connected(_on_builder_stats_changed):
+		hull.stats_changed.connect(_on_builder_stats_changed)
+	_sync_ship_from_builder()
+
+
+func _on_builder_stats_changed(_stats: Dictionary) -> void:
+	_sync_ship_from_builder()
+
+
+func _sync_ship_from_builder() -> void:
+	if ship == null or _builder_controller == null:
+		return
+	ship.apply_module_stats(_builder_controller.get_stats_dictionary())
+	ship.apply_fov_devices(_builder_controller.get_fov_devices())
+
+
+func update_fov_gameplay() -> void:
+	if ship == null:
+		return
+	if ship.fov_devices.is_empty():
+		ship.clear_fov_contacts()
+		for body in celestial_bodies:
+			if body.get("fov_contact") != null:
+				body.set("fov_contact", 0)
+		return
+
+	var has_radar := false
+	for device in ship.fov_devices:
+		if str(device.get("kind", "")) == "radar":
+			has_radar = true
+			break
+
+	var radar: Array[String] = []
+	var locks: Array[String] = []
+	for body in celestial_bodies:
+		var body_name: String = str(body.get("body_name"))
+		var in_radar := false
+		var in_weapon := false
+		for device in ship.fov_devices:
+			var kind := str(device.get("kind", ""))
+			if not ship.is_body_in_device_fov(device, body.position):
+				continue
+			if kind == "radar":
+				in_radar = true
+			elif kind == "weapon":
+				in_weapon = true
+
+		var contact := 0
+		if in_radar:
+			radar.append(body_name)
+			contact = 1
+		# With radars fitted, weapons only lock bodies the sensors already see.
+		# Without any radar, weapons lock on their own FOV.
+		var can_lock := in_weapon and (in_radar or not has_radar)
+		if can_lock:
+			locks.append(body_name)
+			contact = 2
+		body.set("fov_contact", contact)
+
+	ship.set_fov_contacts(radar, locks)
+
+
+func _try_fire_fov_weapon() -> void:
+	if ship == null or ship.weapon_locks.is_empty():
+		return
+	var best_body: Node2D = null
+	var best_dist := INF
+	for body in celestial_bodies:
+		var body_name: String = str(body.get("body_name"))
+		if not ship.weapon_locks.has(body_name):
+			continue
+		var dist: float = ship.position.distance_to(body.position)
+		if dist < best_dist:
+			best_dist = dist
+			best_body = body
+	if best_body != null:
+		ship.try_fire_at(best_body.position)
 
 
 func _on_setting_changed(key: String, value: Variant) -> void:
@@ -2845,6 +3071,12 @@ func _physics_process(delta: float) -> void:
 		for i in range(planets.size()):
 			update_orbit_line(planets[i], orbit_lines[i], i)
 
+	# Global so every planet shader lights itself from the sun without each
+	# body needing to know where the sun is.
+	RenderingServer.global_shader_parameter_set(
+		"sun_position", Vector3(sun.global_position.x, 0.0, sun.global_position.y)
+	)
+
 
 func simulation_step(dt: float) -> void:
 	update_orbit_autopilot(dt)
@@ -2855,17 +3087,20 @@ func simulation_step(dt: float) -> void:
 	var autopilot_on_main_engine: bool = is_autopilot_using_main_engine()
 	var autopilot_thrusting: bool = ship.autopilot_thrust != Vector2.ZERO
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		ship.update_rotation(dt)
-	elif autopilot_on_main_engine:
-		ship.update_autopilot_rotation(dt)
-	else:
-		ship.update_rotation(dt)
+	# While test-flying a sandbox enemy (E menu), the player ship stops reading
+	# WASD/mouse-aim so both craft don't respond to the same keys at once.
+	if _test_enemy == null:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			ship.update_rotation(dt)
+		elif autopilot_on_main_engine:
+			ship.update_autopilot_rotation(dt)
+		else:
+			ship.update_rotation(dt)
 
-	if autopilot_thrusting:
-		ship.disengage_manual_main_engine()
-	else:
-		ship.update_throttle(dt, time_scale <= 1.0)
+		if autopilot_thrusting:
+			ship.disengage_manual_main_engine()
+		else:
+			ship.update_throttle(dt, time_scale <= 1.0)
 
 	var count: int = physics_planets.size()
 
@@ -2949,12 +3184,12 @@ func get_ship_acceleration_precise() -> Vector2:
 
 
 const ORBIT_TRAIL_POINTS_PER_ORBIT := 300
-# Linia to pełne koło (300+1 punktów) przebudowywane od zera - Line2D
-# przebudowuje CAŁĄ geometrię przy KAŻDYM add_point, więc robienie tego
-# co klatkę (x8 planet) było bardzo drogie i przy dużym time_scale (gdzie
-# fizyka i tak zjada więcej czasu na klatkę) dawało odczuwalny spadek FPS.
-# Promień orbity zmienia się bardzo powoli - przebudowujemy więc TYLKO
-# gdy realnie odjechał o więcej niż promil, zamiast bezwarunkowo co klatkę.
+# The line is a full circle (300+1 points) rebuilt from scratch - Line2D
+# rebuilds its ENTIRE geometry on EVERY add_point, so doing this every
+# frame (x8 planets) was very expensive and caused a noticeable FPS drop
+# at high time_scale (where physics already eats more time per frame).
+# The orbit radius changes very slowly, so we only rebuild when it has
+# actually moved by more than a tenth of a percent, instead of every frame.
 const ORBIT_RADIUS_REBUILD_THRESHOLD := 0.001
 
 

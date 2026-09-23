@@ -17,11 +17,14 @@ const DISPLAY_KEYS: Array[String] = [
 	"durability",
 	"health",
 	"thrust",
+	"correction_thrust",
 	"fuel_consumption",
+	"fuel_capacity",
 	"energy_consumption",
 	"energy_generation",
 	"energy_capacity",
 	"net_energy",
+	"shield_strength",
 	"damage",
 	"repair_rate",
 	"max_heat",
@@ -30,6 +33,7 @@ const DISPLAY_KEYS: Array[String] = [
 	"module_count",
 	"thrust_to_weight",
 	"hulls_linked",
+	"rcs_sides_ok",
 ]
 
 
@@ -79,7 +83,7 @@ func _build_ui() -> void:
 
 	_body = VBoxContainer.new()
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_body.add_theme_constant_override("separation", 2)
+	_body.add_theme_constant_override("separation", 6)
 	add_child(_body)
 
 	for key in DISPLAY_KEYS:
@@ -127,7 +131,7 @@ func _refresh_header() -> void:
 	if _header == null:
 		return
 	var arrow := "▼" if _expanded else "▶"
-	_header.text = "%s  Statystyki statku" % arrow
+	_header.text = "%s  Ship Stats" % arrow
 
 
 func _on_stats_changed(new_stats: Dictionary) -> void:
@@ -135,8 +139,8 @@ func _on_stats_changed(new_stats: Dictionary) -> void:
 		if not _labels.has(key):
 			continue
 		var value: Variant = new_stats.get(key, 0)
-		if key == "hulls_linked":
-			_labels[key].text = "Tak" if bool(value) else "NIE"
+		if key == "hulls_linked" or key == "rcs_sides_ok":
+			_labels[key].text = "YES" if bool(value) else "NO"
 		elif typeof(value) == TYPE_FLOAT:
 			_labels[key].text = "%.2f" % value
 		else:

@@ -62,17 +62,6 @@ func pan_to(global_pos: Vector2) -> void:
 		_apply_pan(global_pos)
 
 
-const WHEEL_STEP := 48
-
-
-func scroll_vertical_by(pixels: int) -> void:
-	scroll_vertical = scroll_vertical + pixels
-
-
-func scroll_horizontal_by(pixels: int) -> void:
-	scroll_horizontal = scroll_horizontal + pixels
-
-
 func center_view() -> void:
 	# Wait one frame so layout sizes are current.
 	await get_tree().process_frame

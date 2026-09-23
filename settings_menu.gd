@@ -601,15 +601,16 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 
 	# --- Column 2 ---
 	_draw_section_header(Vector2(col2_x, top_y), "Orbital Autopilot", col_w)
-	var card2 := Rect2(col2_x, top_y + 20.0, col_w, 150.0)
+	var card2 := Rect2(col2_x, top_y + 20.0, col_w, 176.0)
 	_draw_card_background(card2)
 
 	y = card2.position.y + 14.0
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "F", "Engage / Disengage Autopilot")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Tab", "Cycle target celestial body")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Scroll (Target)", "Adjust target orbit altitude")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "G", "Fire weapon at FOV lock")
 
-	var y_cam: float = top_y + 192.0
+	var y_cam: float = top_y + 218.0
 	_draw_section_header(Vector2(col2_x, y_cam), "Camera & Tracking", col_w)
 	var card_cam := Rect2(col2_x, y_cam + 20.0, col_w, 138.0)
 	_draw_card_background(card_cam)

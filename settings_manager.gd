@@ -6,8 +6,8 @@ const SAVE_PATH := "user://settings.cfg"
 # Audio settings
 var master_volume: float = 1.0
 var master_muted: bool = false
-var music_volume: float = 0.7
-var music_muted: bool = true
+var music_volume: float = 0.35
+var music_muted: bool = false
 var sfx_volume: float = 0.8
 var sfx_muted: bool = false
 var show_music_notifications: bool = true
@@ -158,7 +158,7 @@ func load_settings() -> void:
 		master_volume = cfg.get_value("audio", "master_volume", 1.0)
 		master_muted = cfg.get_value("audio", "master_muted", false)
 		music_volume = cfg.get_value("audio", "music_volume", 0.7)
-		music_muted = cfg.get_value("audio", "music_muted", true)
+		music_muted = cfg.get_value("audio", "music_muted", false)
 		sfx_volume = cfg.get_value("audio", "sfx_volume", 0.8)
 		sfx_muted = cfg.get_value("audio", "sfx_muted", false)
 		show_music_notifications = cfg.get_value("audio", "show_music_notifications", true)
