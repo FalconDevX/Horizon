@@ -20,7 +20,7 @@ enum Category {
 @export var texture: Texture2D
 @export var id: StringName = &""
 
-## For Category.HULL — defines local size, mass, capacity, truss ring.
+## For Category.HULL — defines local size, mass, capacity (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
 @export var hull_data: HullData
 
 @export_group("Shared")
@@ -32,7 +32,7 @@ enum Category {
 @export var thrust: float = 0.0
 @export var fuel_consumption: float = 0.0
 @export var max_heat: float = 100.0
-## When true, this engine is RCS-only and mounts on RCS_MOUNT tiles.
+## When true, this engine is RCS-only (truss next to normal deck, not ENGINE_MOUNT).
 @export var is_corrective_engine: bool = false
 
 @export_group("Weapon")
@@ -76,7 +76,8 @@ func is_equipment() -> bool:
 
 
 ## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
-## Main engines must cover an ENGINE_MOUNT; corrective engines must cover an RCS_MOUNT.
+## Main engines only on ENGINE_MOUNT (may overhang onto the weapon truss).
+## Corrective engines and weapons only on truss cells adjacent to normal DECK.
 func is_deck_equipment() -> bool:
 	return (
 		category == Category.ENGINE

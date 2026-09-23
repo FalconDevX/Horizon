@@ -20,7 +20,7 @@ var occupied_cells: int = 0
 var capacity: int = 0
 var max_heat: float = 0.0 ## Highest engine overheat limit among engines
 var hulls_linked: bool = true
-## Every hull has ≥1 corrective engine on top, right and bottom RCS edges.
+## Ship-wide: ≥1 RCS on each outer side except the main-engine side.
 var rcs_sides_ok: bool = true
 
 

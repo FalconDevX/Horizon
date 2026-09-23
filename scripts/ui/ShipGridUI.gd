@@ -19,11 +19,10 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var empty_tint := Color(0.25, 0.4, 0.7, 0.16)
 @export var deck_tint := Color(0.3, 0.5, 0.85, 0.22)
 @export var engine_mount_tint := Color(0.35, 0.6, 0.95, 0.3)
-@export var rcs_mount_tint := Color(0.3, 0.55, 0.9, 0.26)
 @export var connector_tint := Color(0.4, 0.65, 0.95, 0.26)
 @export var occupied_tint := Color(0.35, 0.55, 0.85, 0.2)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
-@export var mount_tint := Color(0.3, 0.5, 0.85, 0.16) ## subtle hint for weapon-adjacent cells
+@export var mount_tint := Color(0.3, 0.5, 0.85, 0.16) ## subtle hint for weapon truss cells
 @export var weapon_fov_fill := Color(0.9, 0.25, 0.2, 0.18)
 @export var weapon_fov_outline := Color(0.95, 0.4, 0.3, 0.75)
 @export var radar_fov_fill := Color(0.25, 0.75, 0.85, 0.16)
@@ -454,8 +453,6 @@ func _draw() -> void:
 					fill = deck_tint
 				HullData.FloorType.ENGINE_MOUNT:
 					fill = engine_mount_tint
-				HullData.FloorType.RCS_MOUNT:
-					fill = rcs_mount_tint
 				HullData.FloorType.CONNECTOR:
 					fill = connector_tint
 				_:
