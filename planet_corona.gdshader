@@ -2,9 +2,9 @@ shader_type spatial;
 render_mode unshaded, blend_add, cull_disabled, depth_draw_never, shadows_disabled;
 
 // A star's corona, on the flat plane that sits behind its sphere facing the
-// camera. Added on top of whatever is behind: a hot inner rim, streamers that
-// reach out and slowly writhe, and a broad faint halo. The disc itself hides
-// the middle.
+// camera. Added on top of whatever is behind: a hot inner rim that breathes,
+// streamers that reach out and slowly writhe, plasma puffs pulsing outward
+// along them, and a broad faint halo. The disc itself hides the middle.
 
 uniform vec3 star_color : source_color = vec3(1.0, 0.85, 0.3);
 uniform float intensity : hint_range(0.0, 8.0) = 1.0;
@@ -57,6 +57,23 @@ float streamers(float angle, float r, float time) {
 	return sum;
 }
 
+// Plasma puffs: coarse blobs whose noise scrolls outward in radius, so they
+// are born at the surface and drift away, fading as they go.
+float ejecta(float angle, float height, float time) {
+	float a = angle / 6.2832;
+	float sum = 0.0;
+	float amplitude = 0.5;
+	float period = 9.0;
+	for (int i = 0; i < 3; i++) {
+		sum += amplitude * wrapped_noise(
+			vec2(a * period, height * 1.3 - time * 0.3 + float(i) * 3.1 + seed_offset), period
+		);
+		period *= 2.0;
+		amplitude *= 0.5;
+	}
+	return sum;
+}
+
 void fragment() {
 	vec2 p = (UV - 0.5) * 2.0 * extent;
 	float r = length(p);
@@ -69,16 +86,20 @@ void fragment() {
 	float rays = streamers(angle, height, time);
 	float ray_boost = pow(smoothstep(0.35, 0.85, rays), 1.5);
 
-	// Bright thin inner corona.
-	float inner = exp(-height * 12.0) * 0.7;
+	// Bright thin inner corona, swelling and ebbing unevenly round the rim.
+	float breath = 0.85 + 0.15 * sin(time * 0.9 + angle * 3.0 + sin(time * 0.37 + angle * 5.0) * 2.0);
+	float inner = exp(-height * 12.0) * 0.7 * breath;
 	// Streamers: long, fading roughly as a power of height.
 	float outer = exp(-height * 1.8) * (0.12 + 0.9 * ray_boost);
 	// Broad halo, so the star lights up the space around it.
 	float halo = 0.28 / (1.0 + height * height * 8.0);
+	// Puffs ride the streamers: brightest where both agree.
+	float puffs = pow(smoothstep(0.38, 0.75, ejecta(angle, height, time)), 1.5);
+	float flow = puffs * exp(-height * 0.9) * (0.6 + 0.6 * ray_boost) * 1.3;
 
 	// Soft fade to nothing well before the plane's edge.
 	float edge = 1.0 - smoothstep(extent * 0.6, extent * 0.98, r);
-	float glow = (inner + outer + halo) * edge;
+	float glow = (inner + outer + halo + flow) * edge;
 
 	vec3 hot = mix(star_color, vec3(1.0), 0.5);
 	vec3 col = mix(star_color * vec3(1.0, 0.7, 0.45), hot, exp(-height * 3.0));
