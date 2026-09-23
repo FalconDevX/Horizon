@@ -83,21 +83,31 @@ layout_mode = 2
 text = "Rotate View"
 tooltip_text = "Rotate the ship 90° in place around its center."
 
+[node name="InfoButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup/ViewButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 4
+custom_minimum_size = Vector2(30, 30)
+expand_icon = true
+tooltip_text = "Controls & placement rules"
+
 [node name="Hint" type="Label" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(260, 0)
 layout_mode = 2
 theme_override_colors/font_color = Color(0.7, 0.75, 0.8, 1)
 theme_override_font_sizes/font_size = 10
-text = "Wheel = zoom. Middle-drag = pan."
+text = ""
 autowrap_mode = 3
 horizontal_alignment = 1
 
 [node name="CloseButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_vertical = 4
+custom_minimum_size = Vector2(0, 30)
 theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 text = "✕ Exit"
 tooltip_text = "Exit the workshop (B)"
 
@@ -139,12 +149,12 @@ script = ExtResource("6_resize")
 axis = 0
 target_path = NodePath("../ModuleBaySection")
 min_size = 100.0
-max_size = 480.0
+max_size = 640.0
 invert_drag = true
 
 [node name="ModuleBaySection" type="VBoxContainer" parent="Margin/RootHBox/LeftColumn"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 200)
+custom_minimum_size = Vector2(0, 420)
 layout_mode = 2
 size_flags_vertical = 0
 theme_override_constants/separation = 6
@@ -282,3 +292,90 @@ tooltip_text = "Placeholder - saving is not implemented yet"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Exit Without Saving"
+
+[node name="InfoPopup" type="Control" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+visible = false
+
+[node name="InfoScrim" type="ColorRect" parent="InfoPopup"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.02, 0.03, 0.05, 0.72)
+mouse_filter = 1
+
+[node name="InfoDialogPanel" type="PanelContainer" parent="InfoPopup"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -210.0
+offset_top = -140.0
+offset_right = 210.0
+offset_bottom = 140.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="InfoMargin" type="MarginContainer" parent="InfoPopup/InfoDialogPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 18
+
+[node name="InfoVBox" type="VBoxContainer" parent="InfoPopup/InfoDialogPanel/InfoMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="InfoTitle" type="Label" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
+theme_override_font_sizes/font_size = 15
+text = "Controls"
+
+[node name="InfoControlsLabel" type="Label" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
+theme_override_font_sizes/font_size = 11
+text = "Wheel = zoom
+Middle-drag = pan
+Holding a module: wheel = rotate"
+
+[node name="InfoSeparator" type="HSeparator" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+layout_mode = 2
+
+[node name="InfoPlacementTitle" type="Label" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 0.78, 0.88, 1)
+theme_override_font_sizes/font_size = 15
+text = "Placement"
+
+[node name="InfoPlacementLabel" type="Label" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
+theme_override_font_sizes/font_size = 11
+text = "Hull -> open shipyard, no contact with another hull
+Connector -> empty cell between two hulls
+Weapon -> next to a deck, not on the floor
+Engine / Utility / Fuel Tank / Battery / Shield -> on a deck cell"
+
+[node name="InfoCloseButton" type="Button" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Got it"

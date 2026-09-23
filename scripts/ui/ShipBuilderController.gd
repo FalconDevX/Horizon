@@ -16,6 +16,7 @@ signal closed
 @onready var _grid_scroll: PannableScrollContainer = %GridScroll
 @onready var _center_view_btn: Button = %CenterViewButton
 @onready var _rotate_view_btn: Button = %RotateViewButton
+@onready var _info_btn: Button = %InfoButton
 @onready var _close_btn: Button = %CloseButton
 @onready var _title: Label = %Title
 @onready var _exit_confirm: Control = %ExitConfirm
@@ -23,6 +24,10 @@ signal closed
 @onready var _exit_dialog_panel: PanelContainer = %DialogPanel
 @onready var _save_exit_btn: Button = %SaveExitButton
 @onready var _discard_exit_btn: Button = %DiscardExitButton
+@onready var _info_popup: Control = %InfoPopup
+@onready var _info_scrim: Control = %InfoScrim
+@onready var _info_dialog_panel: PanelContainer = %InfoDialogPanel
+@onready var _info_close_btn: Button = %InfoCloseButton
 
 const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
@@ -104,6 +109,13 @@ func _ready() -> void:
 	if _discard_exit_btn != null:
 		_discard_exit_btn.pressed.connect(_on_discard_exit_pressed)
 
+	if _info_btn != null:
+		_info_btn.pressed.connect(_show_info_popup)
+	if _info_scrim != null:
+		_info_scrim.gui_input.connect(_on_info_scrim_gui_input)
+	if _info_close_btn != null:
+		_info_close_btn.pressed.connect(_hide_info_popup)
+
 	# Center once after first layout.
 	call_deferred("_on_center_view_pressed")
 
@@ -145,6 +157,33 @@ func _on_discard_exit_pressed() -> void:
 	closed.emit()
 
 
+func _show_info_popup() -> void:
+	if _info_popup != null:
+		_info_popup.visible = true
+
+
+func _hide_info_popup() -> void:
+	if _info_popup != null:
+		_info_popup.visible = false
+
+
+func _on_info_scrim_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_hide_info_popup()
+
+
+static func _load_icon(path: String) -> Texture2D:
+	if ResourceLoader.exists(path):
+		var res = load(path)
+		if res is Texture2D:
+			return res
+	if FileAccess.file_exists(path):
+		var img := Image.load_from_file(path)
+		if img != null:
+			return ImageTexture.create_from_image(img)
+	return null
+
+
 func _on_bay_resized(new_height: float) -> void:
 	if _module_bay != null:
 		_module_bay.remember_height(new_height)
@@ -164,8 +203,19 @@ func _style_chrome() -> void:
 		_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
 	_style_topbar_button(_center_view_btn)
 	_style_topbar_button(_rotate_view_btn)
+	_style_topbar_button(_info_btn)
 	_style_topbar_button(_close_btn)
 	_style_exit_confirm()
+	_style_info_popup()
+
+	if _info_btn != null:
+		var info_icon: Texture2D = _load_icon("res://textures/icons/info.svg")
+		if info_icon != null:
+			_info_btn.icon = info_icon
+			_info_btn.text = ""
+			_info_btn.add_theme_color_override("icon_normal_color", HudPanelStyle.COLOR_TEXT_SECONDARY)
+			_info_btn.add_theme_color_override("icon_hover_color", HudPanelStyle.COLOR_CYAN)
+			_info_btn.add_theme_color_override("icon_pressed_color", HudPanelStyle.COLOR_CYAN)
 
 
 func _style_topbar_button(btn: Button) -> void:
@@ -205,6 +255,22 @@ func _style_exit_confirm() -> void:
 	_style_topbar_button(_save_exit_btn)
 	if _save_exit_btn != null:
 		_save_exit_btn.add_theme_color_override("font_color", HudPanelStyle.COLOR_CYAN)
+
+
+func _style_info_popup() -> void:
+	if _info_dialog_panel != null:
+		var flat := StyleBoxFlat.new()
+		flat.bg_color = HudPanelStyle.COLOR_BG_SURFACE
+		flat.border_color = HudPanelStyle.COLOR_BORDER_DEFAULT
+		flat.set_border_width_all(1)
+		flat.set_corner_radius_all(6)
+		_info_dialog_panel.add_theme_stylebox_override("panel", flat)
+
+	if _info_dialog_panel != null:
+		for label: Label in _info_dialog_panel.find_children("*", "Label", true, false):
+			label.add_theme_font_override("font", HudPanelStyle.get_font())
+
+	_style_topbar_button(_info_close_btn)
 
 
 func _populate_inventory() -> void:
@@ -314,7 +380,7 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 	if not _ship_hull.are_rcs_sides_covered():
 		link += " ⚠ Each hull needs a corrective engine on all 3 RCS sides."
 	if module == null:
-		_hint.text = "Wheel = zoom. Middle-drag = pan. Holding a module: wheel = rotate.%s" % link
+		_hint.text = link.strip_edges()
 	else:
 		var bounds := module.get_bounding_size(rotation)
 		var floor_hint := "free shipyard cell"
