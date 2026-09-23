@@ -9,9 +9,9 @@ render_mode unshaded, cull_back;
 
 uniform vec3 star_color : source_color = vec3(1.0, 0.85, 0.3);
 // Overall brightness; the centre of the disc reaches roughly this. The
-// tonemapper is linear, so much past 1 just clips to white - kept a touch over
-// so the middle blooms while the granules still show.
-uniform float intensity : hint_range(0.5, 8.0) = 1.25;
+// tonemapper is linear, so past 1 it clips toward white: the disc is meant to
+// glare, with its granules and pores only just showing through.
+uniform float intensity : hint_range(0.5, 8.0) = 1.75;
 // Limb darkening coefficient (linear law): 0 = flat disc, ~0.6 = the Sun.
 uniform float limb_darkening : hint_range(0.0, 1.0) = 0.5;
 uniform float granule_scale = 70.0;
@@ -173,11 +173,11 @@ void fragment() {
 	vec3 col = mix(cool, hot, pow(mu, 0.45));
 
 	float brightness = intensity * limb;
-	brightness *= 0.62 + 0.62 * granule;
+	brightness *= 0.82 + 0.3 * granule;
 	brightness *= 1.0 + large * 0.35;
 	brightness *= 1.0 + faculae * 0.4 * pow(1.0 - mu, 1.5);
-	brightness *= mix(1.0, 0.45, penumbra);
-	brightness *= mix(1.0, 0.25, umbra);
+	brightness *= mix(1.0, 0.6, penumbra);
+	brightness *= mix(1.0, 0.4, umbra);
 
 	col = mix(col, star_color * vec3(1.0, 0.5, 0.22), smoothstep(-0.05, 0.25, mottle) * 0.45);
 	col = mix(col, vec3(1.0, 0.93, 0.75), faculae * pow(1.0 - mu, 1.2) * 0.35);

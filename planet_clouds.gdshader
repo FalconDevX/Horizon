@@ -80,9 +80,10 @@ void fragment() {
 	lit += atmo_color * 0.06 * atmo_strength * day;
 	lit = mix(lit, atmo_color * day, rim * 0.35 * min(atmo_strength, 1.0));
 
-	// Seen edge-on, a veil is a longer path through cloud: denser at the limb.
+	// Dissolve toward the limb, so the deck melts into the atmosphere's glow
+	// instead of standing off the planet as a ragged edge.
 	float alpha = here.x * mix(0.55, 1.0, here.y);
-	alpha = clamp(alpha * (1.0 + rim * 0.8), 0.0, 0.97);
+	alpha = clamp(alpha * smoothstep(0.0, 0.35, facing), 0.0, 0.97);
 
 	ALBEDO = lit;
 	ALPHA = alpha;

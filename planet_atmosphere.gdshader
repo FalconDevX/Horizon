@@ -52,7 +52,7 @@ void fragment() {
 		// Over the disc: a thin veil, thickening toward the limb where the
 		// line of sight runs through more of it.
 		float mu = sqrt(max(1.0 - impact * impact / (base_radius * base_radius), 0.0));
-		glow = 0.12 + 0.88 * pow(1.0 - mu, 4.0);
+		glow = 0.1 + 0.9 * pow(1.0 - mu, 3.0);
 		lit_dir = normalize(p);
 		beyond_limb = 0.0;
 	}

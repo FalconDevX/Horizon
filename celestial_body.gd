@@ -520,7 +520,8 @@ func _build_atmosphere(p: Dictionary) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = ATMOSPHERE_SHADER
 	material.set_shader_parameter("shell_radius", _atmosphere_shell_radius())
-	material.set_shader_parameter("scale_height", ATMOSPHERE_DEPTH * 0.25)
+	# Thick enough near the ground to soften the planet's hard edge.
+	material.set_shader_parameter("scale_height", ATMOSPHERE_DEPTH * 0.3)
 	material.set_shader_parameter("atmo_color", p["atmo"])
 	material.set_shader_parameter("strength", maxf(p["atmo_strength"], 0.4))
 
