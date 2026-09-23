@@ -58,6 +58,7 @@ enum AutopilotPhase {
 @onready var settings_menu: Control = $HUD/SettingsMenu
 @onready var pause_menu: Control = $HUD/PauseMenu
 @onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
+@onready var enemy_menu_panel: EnemyMenu = $HUD/EnemyMenuPanel
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
 @onready var background_mask: ColorRect = $Background/BackgroundMask
@@ -78,6 +79,7 @@ const HOME_PLANET_INDEX := 1
 var camera_zoom := 1.0
 var is_dragging := false
 var camera_follow_ship := false
+var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
 var trajectory_candidate_status := ""
@@ -229,6 +231,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+		toggle_enemy_menu()
+		get_viewport().set_input_as_handled()
+		return
+
 	if ship_builder_panel != null and ship_builder_panel.visible:
 		return
 
@@ -259,7 +266,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_W:
 			if settings_mgr != null and settings_mgr.auto_drop_warp_on_thrust and time_scale > 1.0:
 				set_time_scale(1.0)
-		elif event.keycode == KEY_SPACE or event.keycode == KEY_P or event.keycode == KEY_0:
+		elif event.keycode == KEY_P or event.keycode == KEY_0:
+			toggle_pause()
+		elif event.keycode == KEY_SPACE and _test_enemy == null:
 			toggle_pause()
 		elif event.keycode == KEY_1:
 			set_time_scale(1.0)
@@ -386,6 +395,7 @@ func _ready() -> void:
 	pause_menu.settings_requested.connect(_on_pause_settings_requested)
 	pause_menu.exit_requested.connect(_on_pause_exit_requested)
 	ship_builder_panel.closed.connect(close_ship_builder)
+	enemy_menu_panel.enemy_selected.connect(_on_enemy_selected)
 	_bind_ship_builder_to_ship()
 	if time_warp_panel != null:
 		var gear_icon: Texture2D = time_warp_panel._load_icon("res://textures/icons/settings.svg")
@@ -424,7 +434,8 @@ func _process(delta: float) -> void:
 
 	if camera_follow_ship:
 		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
-		camera.position = camera.position.lerp(ship.position, catch_up)
+		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
+		camera.position = camera.position.lerp(follow_pos, catch_up)
 
 
 func update_screen_space_visuals() -> void:
@@ -2556,6 +2567,44 @@ func close_ship_builder() -> void:
 	_sync_ship_from_builder()
 
 
+func toggle_enemy_menu() -> void:
+	if enemy_menu_panel == null:
+		return
+	if enemy_menu_panel.visible:
+		enemy_menu_panel.visible = false
+	else:
+		enemy_menu_panel.refresh()
+		enemy_menu_panel.visible = true
+
+
+## Spawns the chosen sandbox enemy at the player ship's position and hands
+## WASD/Space control to it (see simulation_step's _test_enemy guard).
+func _on_enemy_selected(enemy_id: String) -> void:
+	var entry: Dictionary = {}
+	for candidate: Dictionary in EnemyCatalog.all_enemies():
+		if str(candidate.get("id", "")) == enemy_id:
+			entry = candidate
+			break
+	if entry.is_empty():
+		return
+
+	if _test_enemy != null:
+		_test_enemy.queue_free()
+		_test_enemy = null
+
+	var scene: PackedScene = entry.get("scene")
+	if scene == null:
+		return
+
+	var enemy := scene.instantiate() as Enemy
+	ship.get_parent().add_child(enemy)
+	enemy.global_position = ship.global_position
+	enemy.rotation = ship.rotation
+	_test_enemy = enemy
+
+	enemy_menu_panel.visible = false
+
+
 func _bind_ship_builder_to_ship() -> void:
 	_builder_controller = ship_builder_panel as ShipBuilderController
 	if _builder_controller == null:
@@ -2990,17 +3039,20 @@ func simulation_step(dt: float) -> void:
 	var autopilot_on_main_engine: bool = is_autopilot_using_main_engine()
 	var autopilot_thrusting: bool = ship.autopilot_thrust != Vector2.ZERO
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		ship.update_rotation(dt)
-	elif autopilot_on_main_engine:
-		ship.update_autopilot_rotation(dt)
-	else:
-		ship.update_rotation(dt)
+	# While test-flying a sandbox enemy (E menu), the player ship stops reading
+	# WASD/mouse-aim so both craft don't respond to the same keys at once.
+	if _test_enemy == null:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			ship.update_rotation(dt)
+		elif autopilot_on_main_engine:
+			ship.update_autopilot_rotation(dt)
+		else:
+			ship.update_rotation(dt)
 
-	if autopilot_thrusting:
-		ship.disengage_manual_main_engine()
-	else:
-		ship.update_throttle(dt, time_scale <= 1.0)
+		if autopilot_thrusting:
+			ship.disengage_manual_main_engine()
+		else:
+			ship.update_throttle(dt, time_scale <= 1.0)
 
 	var count: int = physics_planets.size()
 

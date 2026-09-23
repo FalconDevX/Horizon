@@ -333,7 +333,12 @@ static func make_shape_texture(
 	return ImageTexture.create_from_image(img)
 
 
-static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = CELL_PX) -> Texture2D:
+static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = CELL_PX, for_grid: bool = false) -> Texture2D:
+	if for_grid and hull.interior_texture != null:
+		return hull.interior_texture
+	if hull.custom_texture != null:
+		return hull.custom_texture
+
 	var local_shape := hull.make_rect_shape()
 	var placed: Array[Vector2i] = []
 	placed.resize(local_shape.size())

@@ -439,18 +439,8 @@ func clear_modules() -> void:
 	_recalculate_stats()
 
 
-## Rotate every placed module 90° * steps clockwise around the ship's own center.
-## The ship stays where it is; only orientation changes (grid itself does not spin).
-func rotate_build(steps: int = 1) -> void:
-	steps = posmod(steps, 4)
-	for _i in steps:
-		_rotate_build_once()
-
-
-func _rotate_build_once() -> void:
-	if _modules.is_empty():
-		return
-
+## Bounding box (in cells) of every placed module; zero-size Rect2i if nothing is built.
+func get_occupied_bounds() -> Rect2i:
 	var min_c := Vector2i(999999, 999999)
 	var max_c := Vector2i(-999999, -999999)
 	var has_cells := false
@@ -462,66 +452,8 @@ func _rotate_build_once() -> void:
 			min_c = Vector2i(mini(min_c.x, cell.x), mini(min_c.y, cell.y))
 			max_c = Vector2i(maxi(max_c.x, cell.x), maxi(max_c.y, cell.y))
 	if not has_cells:
-		return
-
-	var planned: Array = []
-	var new_min := Vector2i(999999, 999999)
-	var new_max := Vector2i(-999999, -999999)
-	for module: PlacedModule in _modules.values():
-		if module.data == null:
-			continue
-		var new_cells: Array[Vector2i] = []
-		for cell: Vector2i in module.get_occupied_cells():
-			var rotated := rotate_cell_in_bounds(cell, min_c, max_c)
-			new_cells.append(rotated)
-			new_min = Vector2i(mini(new_min.x, rotated.x), mini(new_min.y, rotated.y))
-			new_max = Vector2i(maxi(new_max.x, rotated.x), maxi(new_max.y, rotated.y))
-		var new_origin := new_cells[0]
-		for cell: Vector2i in new_cells:
-			new_origin = Vector2i(mini(new_origin.x, cell.x), mini(new_origin.y, cell.y))
-		planned.append({
-			"module": module,
-			"origin": new_origin,
-			"rotation": posmod(module.rotation + 1, 4),
-		})
-
-	var shift := Vector2i.ZERO
-	if new_min.x < 0:
-		shift.x = -new_min.x
-	elif new_max.x >= build_grid_size.x:
-		shift.x = build_grid_size.x - 1 - new_max.x
-	if new_min.y < 0:
-		shift.y = -new_min.y
-	elif new_max.y >= build_grid_size.y:
-		shift.y = build_grid_size.y - 1 - new_max.y
-
-	_structure.clear()
-	_equipment.clear()
-	for item in planned:
-		var module: PlacedModule = item["module"]
-		module.origin = item["origin"] + shift
-		module.rotation = int(item["rotation"])
-		for cell: Vector2i in module.get_occupied_cells():
-			if not is_cell_in_bounds(cell):
-				continue
-			if module.data.is_structure():
-				_structure[cell] = module
-			else:
-				_equipment[cell] = module
-	_recalculate_stats()
-
-
-## One 90° clockwise step of a cell inside a selection bbox, keeping the selection centered.
-static func rotate_cell_in_bounds(cell: Vector2i, bmin: Vector2i, bmax: Vector2i) -> Vector2i:
-	var w: int = bmax.x - bmin.x + 1
-	var h: int = bmax.y - bmin.y + 1
-	var sum_x: int = bmin.x + bmax.x
-	var sum_y: int = bmin.y + bmax.y
-	var new_min_x: int = int(floor(float(sum_x - h + 1) / 2.0))
-	var new_min_y: int = int(floor(float(sum_y - w + 1) / 2.0))
-	var lx: int = cell.x - bmin.x
-	var ly: int = cell.y - bmin.y
-	return Vector2i(new_min_x + (h - 1 - ly), new_min_y + lx)
+		return Rect2i()
+	return Rect2i(min_c, max_c - min_c + Vector2i.ONE)
 
 
 func world_to_cell(local_pos: Vector2) -> Vector2i:
