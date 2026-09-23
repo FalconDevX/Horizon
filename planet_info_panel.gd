@@ -310,12 +310,14 @@ func _stats(body: Node2D) -> Array:
 	return rows
 
 
-static func _duration(seconds: float) -> String:
-	if seconds >= 3600.0:
-		return "%.1f h" % (seconds / 3600.0)
-	if seconds >= 60.0:
-		return "%.1f min" % (seconds / 60.0)
-	return "%.0f s" % seconds
+## A span of simulated time on the game clock (see solar_system.gd's
+## CLOCK_HOURS_PER_SIM_SECOND): hours up to a few days, then days.
+func _duration(sim_seconds: float) -> String:
+	var hours_per_second: float = _system.get_script().get_script_constant_map()["CLOCK_HOURS_PER_SIM_SECOND"]
+	var hours: float = sim_seconds * hours_per_second
+	if hours >= 72.0:
+		return "%.0f days" % (hours / 24.0)
+	return "%.1f h" % hours
 
 
 # ---- drawing ----------------------------------------------------------------

@@ -92,6 +92,19 @@ var trajectory_candidate_status := ""
 var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
+
+## Game calendar. One second of simulation is one hour on the clock, which
+## happens to give Coralyss a year of about 345 days and a 25-hour day.
+const CLOCK_HOURS_PER_SIM_SECOND := 1.0
+const CLOCK_EPOCH := {"year": 2387, "month": 3, "day": 14, "hour": 8, "minute": 0, "second": 0}
+const MONTH_NAMES := ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+## Simulated seconds since the start, advancing with time warp and stopping
+## on pause.
+var sim_time := 0.0
+var _clock_epoch_unix: int = 0
+var _clock_date_label: Label = null
+var _clock_day_label: Label = null
 var previous_time_scale := 1.0
 var simulation_accumulator := 0.0
 var prediction_update_accumulator := 1.0
@@ -412,6 +425,7 @@ func _ready() -> void:
 	pe_gauge.scrolled.connect(change_autopilot_target_pe)
 	ap_gauge.scrolled.connect(change_autopilot_target_ap)
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
+	_build_clock()
 	planet_info_panel.setup(self)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
@@ -456,6 +470,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if _clock_date_label != null:
+		_update_clock()
 	update_screen_space_visuals()
 	update_soi_visuals()
 	update_autopilot_hover_selection()
@@ -2547,6 +2563,38 @@ func _on_ship_clicked() -> void:
 	camera_follow_ship = true
 
 
+## Date and mission-day readout under the panel title.
+func _build_clock() -> void:
+	_clock_epoch_unix = Time.get_unix_time_from_datetime_dict(CLOCK_EPOCH)
+
+	var row := HBoxContainer.new()
+	row.name = "ClockRow"
+	_clock_date_label = Label.new()
+	_clock_date_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clock_date_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_CYAN)
+	_clock_date_label.add_theme_font_size_override("font_size", 13)
+	_clock_day_label = Label.new()
+	_clock_day_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
+	_clock_day_label.add_theme_font_size_override("font_size", 12)
+	row.add_child(_clock_date_label)
+	row.add_child(_clock_day_label)
+
+	var title_row: Node = $HUD/PanelContainer/VBoxContainer/TitleRow
+	title_row.add_sibling(row)
+	_update_clock()
+
+
+func _update_clock() -> void:
+	var hours: float = sim_time * CLOCK_HOURS_PER_SIM_SECOND
+	var now: Dictionary = Time.get_datetime_dict_from_unix_time(
+		_clock_epoch_unix + int(hours * 3600.0)
+	)
+	_clock_date_label.text = "%02d %s %d   %02d:%02d" % [
+		now.day, MONTH_NAMES[now.month - 1], now.year, now.hour, now.minute
+	]
+	_clock_day_label.text = "DAY %d" % (int(hours / 24.0) + 1)
+
+
 func _on_orbit_info_pressed() -> void:
 	if planet_info_panel.visible:
 		planet_info_panel.hide_panel()
@@ -3050,6 +3098,7 @@ func update_soi_visuals() -> void:
 
 func _physics_process(delta: float) -> void:
 	simulation_accumulator += delta * time_scale
+	sim_time += delta * time_scale
 
 	var steps := 0
 
