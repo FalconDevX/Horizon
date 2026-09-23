@@ -74,8 +74,11 @@ var fov_contact: int = 0:
 		queue_redraw()
 
 # Surface. A blob count of 0 means "no surface" - the body falls back to the
-# flat disc, which is what the sun wants. Values are hardcoded per planet in
-# solar_system.tscn for now; a generator will roll them later.
+# flat disc, which is what the sun wants.
+
+## This planet's own seed. Everything is generated from it mixed with the
+## world_seed on the scene root (solar_system.gd), so the same planet comes
+## out different in every world.
 @export var surface_seed: int = 0
 
 ## Draws the body as a star: a churning photosphere and a corona around it
@@ -163,9 +166,10 @@ var surface_style: int = 0
 ## Heightmap terrain (see PlanetTerrain). Anything but None replaces the blob
 ## surface in the running game with a baked heightmap: its own palette, relief,
 ## and - for kinds that have one - a liquid sea. The editor keeps showing the
-## blob preview. Seeded from surface_seed.
+## blob preview. Seeded from generation_seed.
 @export_enum(
-	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant"
+	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant",
+	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis"
 )
 var terrain_kind: int = 0
 
@@ -182,6 +186,10 @@ var velocity: Vector2 = Vector2.ZERO
 ## the whole surface state: a point on the sphere plus a heading, in one value.
 ## Later this stops auto-spinning and gets driven by the landed ship instead.
 var surface_rotation := Quaternion.IDENTITY
+
+## What everything is actually generated from: the world seed mixed with
+## surface_seed. Set before any build.
+var generation_seed: int = 0
 
 var surface_blobs := PackedVector4Array()
 
@@ -213,8 +221,15 @@ var _terrain_task: int = -1
 var _terrain_holder: Dictionary = {}
 var _terrain_key: String = ""
 
+# Bakes started for a world that has since been rerolled. They cannot be
+# cancelled, and a task must be waited on before its id is dropped, so they are
+# reaped in _process once done and their results thrown away.
+var _stale_terrain_tasks: Array[int] = []
+
 
 func _ready() -> void:
+	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
+
 	if not Engine.is_editor_hint():
 		_build_visual_3d()
 
@@ -238,6 +253,10 @@ func _exit_tree() -> void:
 		WorkerThreadPool.wait_for_task_completion(_terrain_task)
 		_terrain_task = -1
 
+	for task in _stale_terrain_tasks:
+		WorkerThreadPool.wait_for_task_completion(task)
+	_stale_terrain_tasks.clear()
+
 
 func _uses_terrain() -> bool:
 	return terrain_kind != PlanetTerrain.Kind.NONE and _sphere_3d != null
@@ -248,6 +267,12 @@ func _process(delta: float) -> void:
 		WorkerThreadPool.wait_for_task_completion(_terrain_task)
 		_terrain_task = -1
 		_apply_terrain(_terrain_holder.get("data", {}))
+
+	for i in range(_stale_terrain_tasks.size() - 1, -1, -1):
+		var task: int = _stale_terrain_tasks[i]
+		if WorkerThreadPool.is_task_completed(task):
+			WorkerThreadPool.wait_for_task_completion(task)
+			_stale_terrain_tasks.remove_at(i)
 
 	# Composing rotations cannot push the surface off the sphere, so there is
 	# nothing to correct afterwards regardless of how surface_spin_axis tilts.
@@ -419,16 +444,16 @@ func build_surface() -> void:
 	var color_count: int = surface_color_count
 
 	if color_count <= 0:
-		color_count = PlanetSurface.roll_color_count(surface_seed)
+		color_count = PlanetSurface.roll_color_count(generation_seed)
 
 	resolved_style = surface_style as PlanetSurface.Style
 
 	if resolved_style == PlanetSurface.Style.AUTO:
-		resolved_style = PlanetSurface.roll_style(surface_seed)
+		resolved_style = PlanetSurface.roll_style(generation_seed)
 
-	surface_palette = PlanetSurface.generate_palette(surface_seed, color_count)
+	surface_palette = PlanetSurface.generate_palette(generation_seed, color_count)
 	surface_blobs = PlanetSurface.generate_blobs(
-		surface_seed, surface_blob_count, surface_palette.size(), resolved_style
+		generation_seed, surface_blob_count, surface_palette.size(), resolved_style
 	)
 
 	var in_3d: bool = _sphere_3d != null
@@ -468,7 +493,7 @@ func build_surface() -> void:
 
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
-	var seed_offset: float = float(surface_seed % 997) * 1.37
+	var seed_offset: float = _seed_offset()
 
 	var photosphere := ShaderMaterial.new()
 	photosphere.shader = STAR_SHADER
@@ -494,7 +519,9 @@ func build_terrain() -> void:
 		return
 
 	var kind := terrain_kind as PlanetTerrain.Kind
-	terrain_params = PlanetTerrain.resolve(kind, surface_seed, terrain_liquid_coverage)
+	terrain_params = PlanetTerrain.resolve(
+		kind, generation_seed, terrain_liquid_coverage, get_world_chaos()
+	)
 	var p: Dictionary = terrain_params
 
 	terrain_material = ShaderMaterial.new()
@@ -509,6 +536,7 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("liquid_shallow", p["shallow"])
 	terrain_material.set_shader_parameter("liquid_deep", p["deep"])
 	terrain_material.set_shader_parameter("liquid_emission", p["emission"])
+	terrain_material.set_shader_parameter("liquid_crust", p["crust"])
 	terrain_material.set_shader_parameter("liquid_gloss", p["gloss"])
 	terrain_material.set_shader_parameter("rock_color", p["rock"])
 	terrain_material.set_shader_parameter("dry_color", p["dry"])
@@ -523,13 +551,14 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("atmo_haze", p["haze"])
 	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
 	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
-	terrain_material.set_shader_parameter("seed_offset", float(surface_seed % 997) * 1.37)
+	terrain_material.set_shader_parameter("seed_offset", _seed_offset())
+	_push_terrain_effects(p)
 
 	_update_visual_bounds()
 	update_surface_scale()
 
 	var resolution: int = terrain_resolution
-	var terrain_seed: int = surface_seed
+	var terrain_seed: int = generation_seed
 	var pole: Vector3 = surface_spin_axis
 	_terrain_key = PlanetTerrain.cache_key(kind, terrain_seed, resolution, pole, p)
 
@@ -548,6 +577,51 @@ func build_terrain() -> void:
 		true,
 		"Bake terrain %s" % body_name
 	)
+
+
+## Lighting character and the drawn-on effects (aurora, glowing cracks,
+## sigils, mist) - all off unless the kind's roll turned them on.
+func _push_terrain_effects(p: Dictionary) -> void:
+	var m: ShaderMaterial = terrain_material
+	m.set_shader_parameter("ambient", p["ambient"])
+	m.set_shader_parameter("light_wrap", p["light_wrap"])
+	m.set_shader_parameter("terminator_softness", p["terminator"])
+	m.set_shader_parameter("shade_contrast", p["shade_contrast"])
+
+	var aurora_colors: Array = p["aurora_colors"]
+	m.set_shader_parameter("aurora_strength", p["aurora"])
+	m.set_shader_parameter("aurora_latitude", p["aurora_latitude"])
+	m.set_shader_parameter("aurora_width", p["aurora_width"])
+	m.set_shader_parameter("aurora_speed", p["aurora_speed"])
+	m.set_shader_parameter("aurora_color_a", aurora_colors[0])
+	m.set_shader_parameter("aurora_color_b", aurora_colors[1])
+	m.set_shader_parameter("aurora_color_c", aurora_colors[2])
+
+	m.set_shader_parameter("crack_strength", p["cracks"])
+	m.set_shader_parameter("crack_color", p["crack_color"])
+	m.set_shader_parameter("crack_scale", p["crack_scale"])
+	m.set_shader_parameter("crack_width", p["crack_width"])
+	m.set_shader_parameter("crack_coverage", p["crack_coverage"])
+
+	var sigils: Dictionary = PlanetTerrain.sigil_arrays(p)
+	m.set_shader_parameter("sigil_count", sigils["count"])
+	m.set_shader_parameter("sigils", sigils["centres"])
+	m.set_shader_parameter("sigil_styles", sigils["styles"])
+	m.set_shader_parameter("sigil_tentacles", sigils["tentacles"])
+	m.set_shader_parameter("sigil_color", p["sigil_color"])
+	m.set_shader_parameter("sigil_glow", p["sigil_glow"])
+
+	m.set_shader_parameter("bud_strength", p["buds"])
+	m.set_shader_parameter("bud_color", p["bud_color"])
+	m.set_shader_parameter("bud_scale", p["bud_scale"])
+	m.set_shader_parameter("bud_size", p["bud_size"])
+	m.set_shader_parameter("bud_spike", p["bud_spike"])
+	m.set_shader_parameter("bud_density", p["bud_density"])
+	m.set_shader_parameter("bud_reach", p["bud_reach"])
+
+	m.set_shader_parameter("mist_strength", p["mist"])
+	m.set_shader_parameter("mist_color", p["mist_color"])
+	m.set_shader_parameter("mist_height", p["mist_height"])
 
 
 func _apply_terrain(data: Dictionary) -> void:
@@ -583,6 +657,55 @@ func is_liquid_at(planet_direction: Vector3) -> bool:
 	return terrain_height_at(planet_direction) < terrain_data["sea_level"]
 
 
+## Generates the body again from scratch, e.g. after the world seed changes.
+## A terrain planet keeps showing its old surface until the new bake lands.
+func rebuild_surface() -> void:
+	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
+
+	if _terrain_task >= 0:
+		_stale_terrain_tasks.append(_terrain_task)
+		_terrain_task = -1
+
+	if _uses_terrain():
+		terrain_material = null
+		terrain_data = {}
+		build_terrain()
+		return
+
+	if surface_sprite != null:
+		surface_sprite.queue_free()
+		surface_sprite = null
+
+	surface_material = null
+
+	if surface_blob_count > 0 and not is_star:
+		build_surface()
+
+
+func get_world_seed() -> int:
+	return int(_world_setting(&"world_seed", 0))
+
+
+func get_world_chaos() -> float:
+	return float(_world_setting(&"planet_chaos", 0.0))
+
+
+## Read from the scene root, which owns every body in solar_system.tscn.
+## A body with no world gets the fallback.
+func _world_setting(setting: StringName, fallback: Variant) -> Variant:
+	if owner == null:
+		return fallback
+
+	var value: Variant = owner.get(setting)
+	return fallback if value == null else value
+
+
+## Offset into the shaders' own noise (clouds, star granulation), so no two
+## bodies share a pattern.
+func _seed_offset() -> float:
+	return float(generation_seed % 997) * 1.37
+
+
 func palette_to_vectors(palette: PackedColorArray, linear: bool) -> PackedVector4Array:
 	var vectors := PackedVector4Array()
 
@@ -605,7 +728,7 @@ func push_surface_textures() -> void:
 	surface_material.set_shader_parameter("use_textures", layers > 0)
 	surface_material.set_shader_parameter("texture_layers", maxi(layers, 1))
 	surface_material.set_shader_parameter(
-		"texture_offset", PlanetSurface.roll_texture_offset(surface_seed, layers)
+		"texture_offset", PlanetSurface.roll_texture_offset(generation_seed, layers)
 	)
 
 
