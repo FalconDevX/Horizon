@@ -23,6 +23,8 @@ enum FloorType {
 @export var base_mass: float = 50.0
 @export var capacity: int = 20
 @export var description: String = ""
+@export var custom_texture: Texture2D = null ## Fixed art asset drawn instead of the procedural grid texture.
+@export var interior_texture: Texture2D = null ## Overrides custom_texture on the build grid once the hull is placed (inventory icon still uses custom_texture).
 
 
 func get_local_floor(local_cell: Vector2i) -> FloorType:
@@ -79,6 +81,8 @@ static func make_light() -> HullData:
 	h.base_mass = 30.0
 	h.capacity = 12
 	h.description = "Light hull, 5x5 - left edge main mounts, other edges RCS mounts."
+	h.custom_texture = load("res://textures/hulls/hull_core.png")
+	h.interior_texture = load("res://textures/hulls/hull_light_interior.png")
 	return h
 
 
@@ -91,6 +95,8 @@ static func make_standard() -> HullData:
 	h.base_mass = 55.0
 	h.capacity = 24
 	h.description = "Standard hull, 7x6 - left edge main mounts, other edges RCS mounts."
+	h.custom_texture = load("res://textures/hulls/hull_standard.png")
+	h.interior_texture = load("res://textures/hulls/hull_standard_interior.png")
 	return h
 
 
@@ -98,9 +104,11 @@ static func make_heavy() -> HullData:
 	var h := HullData.new()
 	h.title = "Heavy"
 	h.hull_type = HullType.HEAVY
-	h.grid_size = Vector2i(9, 7)
+	h.grid_size = Vector2i(14, 7)
 	h.base_durability = 200.0
 	h.base_mass = 90.0
 	h.capacity = 40
-	h.description = "Heavy hull, 9x7 - left edge main mounts, other edges RCS mounts."
+	h.description = "Heavy hull, 14x7 - left edge main mounts, other edges RCS mounts."
+	h.custom_texture = load("res://textures/hulls/hull_heavy.png")
+	h.interior_texture = load("res://textures/hulls/hull_heavy_interior.png")
 	return h

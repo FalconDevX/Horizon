@@ -27,16 +27,22 @@ enum AutopilotPhase {
 @onready var planets_container: Node2D = $Planets
 @onready var ship = $Ship
 @onready var camera: Camera2D = $Camera2D
-@onready var orbit_lines_container: Node2D = $OrbitLines
-@onready var trajectory_prediction: Line2D = $TrajectoryPrediction
-@onready var osculating_orbit_line: Line2D = $OsculatingOrbitLine
-@onready var target_orbit: Line2D = $TargetOrbit
-@onready var interplanetary_route_line: Line2D = $InterplanetaryRoute
-@onready var departure_burn_marker: Node2D = $DepartureBurnMarker
-@onready var transfer_burn_marker: Node2D = $TransferBurnMarker
-@onready var arrival_marker: Node2D = $ArrivalMarker
-@onready var periapsis_marker: Node2D = $PeriapsisMarker
-@onready var apoapsis_marker: Node2D = $ApoapsisMarker
+## Draws the 3D bodies. Slaved to `camera` every frame (see _sync_camera_3d),
+## which stays the authority for everything else: 2D overlays, mouse aiming,
+## clicks, zoom and pan.
+@onready var camera_3d: Camera3D = $Camera3D
+# Everything under BehindWorld used to be drawn before the planets; that layer
+# sits behind the 3D view so it still passes under them.
+@onready var orbit_lines_container: Node2D = $BehindWorld/OrbitLines
+@onready var trajectory_prediction: Line2D = $BehindWorld/TrajectoryPrediction
+@onready var osculating_orbit_line: Line2D = $BehindWorld/OsculatingOrbitLine
+@onready var target_orbit: Line2D = $BehindWorld/TargetOrbit
+@onready var interplanetary_route_line: Line2D = $BehindWorld/InterplanetaryRoute
+@onready var departure_burn_marker: Node2D = $BehindWorld/DepartureBurnMarker
+@onready var transfer_burn_marker: Node2D = $BehindWorld/TransferBurnMarker
+@onready var arrival_marker: Node2D = $BehindWorld/ArrivalMarker
+@onready var periapsis_marker: Node2D = $BehindWorld/PeriapsisMarker
+@onready var apoapsis_marker: Node2D = $BehindWorld/ApoapsisMarker
 @onready var speed_gauge: Control = $HUD/SpeedGauge
 @onready var hud_status: Control = $HUD/HudStatus
 @onready var autopilot_panel: Control = $HUD/AutopilotPanel
@@ -58,6 +64,7 @@ enum AutopilotPhase {
 @onready var settings_menu: Control = $HUD/SettingsMenu
 @onready var pause_menu: Control = $HUD/PauseMenu
 @onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
+@onready var enemy_menu_panel: EnemyMenu = $HUD/EnemyMenuPanel
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
 @onready var background_mask: ColorRect = $Background/BackgroundMask
@@ -78,6 +85,7 @@ const HOME_PLANET_INDEX := 1
 var camera_zoom := 1.0
 var is_dragging := false
 var camera_follow_ship := false
+var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
 var trajectory_candidate_status := ""
@@ -135,6 +143,11 @@ const TARGET_ORBIT_FLASH_FADE := 4.0
 const ZOOM_MIN := 0.001
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
+## On-screen radius, in pixels, above which a body switches to its fine sphere.
+const DETAIL_HIGH_SCREEN_RADIUS := 40.0
+## How far above the orbital plane the top-down 3D camera sits. Only needs to
+## clear the tallest mountain; orthographic, so it does not change the size.
+const CAMERA_3D_HEIGHT := 50000.0
 const ZOOM_STEP := 1.2
 const PREDICTION_STEPS := 6000
 const PREDICTION_DT := 0.8
@@ -229,6 +242,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+		toggle_enemy_menu()
+		get_viewport().set_input_as_handled()
+		return
+
 	if ship_builder_panel != null and ship_builder_panel.visible:
 		return
 
@@ -259,7 +277,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_W:
 			if settings_mgr != null and settings_mgr.auto_drop_warp_on_thrust and time_scale > 1.0:
 				set_time_scale(1.0)
-		elif event.keycode == KEY_SPACE or event.keycode == KEY_P or event.keycode == KEY_0:
+		elif event.keycode == KEY_P or event.keycode == KEY_0:
+			toggle_pause()
+		elif event.keycode == KEY_SPACE and _test_enemy == null:
 			toggle_pause()
 		elif event.keycode == KEY_1:
 			set_time_scale(1.0)
@@ -386,6 +406,7 @@ func _ready() -> void:
 	pause_menu.settings_requested.connect(_on_pause_settings_requested)
 	pause_menu.exit_requested.connect(_on_pause_exit_requested)
 	ship_builder_panel.closed.connect(close_ship_builder)
+	enemy_menu_panel.enemy_selected.connect(_on_enemy_selected)
 	_bind_ship_builder_to_ship()
 	if time_warp_panel != null:
 		var gear_icon: Texture2D = time_warp_panel._load_icon("res://textures/icons/settings.svg")
@@ -424,7 +445,21 @@ func _process(delta: float) -> void:
 
 	if camera_follow_ship:
 		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
-		camera.position = camera.position.lerp(ship.position, catch_up)
+		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
+		camera.position = camera.position.lerp(follow_pos, catch_up)
+
+	_sync_camera_3d()
+
+
+# The top-down orthographic 3D camera shows exactly what the Camera2D shows:
+# the orbital plane (x, y) is the 3D plane (x, 0, z=y), and an ortho `size` is
+# the visible height in world units, which is the 2D view height over zoom.
+func _sync_camera_3d() -> void:
+	# Settle the 2D camera now, so both read the same frame's position.
+	camera.force_update_scroll()
+	var center: Vector2 = camera.get_screen_center_position()
+	camera_3d.position = Vector3(center.x, CAMERA_3D_HEIGHT, center.y)
+	camera_3d.size = get_viewport().get_visible_rect().size.y / camera.zoom.y
 
 
 func update_screen_space_visuals() -> void:
@@ -448,6 +483,7 @@ func update_screen_space_visuals() -> void:
 		)
 		if not is_equal_approx(body.get("visual_radius"), drawn_radius):
 			body.set("visual_radius", drawn_radius)
+		body.call("set_detail_high", drawn_radius * camera_zoom > DETAIL_HIGH_SCREEN_RADIUS)
 
 	var screen_scale := Vector2(inverse_zoom, inverse_zoom)
 	periapsis_marker.scale = screen_scale
@@ -2556,6 +2592,44 @@ func close_ship_builder() -> void:
 	_sync_ship_from_builder()
 
 
+func toggle_enemy_menu() -> void:
+	if enemy_menu_panel == null:
+		return
+	if enemy_menu_panel.visible:
+		enemy_menu_panel.visible = false
+	else:
+		enemy_menu_panel.refresh()
+		enemy_menu_panel.visible = true
+
+
+## Spawns the chosen sandbox enemy at the player ship's position and hands
+## WASD/Space control to it (see simulation_step's _test_enemy guard).
+func _on_enemy_selected(enemy_id: String) -> void:
+	var entry: Dictionary = {}
+	for candidate: Dictionary in EnemyCatalog.all_enemies():
+		if str(candidate.get("id", "")) == enemy_id:
+			entry = candidate
+			break
+	if entry.is_empty():
+		return
+
+	if _test_enemy != null:
+		_test_enemy.queue_free()
+		_test_enemy = null
+
+	var scene: PackedScene = entry.get("scene")
+	if scene == null:
+		return
+
+	var enemy := scene.instantiate() as Enemy
+	ship.get_parent().add_child(enemy)
+	enemy.global_position = ship.global_position
+	enemy.rotation = ship.rotation
+	_test_enemy = enemy
+
+	enemy_menu_panel.visible = false
+
+
 func _bind_ship_builder_to_ship() -> void:
 	_builder_controller = ship_builder_panel as ShipBuilderController
 	if _builder_controller == null:
@@ -2980,6 +3054,12 @@ func _physics_process(delta: float) -> void:
 		for i in range(planets.size()):
 			update_orbit_line(planets[i], orbit_lines[i], i)
 
+	# Global so every planet shader lights itself from the sun without each
+	# body needing to know where the sun is.
+	RenderingServer.global_shader_parameter_set(
+		"sun_position", Vector3(sun.global_position.x, 0.0, sun.global_position.y)
+	)
+
 
 func simulation_step(dt: float) -> void:
 	update_orbit_autopilot(dt)
@@ -2990,17 +3070,20 @@ func simulation_step(dt: float) -> void:
 	var autopilot_on_main_engine: bool = is_autopilot_using_main_engine()
 	var autopilot_thrusting: bool = ship.autopilot_thrust != Vector2.ZERO
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		ship.update_rotation(dt)
-	elif autopilot_on_main_engine:
-		ship.update_autopilot_rotation(dt)
-	else:
-		ship.update_rotation(dt)
+	# While test-flying a sandbox enemy (E menu), the player ship stops reading
+	# WASD/mouse-aim so both craft don't respond to the same keys at once.
+	if _test_enemy == null:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			ship.update_rotation(dt)
+		elif autopilot_on_main_engine:
+			ship.update_autopilot_rotation(dt)
+		else:
+			ship.update_rotation(dt)
 
-	if autopilot_thrusting:
-		ship.disengage_manual_main_engine()
-	else:
-		ship.update_throttle(dt, time_scale <= 1.0)
+		if autopilot_thrusting:
+			ship.disengage_manual_main_engine()
+		else:
+			ship.update_throttle(dt, time_scale <= 1.0)
 
 	var count: int = physics_planets.size()
 

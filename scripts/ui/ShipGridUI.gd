@@ -16,14 +16,14 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var zoom_step: float = 1.12
 @export var valid_tint := Color(0.2, 0.9, 0.35, 0.55)
 @export var invalid_tint := Color(0.95, 0.2, 0.2, 0.55)
-@export var empty_tint := Color(0.1, 0.12, 0.16, 0.85)
-@export var deck_tint := Color(0.22, 0.3, 0.4, 0.85)
-@export var engine_mount_tint := Color(0.45, 0.28, 0.18, 0.9)
-@export var rcs_mount_tint := Color(0.22, 0.42, 0.48, 0.9)
-@export var connector_tint := Color(0.85, 0.7, 0.15, 0.8)
-@export var occupied_tint := Color(0.35, 0.55, 0.85, 0.45)
+@export var empty_tint := Color(0.25, 0.4, 0.7, 0.16)
+@export var deck_tint := Color(0.3, 0.5, 0.85, 0.22)
+@export var engine_mount_tint := Color(0.35, 0.6, 0.95, 0.3)
+@export var rcs_mount_tint := Color(0.3, 0.55, 0.9, 0.26)
+@export var connector_tint := Color(0.4, 0.65, 0.95, 0.26)
+@export var occupied_tint := Color(0.35, 0.55, 0.85, 0.2)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
-@export var mount_tint := Color(0.35, 0.28, 0.22, 0.35) ## subtle hint for weapon-adjacent cells
+@export var mount_tint := Color(0.3, 0.5, 0.85, 0.16) ## subtle hint for weapon-adjacent cells
 @export var weapon_fov_fill := Color(0.9, 0.25, 0.2, 0.18)
 @export var weapon_fov_outline := Color(0.95, 0.4, 0.3, 0.75)
 @export var radar_fov_fill := Color(0.25, 0.75, 0.85, 0.16)
@@ -47,6 +47,7 @@ var _texture_cache: Dictionary = {}
 var _preview: Control ## draws green/red above sprites
 var _scroll_parent: PannableScrollContainer
 var _zoom: float = 1.0
+var _view_rotation_steps: int = 0 ## Cosmetic only — build data & placement logic stay unrotated.
 
 
 func _ready() -> void:
@@ -97,8 +98,7 @@ func _sync_control_size() -> void:
 	var g := ship_hull.get_grid_size()
 	custom_minimum_size = Vector2(g) * cell_size
 	size = custom_minimum_size
-	rotation = 0.0
-	pivot_offset = Vector2.ZERO
+	_apply_view_rotation()
 	if _preview != null:
 		_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_preview.size = size
@@ -107,15 +107,29 @@ func _sync_control_size() -> void:
 		host.refresh()
 
 
-## Rotate placed hulls/modules on the fixed square grid (grid itself stays put).
+## Cosmetic 90°-per-step counter-clockwise spin of the whole view (grid, sprites,
+## preview all inherit this node's transform). Build data and placement logic
+## never see it — Godot delivers _gui_input positions already in local,
+## unrotated space, so mount/edge rules stay left-to-right as always.
 func rotate_view(steps: int = 1) -> void:
 	if ship_hull == null:
 		return
-	ship_hull.rotate_build(steps)
-	_rebuild_all_sprites()
-	queue_redraw()
-	if _preview != null:
-		_preview.queue_redraw()
+	_view_rotation_steps = posmod(_view_rotation_steps + steps, 4)
+	_apply_view_rotation()
+
+
+func _apply_view_rotation() -> void:
+	pivot_offset = _ship_center_px()
+	rotation = -_view_rotation_steps * (PI / 2.0)
+
+
+func _ship_center_px() -> Vector2:
+	if ship_hull == null:
+		return size * 0.5
+	var bounds := ship_hull.get_occupied_bounds()
+	if bounds.size == Vector2i.ZERO:
+		return size * 0.5
+	return (Vector2(bounds.position) + Vector2(bounds.size) * 0.5) * cell_size
 
 
 func bind_hull(hull: ShipHull) -> void:
@@ -414,6 +428,16 @@ func _refresh_hover_validity() -> void:
 		_hover_valid = ship_hull.can_place(_hover_module, _hover_origin, _hover_rotation)
 
 
+## Snaps a cell to integer pixel bounds so adjacent cells always share an edge —
+## plain `Vector2(cell) * cell_size` leaves sub-pixel gaps at fractional zoom levels.
+func _cell_rect(cell: Vector2i) -> Rect2:
+	var x0 := roundi(cell.x * cell_size.x)
+	var y0 := roundi(cell.y * cell_size.y)
+	var x1 := roundi((cell.x + 1) * cell_size.x)
+	var y1 := roundi((cell.y + 1) * cell_size.y)
+	return Rect2(x0, y0, x1 - x0, y1 - y0)
+
+
 func _draw() -> void:
 	if ship_hull == null:
 		return
@@ -422,7 +446,7 @@ func _draw() -> void:
 	for y in grid.y:
 		for x in grid.x:
 			var cell := Vector2i(x, y)
-			var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+			var rect := _cell_rect(cell)
 			var floor := ship_hull.get_floor_type(cell)
 			var fill := empty_tint
 			match floor:
@@ -452,7 +476,7 @@ func _draw_preview() -> void:
 	var shape := _hover_module.get_shape(_hover_rotation)
 	for offset: Vector2i in shape:
 		var cell := _hover_origin + offset
-		var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+		var rect := _cell_rect(cell)
 		var blocked := (
 			not ship_hull.is_cell_in_bounds(cell)
 			or not ship_hull.is_floor_compatible(_hover_module, cell)
@@ -479,7 +503,7 @@ func _draw_preview() -> void:
 			)
 			for off: Vector2i in c_data.get_shape(c_rot):
 				var cell := world_origin + off
-				var rect := Rect2(Vector2(cell) * cell_size, cell_size)
+				var rect := _cell_rect(cell)
 				var tint := valid_tint if _hover_valid else invalid_tint
 				tint.a = 0.4
 				_preview.draw_rect(rect, tint, true)
@@ -595,7 +619,7 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 
 	var tex: Texture2D
 	if data.category == ModuleData.Category.HULL and data.hull_data != null:
-		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x))
+		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x), true)
 	elif rotation == 0 and data.texture != null:
 		tex = data.texture
 	else:

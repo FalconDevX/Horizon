@@ -36,4 +36,12 @@ common/physics_interpolation=true
 [rendering]
 
 rendering_device/driver.windows="d3d12"
+anti_aliasing/quality/msaa_3d=2
 environment/defaults/default_clear_color=Color(0.0885599, 0.08855992, 0.08855987, 1)
+
+[shader_globals]
+
+sun_position={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
