@@ -11,6 +11,7 @@ static func all_buildable_modules() -> Array[ModuleData]:
 	list.append(connector())
 	list.append_array(engines())
 	list.append_array(weapons())
+	list.append_array(radars())
 	list.append_array(shields())
 	list.append_array(utilities())
 	list.append_array(fuel_tanks())
@@ -56,10 +57,20 @@ static func engines() -> Array[ModuleData]:
 
 static func weapons() -> Array[ModuleData]:
 	return [
-		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, _shape_2x1()),
-		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, _shape_2x1()),
-		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, _shape_1x1()),
-		_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, _shape_3x1()),
+		# angle / range tuned per role; range is world SU (builder scales preview).
+		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1()),
+		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1()),
+		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, 12.0, 2800.0, _shape_1x1()),
+		_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1()),
+	]
+
+
+## Deck-mounted sensors. Wider / longer FOV than weapons; no damage.
+static func radars() -> Array[ModuleData]:
+	return [
+		_radar("Proximity Radar", &"radar_proximity", 4.0, 12.0, 2.0, 90.0, 2200.0, _shape_1x1()),
+		_radar("Survey Radar", &"radar_survey", 7.0, 18.0, 4.0, 60.0, 4800.0, _shape_2x1()),
+		_radar("Deep Space Array", &"radar_deep", 14.0, 28.0, 8.0, 35.0, 9000.0, _shape_2x2()),
 	]
 
 
@@ -416,12 +427,32 @@ static func _weapon(
 	accuracy: float,
 	mass: float,
 	energy: float,
+	fov_angle_deg: float,
+	fov_range: float,
 	shape: Array[Vector2i]
 ) -> ModuleData:
 	var m := _base(title, id, ModuleData.Category.WEAPON, mass, 18.0, energy, shape)
 	m.damage = damage
 	m.reload_time = reload
 	m.accuracy = accuracy
+	m.fov_angle_deg = fov_angle_deg
+	m.fov_range = fov_range
+	return m
+
+
+static func _radar(
+	title: String,
+	id: StringName,
+	mass: float,
+	health: float,
+	energy: float,
+	fov_angle_deg: float,
+	fov_range: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _base(title, id, ModuleData.Category.RADAR, mass, health, energy, shape)
+	m.fov_angle_deg = fov_angle_deg
+	m.fov_range = fov_range
 	return m
 
 
@@ -488,6 +519,8 @@ static func _category_color(category: ModuleData.Category) -> Color:
 			return Color(0.2, 0.72, 0.45)
 		ModuleData.Category.SHIELD:
 			return Color(0.45, 0.55, 0.95)
+		ModuleData.Category.RADAR:
+			return Color(0.35, 0.75, 0.85)
 		ModuleData.Category.HULL:
 			return Color(0.45, 0.55, 0.75)
 		ModuleData.Category.CONNECTOR:
@@ -512,10 +545,13 @@ static func _draw_cell_glyph(
 				img.set_pixel(cx + i, cy, mark)
 				img.set_pixel(cx, cy + i, mark)
 		ModuleData.Category.WEAPON:
+			# Barrel along +X (rot 0), tip on the right edge.
 			for i in range(-8, 9):
 				img.set_pixel(cx + i, cy, mark)
 			for i in range(0, 7):
-				img.set_pixel(cx + 4, cy - i, mark)
+				img.set_pixel(cx + 4 + i, cy - 1, mark)
+				img.set_pixel(cx + 4 + i, cy, mark)
+				img.set_pixel(cx + 4 + i, cy + 1, mark)
 		ModuleData.Category.UTILITY:
 			for i in range(-5, 6):
 				for j in range(-5, 6):
@@ -542,6 +578,16 @@ static func _draw_cell_glyph(
 				var y_off: int = int(sqrt(float(49 - i * i)))
 				img.set_pixel(cx + i, cy - y_off, mark)
 				img.set_pixel(cx + i, cy + y_off, mark)
+		ModuleData.Category.RADAR:
+			# Concentric arcs facing up (rot 0).
+			for i in range(-6, 7):
+				var y1: int = cy - int(sqrt(float(max(0, 36 - i * i))))
+				img.set_pixel(cx + i, y1, mark)
+			for i in range(-4, 5):
+				var y2: int = cy - 2 - int(sqrt(float(max(0, 16 - i * i))))
+				img.set_pixel(cx + i, y2, mark)
+			img.set_pixel(cx, cy + 2, mark)
+			img.set_pixel(cx, cy + 3, mark)
 		ModuleData.Category.CONNECTOR:
 			for i in range(-8, 9):
 				img.set_pixel(cx + i, cy, mark)

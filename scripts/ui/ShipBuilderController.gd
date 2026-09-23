@@ -32,6 +32,7 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.BATTERY,
 	ModuleData.Category.SHIELD,
 	ModuleData.Category.WEAPON,
+	ModuleData.Category.RADAR,
 	ModuleData.Category.UTILITY,
 ]
 
@@ -43,6 +44,7 @@ const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.BATTERY: "Batteries",
 	ModuleData.Category.SHIELD: "Shields",
 	ModuleData.Category.WEAPON: "Weapons",
+	ModuleData.Category.RADAR: "Radars",
 	ModuleData.Category.UTILITY: "Utilities",
 }
 
@@ -62,6 +64,12 @@ func get_stats_dictionary() -> Dictionary:
 	if _ship_hull == null:
 		return {}
 	return _ship_hull.get_stats_dictionary()
+
+
+func get_fov_devices() -> Array[Dictionary]:
+	if _ship_hull == null:
+		return []
+	return _ship_hull.get_fov_devices()
 
 
 func _ready() -> void:
@@ -315,6 +323,8 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
 				floor_hint = "next to a deck (not on the floor)"
+			ModuleData.Category.RADAR:
+				floor_hint = "deck"
 			ModuleData.Category.ENGINE:
 				if module.is_corrective_engine:
 					floor_hint = "RCS mount (must touch an RCS edge)"
@@ -323,11 +333,15 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 			_:
 				if module.is_deck_equipment():
 					floor_hint = "deck"
-		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s" % [
+		var fov_hint := ""
+		if module.has_fov():
+			fov_hint = " | FOV %.0f° / %.0f SU" % [module.fov_angle_deg, module.fov_range]
+		_hint.text = "Holding: %s -> %s | rotation %d deg | %dx%d%s%s" % [
 			module.title,
 			floor_hint,
 			rotation * 90,
 			bounds.x,
 			bounds.y,
+			fov_hint,
 			link,
 		]

@@ -56,6 +56,75 @@ func get_stats_dictionary() -> Dictionary:
 	return _cached_stats.to_dictionary()
 
 
+## Runtime FOV payloads for the orbital ship (weapons + radars).
+## Each entry: id, kind, angle_deg, range, local_facing, local_origin, damage, title
+func get_fov_devices() -> Array[Dictionary]:
+	var devices: Array[Dictionary] = []
+	var centroid := _structure_centroid_cells()
+	var hull_rects := get_hull_blocker_rects_local(centroid)
+	for module: PlacedModule in _modules.values():
+		if module.data == null or not module.data.has_fov():
+			continue
+		if not (module.data.is_weapon() or module.data.is_radar()):
+			continue
+		var muzzle: Vector2 = FovUtil.module_muzzle_cell(module.origin, module.data, module.rotation)
+		var offset_cells := muzzle - centroid
+		var kind := "radar" if module.data.is_radar() else "weapon"
+		var ignore_rects: Array = []
+		for cell: Vector2i in module.get_occupied_cells():
+			var c := Vector2(cell) + Vector2(0.5, 0.5) - centroid
+			var local := c * FovUtil.WORLD_UNITS_PER_CELL
+			var half := FovUtil.WORLD_UNITS_PER_CELL * 0.5
+			ignore_rects.append(Rect2(local - Vector2(half, half), Vector2(half, half) * 2.0))
+		devices.append({
+			"id": module.data.id,
+			"title": module.data.title,
+			"kind": kind,
+			"instance_id": module.instance_id,
+			"angle_deg": module.data.fov_angle_deg,
+			"range": module.data.fov_range,
+			"local_facing": FovUtil.local_facing(module.rotation),
+			"local_origin": offset_cells * FovUtil.WORLD_UNITS_PER_CELL,
+			"damage": module.data.damage,
+			"reload_time": module.data.reload_time,
+			"hull_rects": hull_rects,
+			"ignore_rects": ignore_rects,
+		})
+	return devices
+
+
+## Hull + connector cells as local-space AABBs around the build centroid (ship-local units).
+func get_hull_blocker_rects_local(centroid: Vector2 = Vector2.INF) -> Array:
+	if centroid.x == INF:
+		centroid = _structure_centroid_cells()
+	var rects: Array = []
+	var half := FovUtil.WORLD_UNITS_PER_CELL * 0.5
+	for cell: Vector2i in _structure.keys():
+		var c := Vector2(cell) + Vector2(0.5, 0.5) - centroid
+		var local := c * FovUtil.WORLD_UNITS_PER_CELL
+		rects.append(Rect2(local - Vector2(half, half), Vector2(half, half) * 2.0))
+	return rects
+
+
+## Structure cells for shipyard LOS (hull + connector).
+func get_structure_blocker_cells() -> Dictionary:
+	var cells: Dictionary = {}
+	for cell: Vector2i in _structure.keys():
+		cells[cell] = true
+	return cells
+
+
+func _structure_centroid_cells() -> Vector2:
+	var sum := Vector2.ZERO
+	var count := 0
+	for cell: Vector2i in _structure.keys():
+		sum += Vector2(cell) + Vector2(0.5, 0.5)
+		count += 1
+	if count == 0:
+		return Vector2(build_grid_size) * 0.5
+	return sum / float(count)
+
+
 func get_all_modules() -> Array[PlacedModule]:
 	var list: Array[PlacedModule] = []
 	for module: PlacedModule in _modules.values():

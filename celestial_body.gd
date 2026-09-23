@@ -42,6 +42,14 @@ const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 		soi_line_width = value
 		queue_redraw()
 
+## 0 = none, 1 = radar contact, 2 = weapon lock (draw ring in _draw).
+var fov_contact: int = 0:
+	set(value):
+		if fov_contact == value:
+			return
+		fov_contact = value
+		queue_redraw()
+
 # Surface. A blob count of 0 means "no surface" - the body falls back to the
 # flat disc, which is what the sun wants. Values are hardcoded per planet in
 # solar_system.tscn for now; a generator will roll them later.
@@ -333,6 +341,23 @@ func _draw() -> void:
 			128,
 			Color(1, 1, 1, 0.15),
 			soi_line_width
+		)
+
+	if fov_contact > 0:
+		var ring_r: float = draw_radius + maxf(6.0, draw_radius * 0.12)
+		var ring_color := (
+			Color(1.0, 0.4, 0.25, 0.85) if fov_contact >= 2
+			else Color(0.4, 0.9, 1.0, 0.75)
+		)
+		draw_arc(Vector2.ZERO, ring_r, 0.0, TAU, 64, ring_color, maxf(soi_line_width, 1.5))
+		draw_arc(
+			Vector2.ZERO,
+			ring_r + maxf(4.0, soi_line_width * 2.0),
+			0.0,
+			TAU,
+			64,
+			Color(ring_color, ring_color.a * 0.35),
+			maxf(soi_line_width * 0.7, 1.0)
 		)
 
 
