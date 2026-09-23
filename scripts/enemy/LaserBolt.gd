@@ -1,13 +1,15 @@
 class_name LaserBolt
 extends Node2D
 ## Glowing laser bolt fired by enemies - travels forward and fades out.
-## Purely visual for now; no damage/hit detection yet.
+## Carries its damage, but there is no hit detection yet.
 
 @export var velocity: Vector2 = Vector2.ZERO
 @export var lifetime: float = 2.0
 @export var length: float = 14.0
 @export var width: float = 2.2
 @export var color: Color = Color(1.0, 0.15, 0.1, 0.95)
+## What a hit would take off, set by the firing enemy.
+@export var damage: float = 10.0
 
 const FADE_START_FRACTION := 0.55 ## Alpha starts easing to 0 once this much of lifetime has passed.
 
