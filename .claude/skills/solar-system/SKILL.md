@@ -197,6 +197,30 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   Raising either means editing both files. The per-pixel loop is O(blobs), so cost is
   pixels × blobs; past ~512 blobs move to a texture lookup or a spatial structure.
 
+## Heightmap terrain
+
+At runtime a body with `terrain_kind != None` skips the blob surface entirely and
+uses `planet_terrain.gd` (`PlanetTerrain`) + `planet_terrain.gdshader`. The editor
+still shows the blob preview.
+
+- **Kinds** (`PlanetTerrain.Kind`): Terran, Desert, Volcanic, Ice, Barren, Toxic,
+  Gas giant, Ice giant. `preset()` holds each kind's palette (6-stop height
+  gradient), liquid colours/gloss/emission, caps, atmosphere, clouds, relief and
+  noise frequency; `resolve()` drifts hue/sat/value, coverage and frequency per
+  `surface_seed`. Liquid kinds: Terran (water), Volcanic (lava, emissive), Ice,
+  Toxic (acid). `terrain_liquid_coverage` overrides the share (0 = dry).
+- **Heightmap** is baked from FastNoiseLite on `WorkerThreadPool` (~1 s for all 8
+  at 192²) into 6 cube-sphere faces, uploaded as a 6-layer `Texture2DArray`. The
+  face layout is our own (`FACE_FORWARD/RIGHT/UP` ↔ `face_uv()` in the shader),
+  not the GPU cubemap convention; edge texels lie on the cube edges so faces meet
+  without seams. Keep `PlanetTerrain.face_uv()` and the shader's `face_uv()` in sync.
+- Sea level is the height at which `coverage` of the *area* lies below (weighted
+  histogram, cube texels are not equal-area). Liquid is drawn flat at sea level.
+- Bakes are cached statically by `cache_key()` for scene reloads. The body polls the
+  task in `_process` and waits for it in `_exit_tree`.
+- Gameplay: `terrain_height_at(dir)` / `is_liquid_at(dir)` read the same texels.
+- Poles/bands/caps use `surface_spin_axis` as the planet-space pole.
+
 ## Autopilot
 
 The `AutopilotPhase` enum drives everything; `autopilot_phase` is the state variable.
