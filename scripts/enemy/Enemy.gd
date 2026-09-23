@@ -14,16 +14,24 @@ const LASER_BOLT_SCENE := preload("res://scenes/enemies/LaserBolt.tscn")
 @export var turn_speed: float = 2.6
 @export var fire_cooldown: float = 0.35
 @export var laser_speed: float = 420.0
+## How far a bolt flies before it burns out, in world units.
+@export var laser_range: float = 840.0
+## Damage one bolt carries. Nothing is hit yet (see LaserBolt), but each
+## enemy type already states what its guns deal.
+@export var laser_damage: float = 10.0
+@export var laser_width: float = 2.2
+@export var laser_length: float = 14.0
 @export var player_controlled: bool = true
+## Barrel tips in the artwork, as fractions of the nose-up image - one bolt
+## leaves each per shot.
+@export var muzzles: PackedVector2Array = PackedVector2Array([Vector2(0.32, 0.24), Vector2(0.68, 0.24)])
+## Engine nozzles in the artwork, same space - a flame burns behind each.
+@export var engine_exits: PackedVector2Array = PackedVector2Array([Vector2(0.5, 0.94)])
+@export var engine_half_width: float = 3.0
 
-const ENGINE_OUTER_HALF_WIDTH := 3.0
 const FLAME_OUTER_COLOR := Color(1.0, 0.15, 0.1)
 const FLAME_MID_COLOR := Color(1.0, 0.3, 0.15)
 const FLAME_CORE_COLOR := Color(1.0, 0.55, 0.35)
-const ENGINE_EXIT_POS := Vector2(0.5, 0.94) ## fraction of the sprite, nose-up image space
-## The two wing-cannon barrel tips visible in the artwork - one laser fires from each.
-const LASER_LEFT_POS := Vector2(0.32, 0.24)
-const LASER_RIGHT_POS := Vector2(0.68, 0.24)
 
 var _throttle := 0.0
 var _fire_timer := 0.0
@@ -68,9 +76,13 @@ func fire_laser() -> void:
 		return
 	var dir := Vector2.RIGHT.rotated(rotation)
 	var draw_size := _get_draw_size()
-	for frac in [LASER_LEFT_POS, LASER_RIGHT_POS]:
+	for frac in muzzles:
 		var muzzle_local: Vector2 = _image_to_local(frac, draw_size)
 		var bolt := LASER_BOLT_SCENE.instantiate() as LaserBolt
+		bolt.lifetime = laser_range / laser_speed
+		bolt.damage = laser_damage
+		bolt.width = laser_width
+		bolt.length = laser_length
 		get_parent().add_child(bolt)
 		bolt.global_position = global_position + muzzle_local.rotated(rotation)
 		bolt.velocity = dir * laser_speed
@@ -92,7 +104,8 @@ func _draw() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	if _throttle > 0.05:
-		_draw_engine_flame(_image_to_local(ENGINE_EXIT_POS, draw_size))
+		for exit in engine_exits:
+			_draw_engine_flame(_image_to_local(exit, draw_size))
 
 
 func _image_to_local(frac: Vector2, draw_size: Vector2) -> Vector2:
@@ -110,17 +123,17 @@ func _draw_engine_flame(tip: Vector2) -> void:
 	var length: float = 11.0 * absf(_throttle) * flicker
 
 	_draw_wavy_flame(
-		tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t,
+		tip, direction, side, engine_half_width, length, t,
 		Color(FLAME_OUTER_COLOR, 0.55 * flicker)
 	)
 
-	var mid_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.75
+	var mid_half_width: float = engine_half_width * 0.75
 	_draw_wavy_flame(
 		tip, direction, side, mid_half_width, length * 0.8, t + 3.1,
 		Color(FLAME_MID_COLOR, 0.7 * flicker)
 	)
 
-	var inner_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.4
+	var inner_half_width: float = engine_half_width * 0.4
 	draw_colored_polygon(
 		PackedVector2Array([
 			tip + side * inner_half_width,
@@ -130,7 +143,7 @@ func _draw_engine_flame(tip: Vector2) -> void:
 		Color(FLAME_CORE_COLOR, 0.95 * flicker)
 	)
 
-	_draw_sparks(tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t, Color(1.0, 0.5, 0.3))
+	_draw_sparks(tip, direction, side, engine_half_width, length, t, Color(1.0, 0.5, 0.3))
 
 
 func _draw_wavy_flame(
@@ -145,7 +158,9 @@ func _draw_wavy_flame(
 		var pos: Vector2 = tip + direction * (length * f)
 		var taper: float = 1.0 - f
 		var wobble: float = sin(t * 16.0 + f * 6.0) * half_width * 0.2 * f
-		var width: float = half_width * taper + wobble
+		# Kept above zero: a negative width crosses the outline over itself
+		# and the polygon fails to triangulate.
+		var width: float = maxf(half_width * taper + wobble, 0.05)
 		left_points.append(pos + side * width)
 		right_points.append(pos - side * width)
 

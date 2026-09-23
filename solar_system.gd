@@ -96,6 +96,13 @@ const HOME_PLANET_INDEX := 1
 var camera_zoom := 1.0
 var is_dragging := false
 var camera_follow_ship := false
+## The body the camera stays centred on after it was clicked, until the view is
+## panned (middle mouse) or released with the period key. Null = none.
+var camera_follow_body: Node2D = null
+
+## Extra reach, in screen pixels, for clicking a body drawn only a few pixels
+## across.
+const BODY_PICK_SCREEN_RADIUS := 14.0
 var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
@@ -103,6 +110,19 @@ var trajectory_candidate_status := ""
 var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
+
+## Game calendar. One second of simulation is one hour on the clock, which
+## happens to give Coralyss a year of about 345 days and a 25-hour day.
+const CLOCK_HOURS_PER_SIM_SECOND := 1.0
+const CLOCK_EPOCH := {"year": 2387, "month": 3, "day": 14, "hour": 8, "minute": 0, "second": 0}
+const MONTH_NAMES := ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+## Simulated seconds since the start, advancing with time warp and stopping
+## on pause.
+var sim_time := 0.0
+var _clock_epoch_unix: int = 0
+var _clock_date_label: Label = null
+var _clock_day_label: Label = null
 var previous_time_scale := 1.0
 var simulation_accumulator := 0.0
 var prediction_update_accumulator := 1.0
@@ -231,6 +251,31 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# The planet catalog sits over everything and keeps the keyboard to itself.
+	if planet_info_panel.visible:
+		if event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_ESCAPE or event.keycode == KEY_I
+		):
+			planet_info_panel.hide_panel()
+			get_viewport().set_input_as_handled()
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_DOWN or event.keycode == KEY_UP):
+			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
+			get_viewport().set_input_as_handled()
+		return
+
+	if (
+		event is InputEventKey
+		and event.pressed
+		and not event.echo
+		and event.keycode == KEY_I
+		and (ship_builder_panel == null or not ship_builder_panel.visible)
+		and (pause_menu == null or not pause_menu.visible)
+		and (settings_menu == null or not settings_menu.visible)
+	):
+		planet_info_panel.toggle()
+		get_viewport().set_input_as_handled()
+		return
+
 	if (
 		event is InputEventKey
 		and event.pressed
@@ -307,7 +352,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_7:
 			set_time_scale(200.0)
 		elif event.keycode == KEY_PERIOD:
-			camera_follow_ship = not camera_follow_ship
+			if camera_follow_body != null:
+				camera_follow_body = null
+			else:
+				camera_follow_ship = not camera_follow_ship
 		elif event.keycode == KEY_N:
 			reroll_world()
 
@@ -339,6 +387,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			is_dragging = event.pressed
 
 			if event.pressed:
+				camera_follow_ship = false
+				camera_follow_body = null
+
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			var picked: Node2D = _body_under_mouse()
+			if picked != null:
+				camera_follow_body = picked
 				camera_follow_ship = false
 
 	if event is InputEventMouseMotion and is_dragging:
@@ -416,6 +471,8 @@ func _ready() -> void:
 	pe_gauge.scrolled.connect(change_autopilot_target_pe)
 	ap_gauge.scrolled.connect(change_autopilot_target_ap)
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
+	_build_clock()
+	planet_info_panel.setup(self)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -459,6 +516,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if _clock_date_label != null:
+		_update_clock()
 	update_screen_space_visuals()
 	update_soi_visuals()
 	update_autopilot_hover_selection()
@@ -472,7 +531,10 @@ func _process(delta: float) -> void:
 	update_fov_gameplay()
 	update_hud()
 
-	if camera_follow_ship:
+	if camera_follow_body != null:
+		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
+		camera.position = camera.position.lerp(camera_follow_body.global_position, catch_up_body)
+	elif camera_follow_ship:
 		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
 		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
 		camera.position = camera.position.lerp(follow_pos, catch_up)
@@ -2548,6 +2610,55 @@ func update_trajectory_status(
 
 func _on_ship_clicked() -> void:
 	camera_follow_ship = true
+	camera_follow_body = null
+
+
+## The sun or planet drawn under the mouse, if any - the nearest one when
+## several overlap the click.
+func _body_under_mouse() -> Node2D:
+	var point: Vector2 = get_global_mouse_position()
+	var pick_reach: float = BODY_PICK_SCREEN_RADIUS / camera_zoom
+	var best: Node2D = null
+	var best_distance: float = INF
+	for body in celestial_bodies:
+		var drawn_radius: float = body.get("visual_radius")
+		var distance: float = point.distance_to(body.global_position)
+		if distance <= drawn_radius + pick_reach and distance < best_distance:
+			best = body
+			best_distance = distance
+	return best
+
+
+## Date and mission-day readout under the panel title.
+func _build_clock() -> void:
+	_clock_epoch_unix = Time.get_unix_time_from_datetime_dict(CLOCK_EPOCH)
+
+	var row := HBoxContainer.new()
+	row.name = "ClockRow"
+	_clock_date_label = Label.new()
+	_clock_date_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clock_date_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_CYAN)
+	_clock_date_label.add_theme_font_size_override("font_size", 13)
+	_clock_day_label = Label.new()
+	_clock_day_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
+	_clock_day_label.add_theme_font_size_override("font_size", 12)
+	row.add_child(_clock_date_label)
+	row.add_child(_clock_day_label)
+
+	var title_row: Node = $HUD/PanelContainer/VBoxContainer/TitleRow
+	title_row.add_sibling(row)
+	_update_clock()
+
+
+func _update_clock() -> void:
+	var hours: float = sim_time * CLOCK_HOURS_PER_SIM_SECOND
+	var now: Dictionary = Time.get_datetime_dict_from_unix_time(
+		_clock_epoch_unix + int(hours * 3600.0)
+	)
+	_clock_date_label.text = "%02d %s %d   %02d:%02d" % [
+		now.day, MONTH_NAMES[now.month - 1], now.year, now.hour, now.minute
+	]
+	_clock_day_label.text = "DAY %d" % (int(hours / 24.0) + 1)
 
 
 func _on_orbit_info_pressed() -> void:
@@ -2555,19 +2666,7 @@ func _on_orbit_info_pressed() -> void:
 		planet_info_panel.hide_panel()
 		return
 
-	var body: Node2D = get_current_orbit_body()
-	var is_sun: bool = body == sun
-	var body_radius: float = body.get("radius")
-
-	planet_info_panel.show_body(
-		get_body_name(body),
-		body.get("color"),
-		body_radius,
-		body.get("mass"),
-		0.0 if is_sun else get_soi_radius(body),
-		body.get("atmosphere"),
-		is_sun
-	)
+	planet_info_panel.open_on(get_current_orbit_body())
 
 
 func toggle_settings_menu() -> void:
@@ -3065,6 +3164,7 @@ func update_soi_visuals() -> void:
 
 func _physics_process(delta: float) -> void:
 	simulation_accumulator += delta * time_scale
+	sim_time += delta * time_scale
 
 	var steps := 0
 

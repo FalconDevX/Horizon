@@ -3,23 +3,21 @@ render_mode unshaded, cull_back;
 
 // The photosphere of a star, on the same unit cube-sphere as the planets.
 // Convection granules (animated Worley cells) over slow supergranulation,
-// sunspots with umbra and penumbra in the active latitudes, bright faculae
+// sunspot groups with umbra and penumbra plus scattered pores, bright faculae
 // toward the limb, and limb darkening that also reddens the edge. Written in
 // HDR, above 1, so the environment's glow blooms it.
 
 uniform vec3 star_color : source_color = vec3(1.0, 0.85, 0.3);
 // Overall brightness; the centre of the disc reaches roughly this. The
-// tonemapper is linear, so much past 1 just clips to white - kept a touch over
-// so the middle blooms while the granules still show.
-uniform float intensity : hint_range(0.5, 8.0) = 1.25;
+// tonemapper is linear, so past 1 it clips toward white: the disc is meant to
+// glare, with its granules and pores only just showing through.
+uniform float intensity : hint_range(0.5, 8.0) = 1.75;
 // Limb darkening coefficient (linear law): 0 = flat disc, ~0.6 = the Sun.
-uniform float limb_darkening : hint_range(0.0, 1.0) = 0.62;
+uniform float limb_darkening : hint_range(0.0, 1.0) = 0.5;
 uniform float granule_scale = 70.0;
 uniform float granule_speed = 0.25;
 uniform float spot_amount : hint_range(0.0, 1.0) = 0.5;
 uniform float seed_offset = 0.0;
-// The spin axis in object space - sunspots sit either side of its equator.
-uniform vec3 pole_axis = vec3(0.0, 1.0, 0.0);
 
 // Orthonormal twist between octaves, so their lattices never line up.
 const mat3 ROT = mat3(
@@ -136,15 +134,32 @@ void fragment() {
 	// Supergranulation and slow brightness drift.
 	float large = fbm(d + seed_offset + vec3(0.0, time * 0.02, 0.0), 4, 6.0, footprint);
 
-	// Sunspots: rare, in the mid latitudes of both hemispheres.
-	float latitude = dot(d, pole_axis);
-	float belt = exp(-pow((abs(latitude) - 0.3) / 0.14, 2.0));
-	float activity = fbm(d * 1.0 + seed_offset * 0.7 + vec3(time * 0.004), 5, 4.5, footprint) + belt * 0.28;
-	float spot_threshold = mix(0.6, 0.28, spot_amount);
+	// Sunspot groups and scattered pores, all over the disc. (No active
+	// latitude belt: the game looks down the spin axis, where a belt would
+	// only ever show as a ring round the limb.)
+	float activity = fbm(d + seed_offset * 0.7 + vec3(time * 0.004), 5, 3.8, footprint);
+	float spot_threshold = mix(0.3, 0.12, spot_amount);
 	float penumbra = smoothstep(spot_threshold, spot_threshold + 0.035, activity);
 	float umbra = smoothstep(spot_threshold + 0.05, spot_threshold + 0.08, activity);
-	// Faculae: bright plage around the active regions.
-	float faculae = smoothstep(spot_threshold - 0.12, spot_threshold - 0.02, activity) * (1.0 - penumbra);
+	// Scattered small spots and pores.
+	float pores = fbm(d + seed_offset * 1.3 + vec3(0.0, time * 0.006, 0.0), 3, 22.0, footprint);
+	float small = smoothstep(0.24, 0.3, pores) * octave_fade(22.0, footprint * 2.0);
+	// Foreshortened to nothing near the limb, where they would only read as
+	// dirt in the bright faculae.
+	vec3 V_early = normalize(INV_VIEW_MATRIX[2].xyz);
+	float face_on = smoothstep(0.25, 0.55, dot(normalize((MODEL_MATRIX * vec4(d, 0.0)).xyz), V_early));
+	penumbra = max(penumbra * face_on, small * 0.8 * face_on);
+	umbra *= face_on;
+	umbra = max(umbra, smoothstep(0.3, 0.34, pores) * octave_fade(22.0, footprint * 2.0) * face_on);
+	// Faculae: bright plage around active regions, patchy, showing mostly
+	// toward the limb where the disc around them has darkened.
+	float plage = fbm(d + seed_offset * 2.1, 3, 9.0, footprint);
+	float faculae = max(
+		smoothstep(spot_threshold - 0.12, spot_threshold - 0.02, activity) * (1.0 - penumbra),
+		smoothstep(0.08, 0.3, plage) * 0.8
+	);
+	// Mottling: warm red-orange patches drifting over the surface.
+	float mottle = fbm(d + seed_offset * 0.4 + vec3(time * 0.003), 4, 3.5, footprint);
 
 	// ---- limb ----
 	vec3 V = normalize(INV_VIEW_MATRIX[2].xyz);
@@ -153,16 +168,19 @@ void fragment() {
 	float limb = 1.0 - limb_darkening * (1.0 - pow(mu, 0.8));
 
 	// Hotter centre whitens, cooler limb reddens.
-	vec3 hot = mix(star_color, vec3(1.0), 0.18);
+	vec3 hot = mix(star_color * vec3(1.0, 0.86, 0.62), vec3(1.0), 0.1);
 	vec3 cool = star_color * vec3(1.0, 0.55, 0.28);
 	vec3 col = mix(cool, hot, pow(mu, 0.45));
 
 	float brightness = intensity * limb;
-	brightness *= 0.62 + 0.62 * granule;
+	brightness *= 0.82 + 0.3 * granule;
 	brightness *= 1.0 + large * 0.35;
-	brightness *= 1.0 + faculae * 0.35 * (1.0 - mu * 0.6);
-	brightness *= mix(1.0, 0.45, penumbra);
-	brightness *= mix(1.0, 0.25, umbra);
+	brightness *= 1.0 + faculae * 0.4 * pow(1.0 - mu, 1.5);
+	brightness *= mix(1.0, 0.6, penumbra);
+	brightness *= mix(1.0, 0.4, umbra);
+
+	col = mix(col, star_color * vec3(1.0, 0.5, 0.22), smoothstep(-0.05, 0.25, mottle) * 0.45);
+	col = mix(col, vec3(1.0, 0.93, 0.75), faculae * pow(1.0 - mu, 1.2) * 0.35);
 
 	// Spots are cooler, so redder as well as darker.
 	col = mix(col, star_color * vec3(1.0, 0.55, 0.3), penumbra * 0.7);
