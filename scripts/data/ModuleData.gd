@@ -31,6 +31,8 @@ enum Category {
 @export var thrust: float = 0.0
 @export var fuel_consumption: float = 0.0
 @export var max_heat: float = 100.0
+## When true, this engine is RCS-only and mounts on RCS_MOUNT tiles.
+@export var is_corrective_engine: bool = false
 
 @export_group("Weapon")
 @export var damage: float = 0.0
@@ -66,6 +68,7 @@ func is_equipment() -> bool:
 
 
 ## Engines, utilities, tanks, batteries and shields mount on hull deck cells.
+## Main engines must cover an ENGINE_MOUNT; corrective engines must cover an RCS_MOUNT.
 func is_deck_equipment() -> bool:
 	return (
 		category == Category.ENGINE
@@ -74,6 +77,14 @@ func is_deck_equipment() -> bool:
 		or category == Category.BATTERY
 		or category == Category.SHIELD
 	)
+
+
+func is_main_engine() -> bool:
+	return category == Category.ENGINE and not is_corrective_engine
+
+
+func is_rcs_engine() -> bool:
+	return category == Category.ENGINE and is_corrective_engine
 
 
 func get_cell_count() -> int:

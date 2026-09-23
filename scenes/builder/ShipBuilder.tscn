@@ -66,11 +66,22 @@ text = "Ship Workshop"
 layout_mode = 2
 theme_override_constants/separation = 2
 
-[node name="CenterViewButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup"]
+[node name="ViewButtons" type="HBoxContainer" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="CenterViewButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup/ViewButtons"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Center View"
 tooltip_text = "Center the build area. Pan: middle mouse button."
+
+[node name="RotateViewButton" type="Button" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup/ViewButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Rotate View"
+tooltip_text = "Rotate the ship 90° in place around its center."
 
 [node name="Hint" type="Label" parent="Margin/RootHBox/LeftColumn/TitleRow/CenterViewGroup"]
 unique_name_in_owner = true
@@ -106,7 +117,7 @@ grid_path = NodePath("ShipGridUI")
 
 [node name="ShipGridUI" type="Control" parent="Margin/RootHBox/LeftColumn/GridScroll/BuildAreaHost"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(1280, 896)
+custom_minimum_size = Vector2(1280, 1280)
 layout_mode = 0
 script = ExtResource("3_grid")
 cell_size = Vector2(32, 32)
@@ -115,7 +126,7 @@ base_cell_size = 32.0
 [node name="ShipHull" type="Node2D" parent="Margin/RootHBox/LeftColumn/GridScroll/BuildAreaHost/ShipGridUI"]
 unique_name_in_owner = true
 script = ExtResource("2_hull")
-build_grid_size = Vector2i(40, 28)
+build_grid_size = Vector2i(40, 40)
 cell_size = Vector2(32, 32)
 
 [node name="BayResizeHandle" type="ColorRect" parent="Margin/RootHBox/LeftColumn"]

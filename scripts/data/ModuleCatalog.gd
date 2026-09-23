@@ -49,6 +49,8 @@ static func engines() -> Array[ModuleData]:
 		_engine("Plasma", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
 		# Fusion:          thrust ***** fuel *      energy ***** mass *****
 		_engine("Fusion", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
+		# Corrective / RCS — mounts on the three RCS edges only.
+		_corrective_engine("Corrective Engine", &"engine_corrective", 4.0, 0.8, 1.0, 2.0, 60.0, _shape_1x1()),
 	]
 
 
@@ -321,22 +323,39 @@ static func make_shape_texture(
 
 
 static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = CELL_PX) -> Texture2D:
-	var shape := ModuleData.rotate_shape(hull.make_rect_shape(), rotation)
-	var bounds := ModuleData.bounding_size_of(shape)
+	var local_shape := hull.make_rect_shape()
+	var placed: Array[Vector2i] = []
+	placed.resize(local_shape.size())
+	for i in local_shape.size():
+		placed[i] = ShipHull.local_to_world_delta(local_shape[i], rotation, hull)
+	var bounds := ModuleData.bounding_size_of(placed)
 	var img := Image.create(bounds.x * cell_px, bounds.y * cell_px, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 
 	var deck := Color(0.32, 0.4, 0.52)
-	for c: Vector2i in shape:
+	var mount := Color(0.55, 0.34, 0.22)
+	var rcs := Color(0.28, 0.48, 0.55)
+	for i in local_shape.size():
+		var local: Vector2i = local_shape[i]
+		var c: Vector2i = placed[i]
+		var floor := hull.get_local_floor(local)
+		var base := deck
+		match floor:
+			HullData.FloorType.ENGINE_MOUNT:
+				base = mount
+			HullData.FloorType.RCS_MOUNT:
+				base = rcs
+			_:
+				base = deck
 		var ox := c.x * cell_px
 		var oy := c.y * cell_px
 		for py in cell_px:
 			for px in cell_px:
-				var color := deck
+				var color := base
 				if px < 2 or py < 2 or px >= cell_px - 2 or py >= cell_px - 2:
-					color = deck.darkened(0.25)
+					color = base.darkened(0.25)
 				elif px > 3 and py > 3 and px < cell_px - 4 and py < cell_px - 4:
-					color = deck.lightened(0.06)
+					color = base.lightened(0.06)
 				img.set_pixel(ox + px, oy + py, color)
 	return ImageTexture.create_from_image(img)
 
@@ -369,6 +388,23 @@ static func _engine(
 	m.thrust = thrust
 	m.fuel_consumption = fuel
 	m.max_heat = max_heat
+	m.is_corrective_engine = false
+	return m
+
+
+static func _corrective_engine(
+	title: String,
+	id: StringName,
+	thrust: float,
+	fuel: float,
+	energy: float,
+	mass: float,
+	max_heat: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	var m := _engine(title, id, thrust, fuel, energy, mass, max_heat, shape)
+	m.is_corrective_engine = true
+	m.health = 18.0
 	return m
 
 

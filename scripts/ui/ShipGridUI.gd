@@ -18,6 +18,8 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var invalid_tint := Color(0.95, 0.2, 0.2, 0.55)
 @export var empty_tint := Color(0.1, 0.12, 0.16, 0.85)
 @export var deck_tint := Color(0.22, 0.3, 0.4, 0.85)
+@export var engine_mount_tint := Color(0.45, 0.28, 0.18, 0.9)
+@export var rcs_mount_tint := Color(0.22, 0.42, 0.48, 0.9)
 @export var connector_tint := Color(0.85, 0.7, 0.15, 0.8)
 @export var occupied_tint := Color(0.35, 0.55, 0.85, 0.45)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
@@ -89,12 +91,25 @@ func _sync_control_size() -> void:
 	var g := ship_hull.get_grid_size()
 	custom_minimum_size = Vector2(g) * cell_size
 	size = custom_minimum_size
+	rotation = 0.0
+	pivot_offset = Vector2.ZERO
 	if _preview != null:
 		_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_preview.size = size
 	var host := get_parent() as BuildAreaHost
 	if host != null:
 		host.refresh()
+
+
+## Rotate placed hulls/modules on the fixed square grid (grid itself stays put).
+func rotate_view(steps: int = 1) -> void:
+	if ship_hull == null:
+		return
+	ship_hull.rotate_build(steps)
+	_rebuild_all_sprites()
+	queue_redraw()
+	if _preview != null:
+		_preview.queue_redraw()
 
 
 func bind_hull(hull: ShipHull) -> void:
@@ -404,6 +419,10 @@ func _draw() -> void:
 			match floor:
 				HullData.FloorType.DECK:
 					fill = deck_tint
+				HullData.FloorType.ENGINE_MOUNT:
+					fill = engine_mount_tint
+				HullData.FloorType.RCS_MOUNT:
+					fill = rcs_mount_tint
 				HullData.FloorType.CONNECTOR:
 					fill = connector_tint
 				_:

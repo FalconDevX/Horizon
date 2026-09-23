@@ -15,6 +15,7 @@ signal closed
 @onready var _right_column: Control = %RightColumn
 @onready var _grid_scroll: PannableScrollContainer = %GridScroll
 @onready var _center_view_btn: Button = %CenterViewButton
+@onready var _rotate_view_btn: Button = %RotateViewButton
 @onready var _close_btn: Button = %CloseButton
 @onready var _title: Label = %Title
 @onready var _exit_confirm: Control = %ExitConfirm
@@ -83,6 +84,8 @@ func _ready() -> void:
 
 	if _center_view_btn != null:
 		_center_view_btn.pressed.connect(_on_center_view_pressed)
+	if _rotate_view_btn != null:
+		_rotate_view_btn.pressed.connect(_on_rotate_view_pressed)
 
 	if _close_btn != null:
 		_close_btn.pressed.connect(_show_exit_confirm)
@@ -100,6 +103,11 @@ func _ready() -> void:
 func _on_center_view_pressed() -> void:
 	if _grid_scroll != null:
 		_grid_scroll.center_view()
+
+
+func _on_rotate_view_pressed() -> void:
+	if _grid_ui != null:
+		_grid_ui.rotate_view(1)
 
 
 func _show_exit_confirm() -> void:
@@ -147,6 +155,7 @@ func _style_chrome() -> void:
 		_hint.add_theme_font_size_override("font_size", 11)
 		_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
 	_style_topbar_button(_center_view_btn)
+	_style_topbar_button(_rotate_view_btn)
 	_style_topbar_button(_close_btn)
 	_style_exit_confirm()
 
@@ -306,6 +315,11 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
 				floor_hint = "next to a deck (not on the floor)"
+			ModuleData.Category.ENGINE:
+				if module.is_corrective_engine:
+					floor_hint = "RCS mount (must touch an RCS edge)"
+				else:
+					floor_hint = "deck / mounts (must touch a main engine mount)"
 			_:
 				if module.is_deck_equipment():
 					floor_hint = "deck"

@@ -6,6 +6,7 @@ var mass: float = 0.0
 var health: float = 0.0
 var durability: float = 0.0
 var thrust: float = 0.0
+var correction_thrust: float = 0.0
 var fuel_consumption: float = 0.0
 var fuel_capacity: float = 0.0
 var energy_consumption: float = 0.0
@@ -27,6 +28,7 @@ func to_dictionary() -> Dictionary:
 		"health": health,
 		"durability": durability,
 		"thrust": thrust,
+		"correction_thrust": correction_thrust,
 		"fuel_consumption": fuel_consumption,
 		"fuel_capacity": fuel_capacity,
 		"energy_consumption": energy_consumption,
@@ -51,6 +53,7 @@ func duplicate_stats() -> ShipStats:
 	copy.health = health
 	copy.durability = durability
 	copy.thrust = thrust
+	copy.correction_thrust = correction_thrust
 	copy.fuel_consumption = fuel_consumption
 	copy.fuel_capacity = fuel_capacity
 	copy.energy_consumption = energy_consumption

@@ -17,6 +17,7 @@ const DISPLAY_KEYS: Array[String] = [
 	"durability",
 	"health",
 	"thrust",
+	"correction_thrust",
 	"fuel_consumption",
 	"fuel_capacity",
 	"energy_consumption",

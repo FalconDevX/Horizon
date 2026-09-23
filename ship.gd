@@ -68,7 +68,9 @@ func apply_module_stats(stats: Dictionary) -> void:
 
 	ship_mass = maxf(float(stats.get("mass", 0.0)), MIN_SHIP_MASS)
 	thrust_force = maxf(float(stats.get("thrust", 0.0)), 0.0)
-	correction_thrust_force = thrust_force * RCS_THRUST_RATIO
+	var rcs: float = maxf(float(stats.get("correction_thrust", 0.0)), 0.0)
+	# Fallback keeps attitude control usable before any Corrective Engine is fitted.
+	correction_thrust_force = rcs if rcs > 0.0 else thrust_force * RCS_THRUST_RATIO
 	fuel_consumption = maxf(float(stats.get("fuel_consumption", 0.0)), 0.0)
 	fuel_capacity = maxf(float(stats.get("fuel_capacity", 0.0)), 0.0)
 	energy_consumption = maxf(float(stats.get("energy_consumption", 0.0)), 0.0)
