@@ -120,6 +120,12 @@ const MONTH_NAMES := ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "S
 ## Simulated seconds since the start, advancing with time warp and stopping
 ## on pause.
 var sim_time := 0.0
+
+## Clock for the planet shaders' animation (clouds, waves, lava, the sun's
+## granules): follows game time and stops on pause, but runs no faster than
+## real time under warp - clouds sweeping round 200x would only flicker.
+var planet_visual_time := 0.0
+const PLANET_VISUAL_MAX_RATE := 1.0
 var _clock_epoch_unix: int = 0
 var _clock_date_label: Label = null
 var _clock_day_label: Label = null
@@ -516,6 +522,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	planet_visual_time += delta * minf(time_scale, PLANET_VISUAL_MAX_RATE)
+	RenderingServer.global_shader_parameter_set("planet_time", planet_visual_time)
 	if _clock_date_label != null:
 		_update_clock()
 	update_screen_space_visuals()

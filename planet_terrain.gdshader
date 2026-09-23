@@ -472,7 +472,7 @@ vec3 aurora_at(vec3 d, float latitude) {
 	vec3 e2 = cross(pole_axis, e1);
 	float lon = atan(dot(d, e2), dot(d, e1));
 	vec2 ring = vec2(cos(lon), sin(lon));
-	float t = TIME * aurora_speed;
+	float t = planet_time * aurora_speed;
 
 	float body = clamp(0.5 + noised(vec3(ring * 6.0, t) + seed_offset).x * 1.4, 0.0, 1.0);
 	float streak = pow(0.5 + 0.5 * sin(lon * 40.0 + noised(vec3(ring * 3.0, t * 0.7)).x * 8.0), 3.0);
@@ -583,14 +583,14 @@ void fragment() {
 			if (liquid_emission > 0.0) {
 				// Lava: a cooling crust drifting over the glow.
 				float crust = smoothstep(-0.05, 0.15,
-					fbm(d + vec3(0.0, TIME * 0.002, 0.0), 4, 60.0, footprint)) * liquid_crust;
+					fbm(d + vec3(0.0, planet_time * 0.002, 0.0), 4, 60.0, footprint)) * liquid_crust;
 				col = mix(col, rock_color * 0.5, crust * 0.85);
 				glow = liquid_emission * (1.0 - crust * 0.9) * mix(1.0, 0.55, depth);
 				gloss *= 1.0 - crust;
 			} else {
 				// Surf where the sea is shallowest.
 				float surf = (1.0 - smoothstep(0.0, 0.012, depth))
-					* smoothstep(0.35, 0.75, value_noise(d * 700.0 + TIME * 0.6));
+					* smoothstep(0.35, 0.75, value_noise(d * 700.0 + planet_time * 0.6));
 				col = mix(col, vec3(0.9), surf * 0.55);
 				col = mix(col, liquid_shallow * 1.3, (1.0 - smoothstep(0.0, 0.03, depth)) * 0.4);
 			}
@@ -599,7 +599,7 @@ void fragment() {
 			vec3 wave = vec3(0.0);
 			for (int i = 0; i < 2; i++) {
 				float f = 180.0 * pow(2.7, float(i));
-				vec4 w = noised(d * f + vec3(TIME * 0.15, -TIME * 0.11, TIME * 0.07) * float(i + 1));
+				vec4 w = noised(d * f + vec3(planet_time * 0.15, -planet_time * 0.11, planet_time * 0.07) * float(i + 1));
 				wave += w.yzw * octave_fade(f, footprint) * (0.03 / float(i + 1));
 			}
 			wave -= d * dot(wave, d);
@@ -652,7 +652,7 @@ void fragment() {
 			// lighting, so it reads as part of the terrain; only the iris and
 			// the drips give off a faint, slow-pulsing light.
 			vec4 eye = eyes_at(d);
-			float pulse = 0.75 + 0.25 * sin(TIME * 1.1 + seed_offset);
+			float pulse = 0.75 + 0.25 * sin(planet_time * 1.1 + seed_offset);
 			// Tentacles darkened toward dried blood, eye bowls stained solid red.
 			col = mix(col, sigil_color * 0.12 + col * 0.4, smoothstep(0.0, 0.4, eye.w) * 0.8);
 			col = mix(col, sigil_color * (0.35 + 0.15 * grain), eye.x * 0.9);
@@ -709,7 +709,7 @@ void fragment() {
 
 	// Mist pooling in the low ground, drifting and thinning as it goes.
 	if (mist_strength > 0.0 && !liquid) {
-		float t = TIME * 0.02;
+		float t = planet_time * 0.02;
 		float drift = fbm(d + vec3(t, -t * 0.7, t * 0.4) + seed_offset * 0.3, 4, 6.0, footprint);
 		float low = 1.0 - smoothstep(0.0, mist_height, ground_h);
 		// Never fully opaque - the ground always shows through.

@@ -26,6 +26,9 @@ const mat3 ROT = mat3(
 	vec3(-0.60, -0.48, 0.64)
 );
 
+// Game-time clock (see planet_noise.gdshaderinc): stops on pause.
+global uniform float planet_time;
+
 varying vec3 v_dir;
 
 uvec3 pcg3d(uvec3 v) {
@@ -119,7 +122,7 @@ void vertex() {
 void fragment() {
 	vec3 d = normalize(v_dir);
 	float footprint = max(length(fwidth(v_dir)), 1e-6);
-	float time = TIME * granule_speed;
+	float time = planet_time * granule_speed;
 
 	// Granulation, faded to its average once the cells are sub-pixel.
 	float granule_fade = octave_fade(granule_scale, footprint * 0.5);

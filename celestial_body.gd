@@ -26,6 +26,10 @@ const CORONA_EXTENT := 5.0
 ## is_surface_point_visible() and surface_point_to_local() need no changes.
 const VIEW_TO_WORLD := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
 
+## Most a planet's spin speeds up under time warp; past this a quick spinner
+## turns into a strobing blur.
+const MAX_SPIN_WARP := 10.0
+
 ## Quads along one edge of each cube face of the sphere mesh.
 const SPHERE_SUBDIVISIONS_LOW := 12
 const SPHERE_SUBDIVISIONS_HIGH := 160
@@ -289,8 +293,11 @@ func _process(delta: float) -> void:
 
 	# Composing rotations cannot push the surface off the sphere, so there is
 	# nothing to correct afterwards regardless of how surface_spin_axis tilts.
+	# Spins with game time: still on pause, faster under warp (capped, or a
+	# fast spinner strobes).
+	var spin_rate: float = minf(float(_world_setting(&"time_scale", 1.0)), MAX_SPIN_WARP)
 	surface_rotation = (
-		Quaternion(surface_spin_axis, surface_spin_speed * delta) * surface_rotation
+		Quaternion(surface_spin_axis, surface_spin_speed * delta * spin_rate) * surface_rotation
 	).normalized()
 
 	push_surface_rotation()

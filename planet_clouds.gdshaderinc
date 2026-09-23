@@ -18,7 +18,7 @@ uniform float cyclone_radius = 0.28;
 
 // The sky moves as one: winds carry everything east around the pole.
 vec3 cloud_space(vec3 d) {
-	return rotate_about(d, pole_axis, TIME * cloud_speed);
+	return rotate_about(d, pole_axis, planet_time * cloud_speed);
 }
 
 // Coverage and thickness of the clouds over a planet-space direction.
