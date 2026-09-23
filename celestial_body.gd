@@ -30,6 +30,10 @@ const VIEW_TO_WORLD := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 
 ## turns into a strobing blur.
 const MAX_SPIN_WARP := 10.0
 
+## Scales every body's surface_spin_speed, so the whole system can be made to
+## turn slower or faster without retuning each planet in the scene.
+const SPIN_SPEED_SCALE := 0.25
+
 ## Quads along one edge of each cube face of the sphere mesh.
 const SPHERE_SUBDIVISIONS_LOW := 12
 const SPHERE_SUBDIVISIONS_HIGH := 160
@@ -297,7 +301,7 @@ func _process(delta: float) -> void:
 	# fast spinner strobes).
 	var spin_rate: float = minf(float(_world_setting(&"time_scale", 1.0)), MAX_SPIN_WARP)
 	surface_rotation = (
-		Quaternion(surface_spin_axis, surface_spin_speed * delta * spin_rate) * surface_rotation
+		Quaternion(surface_spin_axis, get_spin_rate() * delta * spin_rate) * surface_rotation
 	).normalized()
 
 	push_surface_rotation()
@@ -815,6 +819,11 @@ func rebuild_surface() -> void:
 
 	if surface_blob_count > 0 and not is_star:
 		build_surface()
+
+
+## How fast the surface actually turns, radians per second of game time.
+func get_spin_rate() -> float:
+	return surface_spin_speed * SPIN_SPEED_SCALE
 
 
 func get_world_seed() -> int:

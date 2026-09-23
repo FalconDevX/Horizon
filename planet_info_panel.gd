@@ -300,7 +300,7 @@ func _stats(body: Node2D) -> Array:
 		rows.append(["Year", _duration(period)])
 		rows.append(["Sphere of influence", "%.0f SU" % _system.call("get_soi_radius", body)])
 
-	var spin: float = absf(body.get("surface_spin_speed"))
+	var spin: float = absf(body.call("get_spin_rate"))
 	rows.append(["Day", _duration(TAU / spin) if spin > 0.0001 else "-"])
 
 	var params: Dictionary = body.get("terrain_params")
