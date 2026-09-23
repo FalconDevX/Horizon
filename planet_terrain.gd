@@ -32,7 +32,10 @@ const FACE_UP: Array[Vector3] = [
 ]
 
 const MIN_RESOLUTION := 32
-const MAX_RESOLUTION := 512
+const MAX_RESOLUTION := 1024
+
+## Rows of one face baked by a single worker task.
+const BAND_ROWS := 16
 
 ## Weighted-histogram resolution used to place sea level at a coverage.
 const HISTOGRAM_BINS := 1024
@@ -55,7 +58,9 @@ static var _cache: Dictionary = {}
 
 ## The authored look of one kind. Colours are sRGB; `land` is a height
 ## gradient, one colour per entry of `stops` (0 = shoreline or lowest ground,
-## 1 = the highest peak). Everything here is jittered per seed by resolve().
+## 1 = the highest peak). `dry` is the arid-biome tint laid over the lowlands
+## where a moisture noise says so (`dry_amount` = how much); `strata` bands the
+## rock on cliffs. Everything here is jittered per seed by resolve().
 static func preset(kind: Kind) -> Dictionary:
 	match kind:
 		Kind.TERRAN:
@@ -69,6 +74,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.04, 0.25, 0.55, 0.74, 0.88],
 				"rock": Color(0.38, 0.34, 0.30), "slope_rock": 0.5,
+				"dry": Color(0.62, 0.55, 0.36), "dry_amount": 0.75, "strata": 0.0,
 				"cap": Color(0.93, 0.96, 1.0), "cap_latitude": 0.80,
 				"atmo": Color(0.40, 0.65, 1.0), "atmo_strength": 0.9, "haze": 0.03,
 				"clouds": 0.40, "cloud_color": Color(1, 1, 1),
@@ -84,6 +90,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.22, 0.42, 0.62, 0.82, 0.96],
 				"rock": Color(0.33, 0.15, 0.10), "slope_rock": 0.5,
+				"dry": Color(0.93, 0.74, 0.50), "dry_amount": 0.5, "strata": 1.0,
 				"cap": Color(0.96, 0.91, 0.86), "cap_latitude": 0.90,
 				"atmo": Color(0.95, 0.60, 0.40), "atmo_strength": 0.5, "haze": 0.05,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
@@ -100,6 +107,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.10, 0.35, 0.60, 0.80, 0.95],
 				"rock": Color(0.07, 0.06, 0.06), "slope_rock": 0.6,
+				"dry": Color(0.30, 0.16, 0.12), "dry_amount": 0.45, "strata": 0.4,
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(1.0, 0.45, 0.20), "atmo_strength": 0.6, "haze": 0.04,
 				"clouds": 0.22, "cloud_color": Color(0.35, 0.30, 0.28),
@@ -116,6 +124,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.15, 0.35, 0.60, 0.80, 0.95],
 				"rock": Color(0.40, 0.48, 0.58), "slope_rock": 0.4,
+				"dry": Color(0.80, 0.84, 0.90), "dry_amount": 0.4, "strata": 0.3,
 				"cap": Color(0.97, 0.99, 1.0), "cap_latitude": 0.70,
 				"atmo": Color(0.60, 0.85, 1.0), "atmo_strength": 0.7, "haze": 0.08,
 				"clouds": 0.25, "cloud_color": Color(0.90, 0.95, 1.0),
@@ -131,6 +140,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.20, 0.40, 0.60, 0.80, 1.0],
 				"rock": Color(0.25, 0.20, 0.17), "slope_rock": 0.4,
+				"dry": Color(0.50, 0.44, 0.40), "dry_amount": 0.45, "strata": 0.6,
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(0.5, 0.45, 0.40), "atmo_strength": 0.0, "haze": 0.0,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
@@ -147,6 +157,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.08, 0.30, 0.55, 0.78, 0.93],
 				"rock": Color(0.22, 0.16, 0.26), "slope_rock": 0.5,
+				"dry": Color(0.46, 0.44, 0.24), "dry_amount": 0.6, "strata": 0.3,
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(0.65, 0.45, 0.95), "atmo_strength": 1.0, "haze": 0.18,
 				"clouds": 0.40, "cloud_color": Color(0.72, 0.60, 0.88),
@@ -162,6 +173,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
 				"rock": Color.BLACK, "slope_rock": 0.0,
+				"dry": Color.BLACK, "dry_amount": 0.0, "strata": 0.0,
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(1.0, 0.85, 0.55), "atmo_strength": 0.7, "haze": 0.0,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
@@ -177,6 +189,7 @@ static func preset(kind: Kind) -> Dictionary:
 				],
 				"stops": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
 				"rock": Color.BLACK, "slope_rock": 0.0,
+				"dry": Color.BLACK, "dry_amount": 0.0, "strata": 0.0,
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(0.45, 0.65, 1.0), "atmo_strength": 0.8, "haze": 0.0,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
@@ -205,7 +218,7 @@ static func resolve(kind: Kind, terrain_seed: int, coverage_override: float = -1
 	var saturation: float = 1.0 + rng.randf_range(-SATURATION_JITTER, SATURATION_JITTER)
 	var value: float = 1.0 + rng.randf_range(-VALUE_JITTER, VALUE_JITTER)
 
-	for key in ["shallow", "deep", "rock", "cap", "atmo", "cloud_color"]:
+	for key in ["shallow", "deep", "rock", "dry", "cap", "atmo", "cloud_color"]:
 		params[key] = _drift(params[key], hue_shift, saturation, value)
 
 	var land: Array = params["land"]
