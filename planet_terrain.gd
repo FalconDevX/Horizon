@@ -34,8 +34,7 @@ const FACE_UP: Array[Vector3] = [
 const MIN_RESOLUTION := 32
 const MAX_RESOLUTION := 1024
 
-## Rows of one face baked by a single worker task.
-const BAND_ROWS := 16
+const BAKE_SHADER: RDShaderFile = preload("res://planet_terrain_bake.glsl")
 
 ## Weighted-histogram resolution used to place sea level at a coverage.
 const HISTOGRAM_BINS := 1024
@@ -54,6 +53,9 @@ const FREQUENCY_JITTER := 0.15
 ## looked up before a bake is started, filled when one lands. Survives scene
 ## reloads, so going back to the menu and in again does not bake twice.
 static var _cache: Dictionary = {}
+
+## One GPU bake at a time: each opens its own local RenderingDevice.
+static var _gpu_mutex := Mutex.new()
 
 
 ## The authored look of one kind. Colours are sRGB; `land` is a height
@@ -78,7 +80,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color(0.93, 0.96, 1.0), "cap_latitude": 0.80,
 				"atmo": Color(0.40, 0.65, 1.0), "atmo_strength": 0.9, "haze": 0.03,
 				"clouds": 0.40, "cloud_color": Color(1, 1, 1),
-				"relief": 0.035, "bump": 8.0, "frequency": 1.4, "bands": 0,
+				"relief": 0.07, "bump": 3.5, "frequency": 1.4, "bands": 0,
 			}
 		Kind.DESERT:
 			return {
@@ -94,7 +96,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color(0.96, 0.91, 0.86), "cap_latitude": 0.90,
 				"atmo": Color(0.95, 0.60, 0.40), "atmo_strength": 0.5, "haze": 0.05,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
-				"relief": 0.05, "bump": 8.0, "frequency": 1.8, "bands": 0,
+				"relief": 0.09, "bump": 3.0, "frequency": 1.8, "bands": 0,
 			}
 		Kind.VOLCANIC:
 			return {
@@ -111,7 +113,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(1.0, 0.45, 0.20), "atmo_strength": 0.6, "haze": 0.04,
 				"clouds": 0.22, "cloud_color": Color(0.35, 0.30, 0.28),
-				"relief": 0.06, "bump": 10.0, "frequency": 1.6, "bands": 0,
+				"relief": 0.10, "bump": 3.0, "frequency": 1.6, "bands": 0,
 			}
 		Kind.ICE:
 			return {
@@ -128,7 +130,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color(0.97, 0.99, 1.0), "cap_latitude": 0.70,
 				"atmo": Color(0.60, 0.85, 1.0), "atmo_strength": 0.7, "haze": 0.08,
 				"clouds": 0.25, "cloud_color": Color(0.90, 0.95, 1.0),
-				"relief": 0.03, "bump": 7.0, "frequency": 1.5, "bands": 0,
+				"relief": 0.06, "bump": 4.0, "frequency": 1.5, "bands": 0,
 			}
 		Kind.BARREN:
 			return {
@@ -144,7 +146,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(0.5, 0.45, 0.40), "atmo_strength": 0.0, "haze": 0.0,
 				"clouds": 0.0, "cloud_color": Color(1, 1, 1),
-				"relief": 0.05, "bump": 9.0, "frequency": 1.7, "bands": 0,
+				"relief": 0.09, "bump": 3.0, "frequency": 1.7, "bands": 0,
 			}
 		Kind.TOXIC:
 			return {
@@ -161,7 +163,7 @@ static func preset(kind: Kind) -> Dictionary:
 				"cap": Color.WHITE, "cap_latitude": 2.0,
 				"atmo": Color(0.65, 0.45, 0.95), "atmo_strength": 1.0, "haze": 0.18,
 				"clouds": 0.40, "cloud_color": Color(0.72, 0.60, 0.88),
-				"relief": 0.035, "bump": 7.0, "frequency": 1.5, "bands": 0,
+				"relief": 0.07, "bump": 3.5, "frequency": 1.5, "bands": 0,
 			}
 		Kind.GAS_GIANT:
 			return {
@@ -261,108 +263,114 @@ static func store(key: String, data: Dictionary) -> void:
 	_cache[key] = data
 
 
-## Bakes the heightmap. Pure and self-contained, so it is safe on a worker
-## thread. Returns { size, faces: Array[PackedFloat32Array] (0..1 heights),
-## sea_level } - sea_level is where `params.coverage` of the surface area lies
-## below, or -1 for a dry world.
+## Bakes the heightmap on the GPU (planet_terrain_bake.glsl) through a local
+## RenderingDevice. Safe on a worker thread; bakes queue up one at a time.
+## Returns { size, faces: Array[PackedFloat32Array] (0..1 heights), images:
+## Array[Image] (the same, mipmapped, for the GPU), sea_level } - sea_level is
+## where `params.coverage` of the surface area lies below, or -1 for a dry
+## world. Empty when there is no RenderingDevice (headless, Compatibility).
 static func bake(
 	kind: Kind, terrain_seed: int, resolution: int, pole: Vector3, params: Dictionary
 ) -> Dictionary:
 	var n: int = clampi(resolution, MIN_RESOLUTION, MAX_RESOLUTION)
-	var noises: Dictionary = _make_noises(terrain_seed, params["frequency"])
-	var storm: Dictionary = _roll_storm(terrain_seed, pole)
-	var bands: int = params["bands"]
-	var step: float = 2.0 / float(n - 1)
+	var bytes := PackedByteArray()
+	var histogram := PackedInt64Array()
 
-	var raw_faces: Array[PackedFloat32Array] = []
-	var low: float = INF
-	var high: float = -INF
+	_gpu_mutex.lock()
+	var rd: RenderingDevice = RenderingServer.create_local_rendering_device()
+	if rd != null:
+		bytes = _dispatch(rd, kind, terrain_seed, n, pole, params, histogram)
+		rd.free()
+	_gpu_mutex.unlock()
 
-	for face in range(6):
-		var forward: Vector3 = FACE_FORWARD[face]
-		var right: Vector3 = FACE_RIGHT[face]
-		var up: Vector3 = FACE_UP[face]
-		var heights := PackedFloat32Array()
-		heights.resize(n * n)
-		var i := 0
+	if bytes.is_empty():
+		return {}
 
-		for y in range(n):
-			var v: float = float(y) * step - 1.0
-			for x in range(n):
-				var u: float = float(x) * step - 1.0
-				var dir: Vector3 = (forward + right * u + up * v).normalized()
-				var h: float = _raw_height(kind, dir, noises, pole, bands, storm)
-				heights[i] = h
-				low = minf(low, h)
-				high = maxf(high, h)
-				i += 1
-
-		raw_faces.append(heights)
-
-	# Normalise to 0..1 so palettes and sea level mean the same on every seed.
-	var span: float = maxf(high - low, 1e-6)
+	var face_bytes: int = n * n * 4
 	var faces: Array[PackedFloat32Array] = []
-	for raw in raw_faces:
-		var heights := PackedFloat32Array()
-		heights.resize(raw.size())
-		for i in range(raw.size()):
-			heights[i] = (raw[i] - low) / span
-		faces.append(heights)
+	var images: Array[Image] = []
+	for face in range(6):
+		var slice: PackedByteArray = bytes.slice(face * face_bytes, (face + 1) * face_bytes)
+		faces.append(slice.to_float32_array())
+		var image := Image.create_from_data(n, n, false, Image.FORMAT_RF, slice)
+		image.generate_mipmaps()
+		images.append(image)
 
 	var sea_level: float = -1.0
 	if params["liquid"]:
-		sea_level = _level_at_coverage(faces, n, params["coverage"])
+		sea_level = _level_at_coverage(histogram, params["coverage"])
 
-	return { "size": n, "faces": faces, "sea_level": sea_level }
+	return { "size": n, "faces": faces, "images": images, "sea_level": sea_level }
 
 
-static func _make_noises(terrain_seed: int, frequency: float) -> Dictionary:
-	var base_seed: int = hash(terrain_seed ^ NOISE_SALT) & 0x7FFFFFFF
+## Runs both bake passes and reads the heights back; fills `histogram`.
+static func _dispatch(
+	rd: RenderingDevice, kind: Kind, terrain_seed: int, n: int, pole: Vector3,
+	params: Dictionary, histogram: PackedInt64Array
+) -> PackedByteArray:
+	var spirv: RDShaderSPIRV = BAKE_SHADER.get_spirv()
+	var shader: RID = rd.shader_create_from_spirv(spirv)
+	if not shader.is_valid():
+		push_error("PlanetTerrain: bake shader failed to compile: %s" % spirv.compile_error_compute)
+		return PackedByteArray()
 
-	var continent := FastNoiseLite.new()
-	continent.seed = base_seed
-	continent.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	continent.frequency = frequency
-	continent.fractal_type = FastNoiseLite.FRACTAL_FBM
-	continent.fractal_octaves = 6
-	continent.domain_warp_enabled = true
-	continent.domain_warp_type = FastNoiseLite.DOMAIN_WARP_SIMPLEX
-	continent.domain_warp_amplitude = 0.35
-	continent.domain_warp_frequency = frequency * 0.9
-	continent.domain_warp_fractal_type = FastNoiseLite.DOMAIN_WARP_FRACTAL_NONE
+	var storm: Dictionary = _roll_storm(terrain_seed, pole)
+	var center: Vector3 = storm["center"]
+	var east: Vector3 = storm["east"]
+	var north: Vector3 = storm["north"]
+	var settings := PackedFloat32Array([
+		float(kind), float(n), params["frequency"], float(params["bands"]),
+		pole.x, pole.y, pole.z, 0.0,
+		center.x, center.y, center.z, storm["width"],
+		east.x, east.y, east.z, 1.0 if storm["bright"] else 0.0,
+		north.x, north.y, north.z, 0.0,
+	])
 
-	var ridge := FastNoiseLite.new()
-	ridge.seed = base_seed + 1
-	ridge.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	ridge.frequency = frequency * 2.2
-	ridge.fractal_type = FastNoiseLite.FRACTAL_RIDGED
-	ridge.fractal_octaves = 5
+	var stats := PackedInt32Array([-1, 0, 0, 0])  # low starts at 0xFFFFFFFF
+	stats.resize(4 + HISTOGRAM_BINS)
 
-	var craters := FastNoiseLite.new()
-	craters.seed = base_seed + 2
-	craters.noise_type = FastNoiseLite.TYPE_CELLULAR
-	craters.frequency = frequency * 3.5
-	craters.cellular_return_type = FastNoiseLite.RETURN_DISTANCE
-	craters.fractal_type = FastNoiseLite.FRACTAL_NONE
+	var heights_buffer: RID = rd.storage_buffer_create(6 * n * n * 4)
+	var stats_bytes: PackedByteArray = stats.to_byte_array()
+	var stats_buffer: RID = rd.storage_buffer_create(stats_bytes.size(), stats_bytes)
+	var settings_bytes: PackedByteArray = settings.to_byte_array()
+	var settings_buffer: RID = rd.storage_buffer_create(settings_bytes.size(), settings_bytes)
 
-	var small_craters := craters.duplicate() as FastNoiseLite
-	small_craters.seed = base_seed + 3
-	small_craters.frequency = frequency * 9.0
+	var uniforms: Array[RDUniform] = []
+	for binding in range(3):
+		var uniform := RDUniform.new()
+		uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		uniform.binding = binding
+		uniform.add_id([heights_buffer, stats_buffer, settings_buffer][binding])
+		uniforms.append(uniform)
+	var uniform_set: RID = rd.uniform_set_create(uniforms, shader, 0)
+	var pipeline: RID = rd.compute_pipeline_create(shader)
 
-	var cracks := FastNoiseLite.new()
-	cracks.seed = base_seed + 4
-	cracks.noise_type = FastNoiseLite.TYPE_CELLULAR
-	cracks.frequency = frequency * 3.0
-	cracks.cellular_return_type = FastNoiseLite.RETURN_DISTANCE2_SUB
-	cracks.fractal_type = FastNoiseLite.FRACTAL_NONE
+	var groups: int = ceili(n / 8.0)
+	var list: int = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipeline)
+	rd.compute_list_bind_uniform_set(list, uniform_set, 0)
+	for pass_index in range(2):
+		var push := PackedInt32Array([pass_index, hash(terrain_seed ^ NOISE_SALT), 0, 0])
+		rd.compute_list_set_push_constant(list, push.to_byte_array(), 16)
+		rd.compute_list_dispatch(list, groups, groups, 6)
+		rd.compute_list_add_barrier(list)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
 
-	return {
-		"continent": continent,
-		"ridge": ridge,
-		"craters": craters,
-		"small_craters": small_craters,
-		"cracks": cracks,
-	}
+	var bytes: PackedByteArray = rd.buffer_get_data(heights_buffer)
+	var counts: PackedByteArray = rd.buffer_get_data(stats_buffer, 16, HISTOGRAM_BINS * 4)
+	histogram.resize(HISTOGRAM_BINS)
+	for bin in range(HISTOGRAM_BINS):
+		histogram[bin] = counts.decode_u32(bin * 4)
+
+	rd.free_rid(pipeline)
+	rd.free_rid(uniform_set)
+	rd.free_rid(settings_buffer)
+	rd.free_rid(stats_buffer)
+	rd.free_rid(heights_buffer)
+	rd.free_rid(shader)
+	return bytes
 
 
 ## One oval storm for the giants, parked at a random southern-ish latitude.
@@ -385,119 +393,27 @@ static func _roll_storm(terrain_seed: int, pole: Vector3) -> Dictionary:
 	}
 
 
-static func _raw_height(
-	kind: Kind,
-	dir: Vector3,
-	noises: Dictionary,
-	pole: Vector3,
-	bands: int,
-	storm: Dictionary
-) -> float:
-	var continent: float = (noises["continent"] as FastNoiseLite).get_noise_3dv(dir)
-	var ridge: float = (noises["ridge"] as FastNoiseLite).get_noise_3dv(dir) * 0.5 + 0.5
-
-	match kind:
-		Kind.TERRAN, Kind.TOXIC:
-			return continent + smoothstep(-0.05, 0.3, continent) * ridge * 0.5
-		Kind.DESERT:
-			var crater: float = _crater((noises["craters"] as FastNoiseLite).get_noise_3dv(dir))
-			return continent * 0.8 + smoothstep(-0.2, 0.4, continent) * ridge * 0.45 + crater * 0.1
-		Kind.VOLCANIC:
-			# Cellular distance turned upside down makes cones; the dip in the
-			# very middle of each is the caldera.
-			var d0: float = (noises["craters"] as FastNoiseLite).get_noise_3dv(dir) + 1.0
-			var cone: float = pow(maxf(1.0 - d0 / 0.65, 0.0), 2.0)
-			cone -= (1.0 - smoothstep(0.0, 0.12, d0)) * 0.35
-			return continent * 0.6 + ridge * 0.35 + cone * 0.55
-		Kind.ICE:
-			var edge: float = (noises["cracks"] as FastNoiseLite).get_noise_3dv(dir) + 1.0
-			var crack: float = 1.0 - smoothstep(0.0, 0.06, edge)
-			return continent * 0.7 + ridge * 0.2 - crack * 0.12
-		Kind.BARREN:
-			var big: float = _crater((noises["craters"] as FastNoiseLite).get_noise_3dv(dir))
-			var small: float = _crater((noises["small_craters"] as FastNoiseLite).get_noise_3dv(dir))
-			return continent * 0.45 + ridge * 0.1 + big * 0.35 + small * 0.15
-		Kind.GAS_GIANT, Kind.ICE_GIANT:
-			return _gas_height(dir, continent, ridge, pole, bands, storm)
-
-	return continent
-
-
-## Crater profile from a cellular distance (FastNoiseLite returns d - 1): a
-## bowl inside the radius and a raised rim around it, flat further out.
-static func _crater(cell: float) -> float:
-	var d0: float = cell + 1.0
-	var crater_radius := 0.45
-	var rim: float = exp(-pow((d0 - crater_radius) / 0.1, 2.0)) * 0.4
-
-	if d0 < crater_radius:
-		var t: float = d0 / crater_radius
-		return -(1.0 - t * t) * 0.8 + rim
-
-	return rim
-
-
-## Latitude bands bent by the warped noise, plus the storm. The "height" of a
-## giant is only a colour coordinate - it is drawn with no relief.
-static func _gas_height(
-	dir: Vector3, turbulence: float, fine: float, pole: Vector3, bands: int, storm: Dictionary
-) -> float:
-	var latitude: float = dir.dot(pole)
-	var h: float = 0.5 + 0.5 * sin(latitude * float(bands) * PI + turbulence * 3.0)
-	h = h * 0.82 + fine * 0.18
-
-	var offset: Vector3 = dir - (storm["center"] as Vector3)
-	var width: float = storm["width"]
-	var x: float = offset.dot(storm["east"]) / width
-	var y: float = offset.dot(storm["north"]) / (width * 0.55)
-	var e: float = x * x + y * y
-	var spot: float = exp(-e)
-	var swirl: float = 0.5 + 0.5 * sin(sqrt(e) * 7.0 - atan2(y, x) * 2.0)
-	var target: float = 0.97 if storm["bright"] else 0.02
-	return lerpf(h, lerpf(target, swirl, 0.3), spot * 0.85)
-
-
-## Height below which `coverage` of the sphere's area lies. Cube texels are not
-## equal-area - corner texels cover about a fifth of a centre one - so each is
-## weighted by its solid angle, or oceans would come out undersized.
-static func _level_at_coverage(faces: Array[PackedFloat32Array], n: int, coverage: float) -> float:
-	var histogram := PackedFloat64Array()
-	histogram.resize(HISTOGRAM_BINS)
+## Height below which `coverage` of the sphere's area lies, from the bake's
+## solid-angle-weighted histogram.
+static func _level_at_coverage(histogram: PackedInt64Array, coverage: float) -> float:
 	var total := 0.0
-	var step: float = 2.0 / float(n - 1)
-
-	for heights in faces:
-		var i := 0
-		for y in range(n):
-			var v: float = float(y) * step - 1.0
-			for x in range(n):
-				var u: float = float(x) * step - 1.0
-				var weight: float = 1.0 / pow(1.0 + u * u + v * v, 1.5)
-				var bin: int = mini(int(heights[i] * HISTOGRAM_BINS), HISTOGRAM_BINS - 1)
-				histogram[bin] += weight
-				total += weight
-				i += 1
+	for count in histogram:
+		total += count
 
 	var target: float = total * coverage
 	var running := 0.0
-	for bin in range(HISTOGRAM_BINS):
+	for bin in range(histogram.size()):
 		running += histogram[bin]
 		if running >= target:
-			return (float(bin) + 1.0) / HISTOGRAM_BINS
+			return (float(bin) + 1.0) / histogram.size()
 
 	return 1.0
 
 
-## Uploads a bake as a 6-layer texture array for the shader.
+## Uploads a bake as a 6-layer, mipmapped texture array for the shader.
 static func make_texture(data: Dictionary) -> Texture2DArray:
-	var n: int = data["size"]
-	var images: Array[Image] = []
-
-	for heights: PackedFloat32Array in data["faces"]:
-		images.append(Image.create_from_data(n, n, false, Image.FORMAT_RF, heights.to_byte_array()))
-
 	var texture := Texture2DArray.new()
-	texture.create_from_images(images)
+	texture.create_from_images(data["images"])
 	return texture
 
 

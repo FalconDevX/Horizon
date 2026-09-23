@@ -44,6 +44,11 @@ color = Color(0.32, 0.5, 0.72, 0.45)
 background_mode = 3
 background_canvas_max_layer = -5
 tonemap_mode = 0
+glow_enabled = true
+glow_intensity = 0.7
+glow_bloom = 0.0
+glow_blend_mode = 0
+glow_hdr_threshold = 1.0
 
 [node name="SolarSystem" type="Node2D" unique_id=459036639]
 script = ExtResource("1_hp4wh")
@@ -160,6 +165,7 @@ color = Color(1, 0.85, 0.3, 1)
 mass = 1000.0
 body_name = "Virelia"
 atmosphere = "Plasma (stellar)"
+is_star = true
 
 [node name="Planets" type="Node2D" parent="." unique_id=1016710538]
 
