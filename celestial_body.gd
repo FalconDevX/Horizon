@@ -4,6 +4,7 @@ extends Node2D
 const GLOW_TEXTURE := preload("res://textures/glow.png")
 const SURFACE_SHADER := preload("res://planet_surface.gdshader")
 const SURFACE_SHADER_3D := preload("res://planet_surface_3d.gdshader")
+const TERRAIN_SHADER := preload("res://planet_terrain.gdshader")
 
 ## Maps the surface's view space (x right, y up the screen, z toward the
 ## viewer) into the 3D world seen by the top-down camera (x right, -z up the
@@ -151,6 +152,22 @@ var surface_style: int = 0
 		surface_ridge_frequency = value
 		push_surface_parameter("ridge_frequency", value)
 
+## Heightmap terrain (see PlanetTerrain). Anything but None replaces the blob
+## surface in the running game with a baked heightmap: its own palette, relief,
+## and - for kinds that have one - a liquid sea. The editor keeps showing the
+## blob preview. Seeded from surface_seed.
+@export_enum(
+	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant"
+)
+var terrain_kind: int = 0
+
+## Texels along one edge of each of the six heightmap faces.
+@export_range(32, 512, 16) var terrain_resolution: int = 192
+
+## Share of the surface under liquid, 0..1. Negative keeps the kind's own
+## (seed-jittered) value; 0 dries out a kind that would have a sea.
+@export_range(-1.0, 0.98, 0.01) var terrain_liquid_coverage: float = -1.0
+
 var velocity: Vector2 = Vector2.ZERO
 
 ## Orientation of the surface, mapping planet space into view space. This is
@@ -179,19 +196,48 @@ var _anchor_3d: Node3D = null
 var _sphere_3d: MeshInstance3D = null
 var _glow_3d: MeshInstance3D = null
 
+## Resolved terrain look (PlanetTerrain.resolve) and, once baked, the heightmap
+## itself (PlanetTerrain.bake). Empty until then.
+var terrain_params: Dictionary = {}
+var terrain_data: Dictionary = {}
+var terrain_material: ShaderMaterial = null
+var _terrain_task: int = -1
+var _terrain_holder: Dictionary = {}
+var _terrain_key: String = ""
+
 
 func _ready() -> void:
 	if not Engine.is_editor_hint():
 		_build_visual_3d()
 
-	if surface_blob_count > 0:
+	if _uses_terrain():
+		build_terrain()
+	elif surface_blob_count > 0:
 		build_surface()
 
-	set_process(surface_material != null and not Engine.is_editor_hint())
+	set_process(
+		(surface_material != null or terrain_material != null) and not Engine.is_editor_hint()
+	)
 	set_physics_process(_anchor_3d != null)
 
 
+func _exit_tree() -> void:
+	# A task must be waited on before its id is dropped.
+	if _terrain_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_terrain_task)
+		_terrain_task = -1
+
+
+func _uses_terrain() -> bool:
+	return terrain_kind != PlanetTerrain.Kind.NONE and _sphere_3d != null
+
+
 func _process(delta: float) -> void:
+	if _terrain_task >= 0 and WorkerThreadPool.is_task_completed(_terrain_task):
+		WorkerThreadPool.wait_for_task_completion(_terrain_task)
+		_terrain_task = -1
+		_apply_terrain(_terrain_holder.get("data", {}))
+
 	# Composing rotations cannot push the surface off the sphere, so there is
 	# nothing to correct afterwards regardless of how surface_spin_axis tilts.
 	surface_rotation = (
@@ -269,8 +315,15 @@ func _update_visual_bounds() -> void:
 	if _sphere_3d == null:
 		return
 
-	var extent: float = 1.0 + surface_relief
+	var extent: float = 1.0 + _visual_relief()
 	_sphere_3d.custom_aabb = AABB(-Vector3.ONE * extent, Vector3.ONE * extent * 2.0)
+
+
+func _visual_relief() -> float:
+	if terrain_material != null:
+		return terrain_params.get("relief", 0.0)
+
+	return surface_relief
 
 
 ## Swaps between a coarse and a fine sphere. solar_system.gd calls this from
@@ -358,6 +411,98 @@ func build_surface() -> void:
 	update_surface_scale()
 
 
+## Sets up the heightmap planet. Everything but the heightmap is known at once;
+## the heightmap bakes on a worker thread (or comes from the cache), and until
+## it lands the body stays the plain flat-coloured ball.
+func build_terrain() -> void:
+	if terrain_material != null:
+		return
+
+	var kind := terrain_kind as PlanetTerrain.Kind
+	terrain_params = PlanetTerrain.resolve(kind, surface_seed, terrain_liquid_coverage)
+	var p: Dictionary = terrain_params
+
+	terrain_material = ShaderMaterial.new()
+	terrain_material.shader = TERRAIN_SHADER
+	terrain_material.set_shader_parameter("relief", p["relief"])
+	terrain_material.set_shader_parameter("bump", p["bump"])
+	terrain_material.set_shader_parameter("is_gas", PlanetTerrain.is_gas(kind))
+	terrain_material.set_shader_parameter(
+		"land_colors", palette_to_vectors(PackedColorArray(p["land"]), true)
+	)
+	terrain_material.set_shader_parameter("land_stops", PackedFloat32Array(p["stops"]))
+	terrain_material.set_shader_parameter("liquid_shallow", p["shallow"])
+	terrain_material.set_shader_parameter("liquid_deep", p["deep"])
+	terrain_material.set_shader_parameter("liquid_emission", p["emission"])
+	terrain_material.set_shader_parameter("liquid_gloss", p["gloss"])
+	terrain_material.set_shader_parameter("rock_color", p["rock"])
+	terrain_material.set_shader_parameter("slope_rock", p["slope_rock"])
+	terrain_material.set_shader_parameter("cap_color", p["cap"])
+	terrain_material.set_shader_parameter("cap_latitude", p["cap_latitude"])
+	terrain_material.set_shader_parameter("pole_axis", surface_spin_axis)
+	terrain_material.set_shader_parameter("atmo_color", p["atmo"])
+	terrain_material.set_shader_parameter("atmo_strength", p["atmo_strength"])
+	terrain_material.set_shader_parameter("atmo_haze", p["haze"])
+	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
+	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
+	terrain_material.set_shader_parameter("seed_offset", float(surface_seed % 997) * 1.37)
+
+	_update_visual_bounds()
+	update_surface_scale()
+
+	var resolution: int = terrain_resolution
+	var terrain_seed: int = surface_seed
+	var pole: Vector3 = surface_spin_axis
+	_terrain_key = PlanetTerrain.cache_key(kind, terrain_seed, resolution, pole, p)
+
+	var cached: Dictionary = PlanetTerrain.cached(_terrain_key)
+	if not cached.is_empty():
+		_apply_terrain(cached)
+		return
+
+	# The task only ever sees copies and a holder of its own, never this node.
+	var holder := {}
+	var params: Dictionary = p.duplicate(true)
+	_terrain_holder = holder
+	_terrain_task = WorkerThreadPool.add_task(
+		func() -> void:
+			holder["data"] = PlanetTerrain.bake(kind, terrain_seed, resolution, pole, params),
+		true,
+		"Bake terrain %s" % body_name
+	)
+
+
+func _apply_terrain(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+
+	if not data.has("texture"):
+		data["texture"] = PlanetTerrain.make_texture(data)
+		PlanetTerrain.store(_terrain_key, data)
+
+	terrain_data = data
+	var sea_level: float = data["sea_level"]
+	terrain_material.set_shader_parameter("height_faces", data["texture"])
+	terrain_material.set_shader_parameter("face_size", float(data["size"]))
+	terrain_material.set_shader_parameter("has_liquid", sea_level >= 0.0)
+	terrain_material.set_shader_parameter("sea_level", maxf(sea_level, 0.0))
+	_sphere_3d.material_override = terrain_material
+
+
+## Terrain height 0..1 under a planet-space direction (0 until the bake lands).
+## Multiply by the kind's relief and the radius for a distance above the sea.
+func terrain_height_at(planet_direction: Vector3) -> float:
+	return PlanetTerrain.height_at(terrain_data, planet_direction)
+
+
+## Whether a planet-space direction is under the sea (or lava, or acid).
+func is_liquid_at(planet_direction: Vector3) -> bool:
+	if terrain_data.is_empty() or terrain_data["sea_level"] < 0.0:
+		return false
+
+	return terrain_height_at(planet_direction) < terrain_data["sea_level"]
+
+
 func palette_to_vectors(palette: PackedColorArray, linear: bool) -> PackedVector4Array:
 	var vectors := PackedVector4Array()
 
@@ -418,7 +563,7 @@ func update_surface_scale() -> void:
 		_apply_sphere_transform()
 		var glow_diameter: float = get_draw_radius() * 4.0
 		_glow_3d.scale = Vector3(glow_diameter, 1.0, glow_diameter)
-		_glow_3d.position = Vector3(0.0, -get_draw_radius() * (1.0 + surface_relief) - 1.0, 0.0)
+		_glow_3d.position = Vector3(0.0, -get_draw_radius() * (1.0 + _visual_relief()) - 1.0, 0.0)
 		return
 
 	if surface_sprite == null:
