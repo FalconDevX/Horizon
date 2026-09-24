@@ -1,6 +1,10 @@
 // Shared by the planet shaders: hashing, gradient noise with derivatives and
 // footprint-faded fBm. Include after any uniforms it does not declare itself.
 
+// Seconds of game time for animation (clouds, waves, lava, aurora): stands
+// still on pause, unlike TIME. Set by solar_system.gd.
+global uniform float planet_time;
+
 // Orthonormal twist between octaves, so their lattices never line up.
 const mat3 ROT = mat3(
 	vec3(0.00, 0.80, 0.60),

@@ -104,11 +104,14 @@ float prominences(float angle, float height, float time) {
 	return strands * body * (0.25 + 0.75 * site);
 }
 
+// Game-time clock (see planet_noise.gdshaderinc): stops on pause.
+global uniform float planet_time;
+
 void fragment() {
 	vec2 p = (UV - 0.5) * 2.0 * extent;
 	float r = length(p);
 	float angle = atan(p.y, p.x);
-	float time = TIME;
+	float time = planet_time;
 
 	// Distance above the surface, in stellar radii.
 	float height = max(r - 1.0, 0.0);

@@ -83,6 +83,14 @@ Current system (sun `Virelia`, mass 1000, radius 800):
 | 7 | Nyxholm | 548 500 | 560 | 18 |
 | 8 | Anthea | 5 000 | 160 | 4 |
 | 9 | Dunmere | 131 750 | 320 | 1.8 |
+| 10 | Cindral | 6 900 | 130 | 0.6 |
+| 11 | Vesk | 24 800 | 190 | 1.0 |
+| 12 | Ashkar | 78 000 | 230 | 0.4 |
+| 13 | Oruvel | 850 000 | 520 | 15 |
+
+Cindral, Vesk and Ashkar start at 140, 250 and 60 degrees round their orbits and
+Oruvel at 200; the rest start at 0. Cindral and Vesk squeeze between their neighbours'
+SOIs with ~300-450 to spare - keep them light.
 
 Dunmere's SOI (~10 500) clears Glacenna's and Marrow's by only ~400 each side - SOI
 grows with distance, so outer gaps only fit very light planets.
@@ -300,8 +308,14 @@ still shows the blob preview.
   Glacenna = Lotus, Marrow = Fractal, Vantauri = Meridian, Nyxholm = Quake, plus
   **Anthea** (Bloom, radius 160, mass 4, at 5000 from the sun - inside Emberrock,
   outside the corona (4000) - so it orbits ~2.4x faster) and **Dunmere** (Oasis).
-  Desert, Volcanic, Ice, Barren, Toxic, both giants, Frozen, Slime and Gloom are
-  currently unused in the scene; `PlanetLore` text still describes the old kinds.
+  Cindral (Barren), Vesk (Toxic), Ashkar (Desert) and Oruvel (Ice giant) give the
+  older kinds a planet each; the three small ones bake at `terrain_resolution = 512`
+  to save memory. Volcanic, Ice, Gas giant, Frozen, Slime and Gloom are currently
+  unused in the scene.
+- **Catalog text** (`scripts/data/PlanetLore.gd`) is written per *kind*, not per planet
+  name, and `describe()` adds what the roll produced (lava vs cryo, liquid share,
+  clouds, aurora, storm) - so a reroll or a kind change never leaves stale text. A new
+  kind needs an entry there too.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
