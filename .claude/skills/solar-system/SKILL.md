@@ -225,7 +225,17 @@ still shows the blob preview.
   sigils), Gloom (dark blue, glowing gold cracks, hard lighting), Bloom (navy/crimson
   flower fields, brown valleys, purple ground mist), Oasis (east-west dunes, muddy
   glossy puddles filling `pit_layer()` pits - coverage kept to about the pits' own area
-  or the dune troughs flood - and spiky green buds). There are no fixed presets: `resolve()` dispatches to one
+  or the dune troughs flood - and spiky green buds), Lotus (ocean whose only land is
+  giant four-petal flowers on lily pads, `flower_layer()`; sea level pinned by
+  `sea_fixed` instead of the coverage histogram), Swirl (crimson ground, ~10 snail-shell
+  spirals: one arm a raised orange ridge, the other a pit), Rings (greens with a few dark-red/black onion rings broken by
+  gaps), Quake (brown with a steel-blue cast, small silver circle scars from
+  `quakes_at()`), Fractal (craterless brown-grey barren with big Mandelbrot-set massifs,
+  `mandel_height()`: bulbs domed, filaments lower ridges, coloured by height navy →
+  purple → yellow crown; the thin straight ridge off each massif is the set's real
+  antenna), Meridian (any hue, 22–36 side-by-side pole-to-pole stripes, each a shade
+  from near-black through the ground's own colour to near-white, uneven widths,
+  curving or zig-zagging, sometimes twisted, `meridians_at()`). There are no fixed presets: `resolve()` dispatches to one
   `_roll_<kind>()` per kind, which builds the whole look from ranges that keep the
   kind's idea (Terran water always blue-ish, grass green-ish in many shades, desert
   palette *families* - sand/orange/rust/ochre/rose/salt - always on a strong
@@ -247,6 +257,16 @@ still shows the blob preview.
   cells), Barren craters + dry riverbeds (`channels()`) + maria basins, giants with
   uneven band widths, sharpness, turbulence and an optional storm (`params.storm`).
   `cache_key()` hashes everything the bake reads (`_bake_values()`).
+- **Clouds and air are separate shells** (from master): `_build_clouds()` /
+  `_build_atmosphere()` add `planet_clouds.gdshader` / `planet_atmosphere.gdshader`
+  meshes as children of the sphere; the terrain shader only reads
+  `planet_clouds.gdshaderinc` for cloud shadows, and noise helpers live in
+  `planet_noise.gdshaderinc`. Cyclones come from `PlanetTerrain.roll_cyclones()`,
+  seeded by `generation_seed`. `rebuild_surface()` frees both shells before
+  rebuilding. The catalog (I key) calls `make_preview()` on each body; unknown names
+  in `PlanetLore` (Anthea, Dunmere) just show blank lore. Cloud *amount* reads much
+  heavier on the shell than it did in-shader, so the `clouds` ranges in `_roll_*()`
+  may want lowering.
 - **Drawn-on effects** (planet shader only, not in the heightmap, pushed by
   `_push_terrain_effects()`; all off unless a `_roll_*()` sets them): aurora curtains
   on the auroral oval (Ice, Frozen), glowing cracks (`cracks_at()`, Gloom), low-ground
@@ -254,9 +274,18 @@ still shows the blob preview.
   Oasis: one jittered spiky dot per 3D cell, each testing the height under its own
   centre so it is whole or absent, denser in the wet band above the waterline, faded
   out once under a pixel).
-- **Occult eyes and tentacles are carved *and* drawn.** `_roll_occult()` places up to
-  `MAX_SIGILS` = 8 features with `_spaced_direction()`: eyes, plus 1–2 eyeless tentacle
-  nests (`pupil` < 0). `PlanetTerrain.sigil_arrays()` packs them for both shaders. The
+- **Placed features ("sigils") are carved *and* drawn.** Up to `MAX_SIGILS` = 12 per
+  planet, each a dict `{direction, size, reach, style: Vector4, extra: Vector4}`;
+  `_place_features()` / `_spaced_direction()` scatter them without overlap, and
+  `sigil_mode` (`FeatureMode`: EYES = Occult, SWIRLS, RINGS, BAKE_ONLY = Fractal) says
+  how the planet shader colours them. `PlanetTerrain.sigil_arrays()` packs `sigils`,
+  `sigil_styles`, `sigil_extra` for both shaders; what style/extra mean is commented in
+  each `_roll_*()`. `sigil_frame()` is azimuthal-equidistant (|q| = true angle / size),
+  so big features keep their shape and the `s.w * 1.4` cull matches the fades. Swirl/Rings/Fractal relief comes from `feature_relief()` in the
+  bake, with `swirl_parts()` / `ring_parts()` mirrored in the planet shader
+  (`feature_color_at()`).
+- **Occult eyes and tentacles.** `_roll_occult()` places eyes, plus 1–2 eyeless
+  tentacle nests (`pupil` < 0). The
   bake carves eye craters (`eye_relief()`: bowl, rim, hood, iris ring, pupil pit, drip
   grooves) and tentacle ridges (`tentacle_ridges()`: curling, tapering, rounded, sucker
   bumps) via `occult_marks()`; the planet shader mirrors `sigil_frame()`, `eye_lens()`,
@@ -266,11 +295,13 @@ still shows the blob preview.
   character is per planet too: `ambient`, `light_wrap`, `terminator_softness`,
   `shade_contrast` (Gloom runs them hard). Emissive light goes through `emit`, added
   after lighting; lava's `glow` path is separate.
-- **Scene right now** (temporary until every planet rolls a biome per world): Marrow
-  = Frozen, Duskveil = Slime, Thornix = Occult, Nyxholm = Gloom, plus **Anthea** (Bloom,
-  radius 160, mass 4) appended last at 5000 from the sun - inside Emberrock, outside
-  the corona (4000) - so it orbits ~2.4x faster. Desert, Toxic, Barren and Ice giant
-  are currently unused in the scene.
+- **Scene right now** (temporary until every planet rolls a biome per world):
+  Coralyss = Terran (home), Emberrock = Swirl, Duskveil = Rings, Thornix = Occult,
+  Glacenna = Lotus, Marrow = Fractal, Vantauri = Meridian, Nyxholm = Quake, plus
+  **Anthea** (Bloom, radius 160, mass 4, at 5000 from the sun - inside Emberrock,
+  outside the corona (4000) - so it orbits ~2.4x faster) and **Dunmere** (Oasis).
+  Desert, Volcanic, Ice, Barren, Toxic, both giants, Frozen, Slime and Gloom are
+  currently unused in the scene; `PlanetLore` text still describes the old kinds.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a

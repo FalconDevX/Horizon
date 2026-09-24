@@ -91,19 +91,50 @@ uniform float crack_width = 0.03;
 // Threshold on a slow noise: -1 cracks everywhere, 1 almost nowhere.
 uniform float crack_coverage = 0.0;
 
-// Sigils: glowing eye symbols painted on the ground.
-// Array sizes mirror PlanetTerrain.MAX_SIGILS.
-const int MAX_SIGILS = 8;
+// Placed features the bake carved (see PlanetTerrain.sigil_arrays()), coloured
+// here. `sigil_mode` mirrors PlanetTerrain.FeatureMode: 0 Occult eyes, 1 Swirl
+// spirals, 2 Rings, 3 nothing to colour (Fractal). Array sizes mirror
+// PlanetTerrain.MAX_SIGILS.
+const int MAX_SIGILS = 12;
 uniform int sigil_count = 0;
+uniform int sigil_mode = 0;
 // xyz planet-space centre, w angular radius.
-uniform vec4 sigils[8];
-// x rotation, y pupil (0 round, 1 slit, 2 diamond; <0 tentacle nest, no eye),
-// z drip count, w crater depth (bake only).
-uniform vec4 sigil_styles[8];
-// x count, y curl, z reach (sigil radii), w width.
-uniform vec4 sigil_tentacles[8];
+uniform vec4 sigils[12];
+// Eyes: x rotation, y pupil (0 round, 1 slit, 2 diamond; <0 tentacle nest,
+// no eye), z drip count, w crater depth (bake only). Other modes: see the
+// kind's roll in planet_terrain.gd.
+uniform vec4 sigil_styles[12];
+// Eyes: x tentacle count, y curl, z reach (sigil radii), w width.
+uniform vec4 sigil_extra[12];
 uniform vec3 sigil_color : source_color = vec3(0.9, 0.05, 0.05);
+uniform vec3 sigil_color_b : source_color = vec3(0.0);
 uniform float sigil_glow : hint_range(0.0, 4.0) = 0.0;
+
+// Quake scars: small silver jagged rings with spokes, scattered by cell. 0 = none.
+uniform float quake_strength : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 quake_color : source_color = vec3(0.85, 0.87, 0.9);
+uniform float quake_scale = 16.0;
+uniform float quake_density : hint_range(0.0, 1.0) = 0.4;
+// Scar radius as a share of a cell, rings per scar, spokes per scar.
+uniform float quake_size : hint_range(0.1, 0.5) = 0.38;
+uniform float quake_rings = 2.0;
+uniform float quake_spokes = 6.0;
+
+// Stripes running pole to pole, side by side, each its own shade between
+// `meridian_dark`, the ground's colour and `meridian_light`. 0 = none.
+// `meridian_count` stripes (whole); `meridian_warp` < 1 makes some wider than
+// others; they swing `meridian_wobble` stripes aside `meridian_waves` times
+// pole to pole, as a curve (`meridian_zigzag` 0) or a zig-zag (1), and lean
+// `meridian_twist` stripes from pole to pole.
+uniform float meridian_strength : hint_range(0.0, 1.0) = 0.0;
+uniform float meridian_count = 24.0;
+uniform float meridian_warp : hint_range(0.0, 0.95) = 0.5;
+uniform float meridian_wobble = 0.5;
+uniform float meridian_waves = 3.0;
+uniform float meridian_zigzag : hint_range(0.0, 1.0) = 0.0;
+uniform float meridian_twist = 0.0;
+uniform vec3 meridian_dark : source_color = vec3(0.05);
+uniform vec3 meridian_light : source_color = vec3(0.95);
 
 // Buds: small spiky green dots scattered over dry ground, thickest just above
 // the waterline and never in it. 0 = none.
@@ -298,7 +329,12 @@ vec2 sigil_frame(vec3 d, vec4 s, float angle) {
 	vec3 up = abs(dot(pole_axis, s.xyz)) < 0.95 ? pole_axis : vec3(1.0, 0.0, 0.0);
 	vec3 east = normalize(cross(up, s.xyz));
 	vec3 north = cross(s.xyz, east);
-	vec2 q = vec2(dot(d, east), dot(d, north)) / s.w;
+	// Azimuthal equidistant: |q| is the true angle from the centre, so big
+	// features keep their shape out to the rim.
+	vec2 flat_q = vec2(dot(d, east), dot(d, north));
+	float across = length(flat_q);
+	float arc = acos(clamp(dot(d, s.xyz), -1.0, 1.0));
+	vec2 q = (across > 1e-6 ? flat_q * (arc / across) : flat_q) / s.w;
 	return mat2(vec2(cos(angle), sin(angle)), vec2(-sin(angle), cos(angle))) * q;
 }
 
@@ -376,7 +412,7 @@ vec4 eyes_at(vec3 d) {
 		}
 		vec4 s = sigils[i];
 		vec4 style = sigil_styles[i];
-		vec4 t = sigil_tentacles[i];
+		vec4 t = sigil_extra[i];
 		if (dot(d, s.xyz) < cos(min(s.w * (t.z + 0.3), 3.0))) {
 			continue;
 		}
@@ -391,6 +427,154 @@ vec4 eyes_at(vec3 d) {
 		}
 	}
 	return total;
+}
+
+// Mirror of swirl_parts() in the bake: x = inside, y = arm (0 / 1),
+// z = groove between arms, w = dome across an arm.
+vec4 swirl_parts(vec2 q, vec4 style) {
+	float r = length(q);
+	float inside = 1.0 - smoothstep(0.85, 1.0, r);
+	if (inside <= 0.0) {
+		return vec4(0.0);
+	}
+	float theta = atan(q.y, q.x) * style.w;
+	float u = r * style.y + style.z * theta / 6.2831853;
+	float f = fract(u);
+	float groove = 1.0 - smoothstep(0.0, 0.08, min(f, 1.0 - f));
+	return vec4(inside, mod(floor(u), 2.0), groove, sin(f * 3.14159265));
+}
+
+// Mirror of ring_parts() in the bake: x = on a ring, y = ring index,
+// z = inside the set.
+vec3 ring_parts(vec2 q, vec4 style, vec4 extra) {
+	float r = length(q);
+	if (r > 1.0) {
+		return vec3(0.0);
+	}
+	float x = r * style.y;
+	float index = floor(x);
+	float band = 1.0 - smoothstep(style.z * 0.5 - 0.06, style.z * 0.5, abs(fract(x) - 0.5));
+	float phase = fract(sin((index + 1.0) * 12.9898 + style.x * 7.0) * 43758.5453);
+	float along = fract(atan(q.y, q.x) / 6.2831853 * style.w + phase);
+	band *= smoothstep(extra.x, extra.x + 0.04, along);
+	return vec3(band, index, 1.0 - smoothstep(0.95, 1.0, r));
+}
+
+// The nearest placed feature's colour at d, for Swirl and Rings: rgb, and
+// how much of it covers the ground in a.
+vec4 feature_color_at(vec3 d) {
+	vec4 best = vec4(0.0);
+	for (int i = 0; i < MAX_SIGILS; i++) {
+		if (i >= sigil_count) {
+			break;
+		}
+		vec4 s = sigils[i];
+		if (dot(d, s.xyz) < cos(min(s.w * 1.4, 3.0))) {
+			continue;
+		}
+		vec4 style = sigil_styles[i];
+		vec2 q = sigil_frame(d, s, style.x);
+		if (sigil_mode == 1) {
+			// The raised arm orange, brighter along its crest; the sunken one
+			// only shaded toward `sigil_color_b`, deepest down its middle.
+			vec4 w = swirl_parts(q, style);
+			vec3 arm = mix(sigil_color * (0.75 + 0.35 * w.w), sigil_color_b, w.y);
+			float cover = w.x * mix(0.92, 0.6 * w.w, w.y);
+			if (cover > best.a) {
+				best = vec4(arm, cover);
+			}
+		} else if (sigil_mode == 2) {
+			// Rings alternate dark red and near black.
+			vec3 ring = ring_parts(q, style, sigil_extra[i]);
+			float cover = ring.x * ring.z;
+			if (cover > best.a) {
+				best = vec4(mix(sigil_color, sigil_color_b, mod(ring.y, 2.0)), cover);
+			}
+		}
+	}
+	return best;
+}
+
+// Quake scars at d, tangent frame (t, b): at most one per 3D cell, each a few
+// jagged rings with spokes running out. 0..1 line. Lines never go thinner
+// than about a pixel, and the scars fade out once too small to read.
+float quakes_at(vec3 d, vec3 t, vec3 b, float footprint) {
+	float fade = 1.0 - smoothstep(0.2, 0.6, footprint * quake_scale);
+	if (fade <= 0.0) {
+		return 0.0;
+	}
+	vec3 shift = vec3(seed_offset * 0.23 + 7.0);
+	vec3 p = d * quake_scale + shift;
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float width = max(0.018, footprint * quake_scale * 0.8);
+	float line = 0.0;
+
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 h = hash3(cell + o + vec3(0.0, 0.0, 577.0));
+				if (h.x > quake_density) {
+					continue;
+				}
+				vec3 off = o + 0.5 + (hash3(cell + o + vec3(0.0, 57.0, 0.0)) - 0.5) * 0.7 - local;
+				float r = length(off);
+				float size = quake_size * mix(0.7, 1.2, h.y);
+				if (r > size * 1.1) {
+					continue;
+				}
+				float angle = atan(dot(off, b), dot(off, t));
+				float jag = noised(vec3(angle * 3.0, h.z * 10.0, 0.5)).x * 0.08;
+				float rr = r + jag * size;
+				for (int k = 1; k <= 3; k++) {
+					if (float(k) > quake_rings) {
+						break;
+					}
+					float ring_radius = size * float(k) / quake_rings;
+					line = max(line, 1.0 - smoothstep(width * 0.5, width, abs(rr - ring_radius)));
+				}
+				float spoke = abs(sin((angle + h.z * 6.2831853 + jag * 3.0) * quake_spokes * 0.5)) * r;
+				line = max(line, (1.0 - smoothstep(width * 0.5, width, spoke)) * (1.0 - smoothstep(size * 0.8, size, r)));
+			}
+		}
+	}
+	return line * fade;
+}
+
+// Stripe tone for stripe `index`: 0 = dark, 0.5 = the ground's own colour,
+// 1 = light. Golden-ratio steps, so neighbours always differ.
+float meridian_tone(float index) {
+	return fract(mod(index, meridian_count) * 0.618034 + fract(seed_offset * 0.137));
+}
+
+// Pole-to-pole stripes at d: x = tone of the stripe here, y = tone of the
+// next one, z = how far across into the next (a soft, pixel-wide edge).
+vec3 meridians_at(vec3 d, float latitude) {
+	vec3 helper = abs(pole_axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+	vec3 e1 = normalize(cross(pole_axis, helper));
+	vec3 e2 = cross(pole_axis, e1);
+	float lon = atan(dot(d, e2), dot(d, e1));
+	// Uneven widths: squeeze longitude by a whole number of waves round the
+	// globe, so the seam still lines up.
+	float phase = seed_offset * 0.71;
+	lon += meridian_warp * 0.5 * sin(lon * 2.0 + phase) + meridian_warp * 0.25 * sin(lon * 3.0 - phase);
+	float w = latitude * 0.5 * meridian_waves + fract(seed_offset * 0.31);
+	float curve = sin(w * 6.2831853);
+	float zigzag = 1.0 - 4.0 * abs(fract(w + 0.25) - 0.5);
+	float swing = mix(curve, zigzag, meridian_zigzag) * meridian_wobble + latitude * meridian_twist;
+	float u = lon / 6.2831853 * meridian_count + swing;
+	float index = floor(u);
+	float f = u - index;
+	// fwidth jumps at the atan seam, where u wraps; fall back to a guess there.
+	float edge = fwidth(u);
+	edge = edge < 0.5 ? max(edge, 0.002) : 0.05;
+	float into_next = smoothstep(1.0 - edge, 1.0, f);
+	return vec3(meridian_tone(index), meridian_tone(index + 1.0), into_next);
+}
+
+vec3 meridian_shade(float tone, vec3 ground) {
+	return tone < 0.5 ? mix(meridian_dark, ground, tone * 2.0) : mix(ground, meridian_light, tone * 2.0 - 1.0);
 }
 
 // Glowing cracks: the zero lines of warped noise, like the bake's ice
@@ -645,9 +829,23 @@ void fragment() {
 				col = mix(col, crack_color, crack.x);
 				emit += crack_color * crack_strength * (crack.x + crack.y * 0.12);
 			}
+
+			if (meridian_strength > 0.0) {
+				vec3 stripe = meridians_at(d, latitude);
+				vec3 shade = mix(meridian_shade(stripe.x, col), meridian_shade(stripe.y, col), stripe.z);
+				col = mix(col, shade * (0.92 + 0.16 * grain), meridian_strength);
+			}
+
+			if (quake_strength > 0.0) {
+				// Silver with a little shine of its own, so the scars catch the
+				// eye even on shaded slopes.
+				float scar = quakes_at(d, t, b, footprint) * quake_strength;
+				col = mix(col, quake_color * (0.9 + 0.2 * grain), scar);
+				emit += quake_color * scar * 0.12;
+			}
 		}
 
-		if (sigil_count > 0) {
+		if (sigil_count > 0 && sigil_mode == 0) {
 			// Stain the carved crater red but keep the ground's own texture and
 			// lighting, so it reads as part of the terrain; only the iris and
 			// the drips give off a faint, slow-pulsing light.
@@ -658,6 +856,9 @@ void fragment() {
 			col = mix(col, sigil_color * (0.35 + 0.15 * grain), eye.x * 0.9);
 			col = mix(col, vec3(0.005), eye.z);
 			emit += sigil_color * sigil_glow * pulse * eye.y * (1.0 - eye.z);
+		} else if (sigil_count > 0 && (sigil_mode == 1 || sigil_mode == 2)) {
+			vec4 feature = feature_color_at(d);
+			col = mix(col, feature.rgb * (0.9 + 0.2 * grain), feature.a);
 		}
 	}
 

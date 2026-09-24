@@ -174,16 +174,16 @@ position = Vector2(9000, 0)
 script = ExtResource("1_hbvo3")
 radius = 220.0
 visual_radius = 220.0
-color = Color(0.85, 0.42, 0.2, 1)
+color = Color(0.66, 0.14, 0.22, 1)
 mass = 9.0
 body_name = "Emberrock"
-atmosphere = "Trace CO2, volcanic ash"
+atmosphere = "Thin, rusty, swirling dust"
 show_soi = true
 surface_seed = 1001
 surface_blob_count = 64
 surface_spin_speed = 0.06
 surface_spin_axis = Vector3(0.035, 0.999, 0.0)
-terrain_kind = 3
+terrain_kind = 16
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
 position = Vector2(17500, 0)
@@ -207,16 +207,16 @@ position = Vector2(32300, 0)
 script = ExtResource("1_hbvo3")
 radius = 300.0
 visual_radius = 300.0
-color = Color(0.45, 0.6, 0.2, 1)
+color = Color(0.35, 0.7, 0.35, 1)
 mass = 12.0
 body_name = "Duskveil"
-atmosphere = "Spore fog, methane"
+atmosphere = "Mild, sweet, green"
 show_soi = true
 surface_seed = 1003
 surface_blob_count = 48
 surface_spin_speed = -0.03
 surface_spin_axis = Vector3(0.0, 0.999, 0.052)
-terrain_kind = 10
+terrain_kind = 17
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(57800, 0)
@@ -239,66 +239,66 @@ position = Vector2(102300, 0)
 script = ExtResource("1_hbvo3")
 radius = 350.0
 visual_radius = 350.0
-color = Color(0.56, 0.84, 0.92, 1)
+color = Color(0.85, 0.7, 0.8, 1)
 mass = 14.0
 body_name = "Glacenna"
-atmosphere = "Frozen nitrogen fog"
+atmosphere = "Humid, floral"
 show_soi = true
 surface_seed = 1005
 surface_blob_count = 56
 surface_spin_speed = 0.10
 surface_spin_axis = Vector3(0.0, -0.139, 0.990)
-terrain_kind = 4
+terrain_kind = 15
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
 position = Vector2(163800, 0)
 script = ExtResource("1_hbvo3")
 radius = 260.0
 visual_radius = 260.0
-color = Color(0.7, 0.82, 0.9, 1)
+color = Color(0.45, 0.4, 0.62, 1)
 mass = 6.0
 body_name = "Marrow"
-atmosphere = "Trace oxygen, aurorae"
+atmosphere = "None (airless)"
 show_soi = true
 surface_seed = 1006
 surface_blob_count = 40
 surface_style = 1
 surface_spin_speed = 0.04
 surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
-terrain_kind = 9
+terrain_kind = 19
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(295000, 0)
 script = ExtResource("1_hbvo3")
 radius = 700.0
 visual_radius = 700.0
-color = Color(0.88, 0.7, 0.3, 1)
+color = Color(0.6, 0.6, 0.6, 1)
 mass = 34.0
 body_name = "Vantauri"
-atmosphere = "Dense hydrogen/helium"
+atmosphere = "Thin, still"
 show_soi = true
 surface_seed = 1007
 surface_blob_count = 110
 surface_style = 3
 surface_spin_speed = 0.55
 surface_spin_axis = Vector3(0.0, 0.999, -0.052)
-terrain_kind = 7
+terrain_kind = 20
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
 position = Vector2(548500, 0)
 script = ExtResource("1_hbvo3")
 radius = 560.0
 visual_radius = 560.0
-color = Color(0.2, 0.3, 0.6, 1)
+color = Color(0.45, 0.45, 0.52, 1)
 mass = 18.0
 body_name = "Nyxholm"
-atmosphere = "Thin, cold, still"
+atmosphere = "Thin, dusty, restless"
 show_soi = true
 surface_seed = 1008
 surface_blob_count = 88
 surface_spin_speed = 0.50
 surface_spin_axis = Vector3(0.332, 0.883, 0.332)
-terrain_kind = 12
+terrain_kind = 18
 
 [node name="Anthea" type="Node2D" parent="Planets"]
 position = Vector2(5000, 0)

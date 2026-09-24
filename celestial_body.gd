@@ -177,7 +177,8 @@ var surface_style: int = 0
 ## blob preview. Seeded from generation_seed.
 @export_enum(
 	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant",
-	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis"
+	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis",
+	"Lotus", "Swirl", "Rings", "Quake", "Fractal", "Meridian"
 )
 var terrain_kind: int = 0
 
@@ -728,9 +729,29 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("sigil_count", sigils["count"])
 	m.set_shader_parameter("sigils", sigils["centres"])
 	m.set_shader_parameter("sigil_styles", sigils["styles"])
-	m.set_shader_parameter("sigil_tentacles", sigils["tentacles"])
+	m.set_shader_parameter("sigil_extra", sigils["extras"])
+	m.set_shader_parameter("sigil_mode", p["sigil_mode"])
 	m.set_shader_parameter("sigil_color", p["sigil_color"])
+	m.set_shader_parameter("sigil_color_b", p["sigil_color_b"])
 	m.set_shader_parameter("sigil_glow", p["sigil_glow"])
+
+	m.set_shader_parameter("quake_strength", p["quake"])
+	m.set_shader_parameter("quake_color", p["quake_color"])
+	m.set_shader_parameter("quake_scale", p["quake_scale"])
+	m.set_shader_parameter("quake_density", p["quake_density"])
+	m.set_shader_parameter("quake_size", p["quake_size"])
+	m.set_shader_parameter("quake_rings", p["quake_rings"])
+	m.set_shader_parameter("quake_spokes", p["quake_spokes"])
+
+	m.set_shader_parameter("meridian_strength", p["meridians"])
+	m.set_shader_parameter("meridian_count", p["meridian_count"])
+	m.set_shader_parameter("meridian_warp", p["meridian_warp"])
+	m.set_shader_parameter("meridian_wobble", p["meridian_wobble"])
+	m.set_shader_parameter("meridian_waves", p["meridian_waves"])
+	m.set_shader_parameter("meridian_zigzag", p["meridian_zigzag"])
+	m.set_shader_parameter("meridian_twist", p["meridian_twist"])
+	m.set_shader_parameter("meridian_dark", p["meridian_dark"])
+	m.set_shader_parameter("meridian_light", p["meridian_light"])
 
 	m.set_shader_parameter("bud_strength", p["buds"])
 	m.set_shader_parameter("bud_color", p["bud_color"])

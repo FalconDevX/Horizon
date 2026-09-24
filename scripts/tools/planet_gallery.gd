@@ -14,6 +14,7 @@ extends SceneTree
 const KIND_NAMES: Array[String] = [
 	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant",
 	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis",
+	"Lotus", "Swirl", "Rings", "Quake", "Fractal", "Meridian",
 ]
 const TILE := 360
 const SETTLE_FRAMES := 10
