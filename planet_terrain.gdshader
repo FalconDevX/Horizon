@@ -95,17 +95,17 @@ uniform float crack_coverage = 0.0;
 // here. `sigil_mode` mirrors PlanetTerrain.FeatureMode: 0 Occult eyes, 1 Swirl
 // spirals, 2 Rings, 3 nothing to colour (Fractal). Array sizes mirror
 // PlanetTerrain.MAX_SIGILS.
-const int MAX_SIGILS = 12;
+const int MAX_SIGILS = 24;
 uniform int sigil_count = 0;
 uniform int sigil_mode = 0;
 // xyz planet-space centre, w angular radius.
-uniform vec4 sigils[12];
+uniform vec4 sigils[24];
 // Eyes: x rotation, y pupil (0 round, 1 slit, 2 diamond; <0 tentacle nest,
 // no eye), z drip count, w crater depth (bake only). Other modes: see the
 // kind's roll in planet_terrain.gd.
-uniform vec4 sigil_styles[12];
+uniform vec4 sigil_styles[24];
 // Eyes: x tentacle count, y curl, z reach (sigil radii), w width.
-uniform vec4 sigil_extra[12];
+uniform vec4 sigil_extra[24];
 uniform vec3 sigil_color : source_color = vec3(0.9, 0.05, 0.05);
 uniform vec3 sigil_color_b : source_color = vec3(0.0);
 uniform float sigil_glow : hint_range(0.0, 4.0) = 0.0;
@@ -119,22 +119,9 @@ uniform float quake_density : hint_range(0.0, 1.0) = 0.4;
 uniform float quake_size : hint_range(0.1, 0.5) = 0.38;
 uniform float quake_rings = 2.0;
 uniform float quake_spokes = 6.0;
-
-// Stripes running pole to pole, side by side, each its own shade between
-// `meridian_dark`, the ground's colour and `meridian_light`. 0 = none.
-// `meridian_count` stripes (whole); `meridian_warp` < 1 makes some wider than
-// others; they swing `meridian_wobble` stripes aside `meridian_waves` times
-// pole to pole, as a curve (`meridian_zigzag` 0) or a zig-zag (1), and lean
-// `meridian_twist` stripes from pole to pole.
-uniform float meridian_strength : hint_range(0.0, 1.0) = 0.0;
-uniform float meridian_count = 24.0;
-uniform float meridian_warp : hint_range(0.0, 0.95) = 0.5;
-uniform float meridian_wobble = 0.5;
-uniform float meridian_waves = 3.0;
-uniform float meridian_zigzag : hint_range(0.0, 1.0) = 0.0;
-uniform float meridian_twist = 0.0;
-uniform vec3 meridian_dark : source_color = vec3(0.05);
-uniform vec3 meridian_light : source_color = vec3(0.95);
+// Offset of the scar lattice, shared with the bake, which carves a hole under
+// every scar.
+uniform float quake_shift = 7.0;
 
 // Buds: small spiky green dots scattered over dry ground, thickest just above
 // the waterline and never in it. 0 = none.
@@ -149,6 +136,9 @@ uniform float bud_spike : hint_range(0.0, 0.4) = 0.12;
 uniform float bud_density : hint_range(0.0, 1.0) = 0.5;
 // How high above the waterline (in 0..1 height) the wet band reaches.
 uniform float bud_reach : hint_range(0.0, 0.5) = 0.08;
+// 1: grow in patches round the placed features (Rings' ring sets) instead of
+// along the waterline.
+uniform float bud_near_features : hint_range(0.0, 1.0) = 0.0;
 
 // Mist pooling in the low ground and drifting. 0 = none.
 uniform float mist_strength : hint_range(0.0, 1.0) = 0.0;
@@ -503,7 +493,7 @@ float quakes_at(vec3 d, vec3 t, vec3 b, float footprint) {
 	if (fade <= 0.0) {
 		return 0.0;
 	}
-	vec3 shift = vec3(seed_offset * 0.23 + 7.0);
+	vec3 shift = vec3(quake_shift);
 	vec3 p = d * quake_scale + shift;
 	vec3 cell = floor(p);
 	vec3 local = p - cell;
@@ -542,41 +532,6 @@ float quakes_at(vec3 d, vec3 t, vec3 b, float footprint) {
 	return line * fade;
 }
 
-// Stripe tone for stripe `index`: 0 = dark, 0.5 = the ground's own colour,
-// 1 = light. Golden-ratio steps, so neighbours always differ.
-float meridian_tone(float index) {
-	return fract(mod(index, meridian_count) * 0.618034 + fract(seed_offset * 0.137));
-}
-
-// Pole-to-pole stripes at d: x = tone of the stripe here, y = tone of the
-// next one, z = how far across into the next (a soft, pixel-wide edge).
-vec3 meridians_at(vec3 d, float latitude) {
-	vec3 helper = abs(pole_axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-	vec3 e1 = normalize(cross(pole_axis, helper));
-	vec3 e2 = cross(pole_axis, e1);
-	float lon = atan(dot(d, e2), dot(d, e1));
-	// Uneven widths: squeeze longitude by a whole number of waves round the
-	// globe, so the seam still lines up.
-	float phase = seed_offset * 0.71;
-	lon += meridian_warp * 0.5 * sin(lon * 2.0 + phase) + meridian_warp * 0.25 * sin(lon * 3.0 - phase);
-	float w = latitude * 0.5 * meridian_waves + fract(seed_offset * 0.31);
-	float curve = sin(w * 6.2831853);
-	float zigzag = 1.0 - 4.0 * abs(fract(w + 0.25) - 0.5);
-	float swing = mix(curve, zigzag, meridian_zigzag) * meridian_wobble + latitude * meridian_twist;
-	float u = lon / 6.2831853 * meridian_count + swing;
-	float index = floor(u);
-	float f = u - index;
-	// fwidth jumps at the atan seam, where u wraps; fall back to a guess there.
-	float edge = fwidth(u);
-	edge = edge < 0.5 ? max(edge, 0.002) : 0.05;
-	float into_next = smoothstep(1.0 - edge, 1.0, f);
-	return vec3(meridian_tone(index), meridian_tone(index + 1.0), into_next);
-}
-
-vec3 meridian_shade(float tone, vec3 ground) {
-	return tone < 0.5 ? mix(meridian_dark, ground, tone * 2.0) : mix(ground, meridian_light, tone * 2.0 - 1.0);
-}
-
 // Glowing cracks: the zero lines of warped noise, like the bake's ice
 // fractures but drawn. Never thinner than about a pixel, so they do not
 // break up at a distance. x = the line, y = its halo.
@@ -597,6 +552,21 @@ vec2 cracks_at(vec3 d, float footprint) {
 // each checks the height under its own centre, so a bud is either whole or
 // absent rather than clipped by the waterline. Fades out once a bud would be
 // under a pixel.
+// How much `d` lies just outside a placed feature - a band from its rim out
+// to about 1.8 of its radii - broken into patches. 0..1.
+float feature_surroundings(vec3 d) {
+	float near = 0.0;
+	for (int i = 0; i < MAX_SIGILS; i++) {
+		if (i >= sigil_count) {
+			break;
+		}
+		vec4 s = sigils[i];
+		float r = acos(clamp(dot(d, s.xyz), -1.0, 1.0)) / max(s.w, 1e-3);
+		near = max(near, smoothstep(0.92, 1.05, r) * (1.0 - smoothstep(1.4, 1.9, r)));
+	}
+	return near * smoothstep(-0.2, 0.1, noised(d * 7.0 + seed_offset).x);
+}
+
 vec2 buds_at(vec3 d, vec3 t, vec3 b, float footprint) {
 	float fade = 1.0 - smoothstep(0.15, 0.45, footprint * bud_scale);
 	if (fade <= 0.0) {
@@ -621,9 +591,12 @@ vec2 buds_at(vec3 d, vec3 t, vec3 b, float footprint) {
 				vec3 centre = o + 0.5 + (hash3(cell + o) - 0.5) * 0.8;
 
 				// Wettest just above the water, thinning with height; none in it.
-				float height = height_lod(normalize(cell + centre - shift), 2.0);
+				// Or, round the features, in patches.
+				vec3 at = normalize(cell + centre - shift);
+				float height = height_lod(at, 2.0);
 				float wet = 1.0 - smoothstep(0.0, bud_reach, height - sea);
-				if (height < sea || h.x > bud_density * mix(0.3, 1.0, wet)) {
+				float chance = bud_near_features > 0.5 ? feature_surroundings(at) : mix(0.3, 1.0, wet);
+				if (height < sea || h.x > bud_density * chance) {
 					continue;
 				}
 
@@ -828,12 +801,6 @@ void fragment() {
 				vec2 crack = cracks_at(d, footprint);
 				col = mix(col, crack_color, crack.x);
 				emit += crack_color * crack_strength * (crack.x + crack.y * 0.12);
-			}
-
-			if (meridian_strength > 0.0) {
-				vec3 stripe = meridians_at(d, latitude);
-				vec3 shade = mix(meridian_shade(stripe.x, col), meridian_shade(stripe.y, col), stripe.z);
-				col = mix(col, shade * (0.92 + 0.16 * grain), meridian_strength);
 			}
 
 			if (quake_strength > 0.0) {

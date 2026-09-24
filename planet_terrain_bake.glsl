@@ -36,13 +36,14 @@ layout(set = 0, binding = 2, std430) restrict readonly buffer Params {
 	vec4 storm_north;  // xyz, w storm strength (0 = no storm)
 	vec4 recipe;       // shared: x continent warp, y/z mountain-belt thresholds, w ridge sharpness
 	vec4 detail[4];    // the kind's own knobs, rolled per seed - see each branch of raw_height()
-	// Placed features (Occult eyes, Swirl spirals, Rings, Fractal massifs) -
-	// see PlanetTerrain.sigil_arrays(). Sizes mirror PlanetTerrain.MAX_SIGILS.
-	// What style and extra mean depends on the kind; each branch below says.
+	// Placed features (Occult eyes, Swirl spirals, Rings, Fractal massifs,
+	// Meridian lines) - see PlanetTerrain.sigil_arrays(). Sizes mirror
+	// PlanetTerrain.MAX_SIGILS. What style and extra mean depends on the kind;
+	// each branch below says.
 	vec4 sigil_info;       // x count
-	vec4 sigils[12];       // xyz centre, w angular radius
-	vec4 sigil_styles[12];
-	vec4 sigil_extra[12];
+	vec4 sigils[24];       // xyz centre, w angular radius
+	vec4 sigil_styles[24];
+	vec4 sigil_extra[24];
 };
 
 layout(push_constant, std430) uniform Push {
@@ -113,6 +114,12 @@ uvec3 pcg3d(uvec3 v) {
 vec3 hash3(vec3 cell) {
 	uvec3 h = pcg3d(uvec3(ivec3(cell)) ^ uvec3(push.seed, push.seed * 747796405u, push.seed ^ 0x9E3779B9u));
 	return vec3(h) * (1.0 / 4294967295.0);
+}
+
+// The planet shader's hash (planet_noise.gdshaderinc): not seeded per
+// planet, for patterns the two shaders must place identically (Quake's scars).
+vec3 hash3_plain(vec3 cell) {
+	return vec3(pcg3d(uvec3(ivec3(cell)))) * (1.0 / 4294967295.0);
 }
 
 // Gradient noise with its analytic derivative: (value, d/dx, d/dy, d/dz).
@@ -242,8 +249,17 @@ vec3 worley(vec3 p) {
 
 // Crater profile from the distance to its centre: a bowl inside the radius
 // and a raised rim around it, flat further out.
+float crater_spiked(float d0, float radius, float rim_height, float spike);
+float crater_layer_spiked(vec3 p, float empty_share, float rim_height, float spikes);
+
 float crater(float d0, float radius, float rim_height) {
-	float rim = exp(-pow((d0 - radius) / (radius * 0.22), 2.0)) * rim_height;
+	return crater_spiked(d0, radius, rim_height, 1.0);
+}
+
+// As crater(), the rim scaled by `spike` (1 = smooth; spikier rims pass a
+// per-direction factor that jumps up in narrow teeth).
+float crater_spiked(float d0, float radius, float rim_height, float spike) {
+	float rim = exp(-pow((d0 - radius) / (radius * 0.22), 2.0)) * rim_height * spike;
 	if (d0 < radius) {
 		float t = d0 / radius;
 		return -(1.0 - t * t) * 0.8 + rim;
@@ -256,6 +272,12 @@ float crater(float d0, float radius, float rim_height) {
 // neighbouring cells, not taken from the nearest one alone, so nothing jumps
 // along the cell borders.
 float crater_layer(vec3 p, float empty_share, float rim_height) {
+	return crater_layer_spiked(p, empty_share, rim_height, 0.0);
+}
+
+// As crater_layer(), with `spikes` (0 = none) raising the rims into jagged
+// teeth: tall, narrow and irregular all the way round.
+float crater_layer_spiked(vec3 p, float empty_share, float rim_height, float spikes) {
 	vec3 cell = floor(p);
 	vec3 local = p - cell;
 	float sum = 0.0;
@@ -270,7 +292,12 @@ float crater_layer(vec3 p, float empty_share, float rim_height) {
 					continue;
 				}
 				vec3 r = offset + 0.5 + (hash3(cell + offset) - 0.5) * 0.9 - local;
-				sum += crater(length(r), mix(0.2, 0.5, (roll - empty_share) / filled), rim_height);
+				float spike = 1.0;
+				if (spikes > 0.0) {
+					float teeth = noised(normalize(r) * 7.0 + (cell + offset) * 3.1).x * 1.6 + 0.3;
+					spike += spikes * pow(clamp(teeth, 0.0, 1.0), 3.0);
+				}
+				sum += crater_spiked(length(r), mix(0.2, 0.5, (roll - empty_share) / filled), rim_height, spike);
 			}
 		}
 	}
@@ -460,7 +487,7 @@ float tentacle_ridges(vec2 q, vec4 t, float start, float phase) {
 // Every eye crater and tentacle nest at dir, summed.
 float occult_marks(vec3 dir, float tentacle_height) {
 	float marks = 0.0;
-	for (int i = 0; i < 12; i++) {
+	for (int i = 0; i < 24; i++) {
 		if (float(i) >= sigil_info.x) {
 			break;
 		}
@@ -552,19 +579,52 @@ float mandel_height(vec2 q, vec4 style) {
 	return 0.5 * pow(clamp(escape / float(ITERATIONS), 0.0, 1.0), 0.6) * fade;
 }
 
+// A Rings island, in its own radii: the plateau's edge falls from x to y,
+// the moat climbs back out from z to w.
+const vec4 ISLAND_MOAT = vec4(1.02, 1.2, 1.5, 1.85);
+
+// Quake scars, carved: a bowl where the planet shader draws each scar, found
+// the same way (the planet shader's hash and `shift`), so rings and spokes
+// sit on the hole. scale, density, size, shift as quakes_at() there.
+float quake_holes(vec3 dir, float scale, float density, float size_share, float shift) {
+	vec3 p = dir * scale + vec3(shift);
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float hole = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 h = hash3_plain(cell + o + vec3(0.0, 0.0, 577.0));
+				if (h.x > density) {
+					continue;
+				}
+				vec3 off = o + 0.5 + (hash3_plain(cell + o + vec3(0.0, 57.0, 0.0)) - 0.5) * 0.7 - local;
+				float t = length(off) / (size_share * mix(0.7, 1.2, h.y));
+				if (t < 1.0) {
+					hole = max(hole, 1.0 - t * t);
+				}
+			}
+		}
+	}
+	return hole;
+}
+
 // Relief of every placed feature at dir for Swirl, Rings and Fractal.
 float feature_relief(vec3 dir, int kind) {
 	float relief = 0.0;
-	for (int i = 0; i < 12; i++) {
+	for (int i = 0; i < 24; i++) {
 		if (float(i) >= sigil_info.x) {
 			break;
 		}
 		vec4 s = sigils[i];
-		if (dot(dir, s.xyz) < cos(min(s.w * 1.4, 3.0))) {
+		vec4 extra = sigil_extra[i];
+		// A Rings island reaches out to its moat.
+		float reach = kind == RINGS && extra.z > 0.5 ? ISLAND_MOAT.w : 1.4;
+		if (dot(dir, s.xyz) < cos(min(s.w * reach, 3.0))) {
 			continue;
 		}
 		vec4 style = sigil_styles[i];
-		vec4 extra = sigil_extra[i];
 		vec2 q = sigil_frame(dir, s, style.x);
 		if (kind == SWIRL) {
 			// Arm 0 a raised shell ridge, arm 1 a pit of the same shape.
@@ -572,11 +632,76 @@ float feature_relief(vec3 dir, int kind) {
 			relief += w.x * w.w * mix(0.6, -extra.y, w.y) * extra.x;
 		} else if (kind == RINGS) {
 			relief += ring_parts(q, style, extra).x * extra.y;
+			if (extra.z > 0.5) {
+				// An island: the ring set raised on a plateau, ringed by a moat
+				// deep enough to be the planet's lowest ground, so the sea
+				// fills it and nothing else.
+				float r = length(q);
+				relief += extra.w * (1.0 - smoothstep(ISLAND_MOAT.x, ISLAND_MOAT.y, r));
+				relief -= 2.4 * smoothstep(ISLAND_MOAT.x, ISLAND_MOAT.y, r) * (1.0 - smoothstep(ISLAND_MOAT.z, ISLAND_MOAT.w, r));
+			}
 		} else {
 			relief = max(relief, mandel_height(q, style));
 		}
 	}
 	return relief;
+}
+
+// Meridian lines: mountain ridges and carved valleys running pole to pole,
+// each on a course of its own, so they wander, lean and cross. Line i:
+//   style = (longitude at the equator, swing (radians of longitude), swings
+//            from pole to pole, phase)
+//   extra = (course: 0 straight, 1 curving, 2 zig-zag; lean (radians of
+//            longitude from pole to pole); half-width (radians); height, < 0
+//            a valley)
+// They taper out toward the poles, where every line meets.
+float meridian_relief(vec3 dir) {
+	vec3 axis = pole.xyz;
+	vec3 helper = abs(axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+	vec3 e1 = normalize(cross(axis, helper));
+	vec3 e2 = cross(axis, e1);
+	float s = clamp(dot(dir, axis), -1.0, 1.0);
+	float t = asin(s) / 1.5707963;
+	float ring = sqrt(max(1.0 - s * s, 0.0));
+	float lon = atan(dot(dir, e2), dot(dir, e1));
+	float polar = 1.0 - smoothstep(0.72, 0.95, abs(t));
+	if (polar <= 0.0) {
+		return 0.0;
+	}
+	// Crests break into peaks and saddles; floors stay smoother.
+	float crest = 0.45 + 0.8 * ridged(dir * 7.0 + 11.0, octaves_for(7.0, 5));
+	float floor_rough = 0.85 + 0.3 * fbm(dir * 5.0 + 23.0, 3);
+
+	float relief = 0.0;
+	for (int i = 0; i < 24; i++) {
+		if (float(i) >= sigil_info.x) {
+			break;
+		}
+		vec4 st = sigil_styles[i];
+		vec4 ex = sigil_extra[i];
+		float x = st.z * 0.5 * t + st.w;
+		float wave = 0.0;
+		float slope = 0.0;
+		if (ex.x > 1.5) {
+			float f = fract(x + 0.25);
+			wave = 1.0 - 4.0 * abs(f - 0.5);
+			slope = f < 0.5 ? 4.0 : -4.0;
+		} else if (ex.x > 0.5) {
+			wave = sin(6.2831853 * x);
+			slope = 6.2831853 * cos(6.2831853 * x);
+		}
+		float centre = st.x + ex.y * t + st.y * wave;
+		float d_lon = mod(lon - centre + 3.14159265, 6.2831853) - 3.14159265;
+		// Distance across the line, not along the parallel, so the slanted legs
+		// of a zig-zag come out as wide as the rest.
+		float lean = (ex.y + st.y * slope * st.z * 0.5) / 1.5707963 * ring;
+		float across = abs(d_lon) * ring / sqrt(1.0 + lean * lean);
+		// The width breathes along the line.
+		float width = ex.z * (0.75 + 0.5 * (noised(vec3(t * 5.0, float(i) * 1.7, 0.5)).x * 0.5 + 0.5));
+		float bump = exp(-(across * across) / (width * width));
+		relief += ex.w * bump * (ex.w > 0.0 ? crest : floor_rough);
+	}
+	return relief * polar;
 }
 
 // Giant four-petal flowers on lily pads, one per cell in a `density` share of
@@ -709,7 +834,13 @@ float raw_height(vec3 dir) {
 		float steps = max(b.x, 1.0);
 		float t = base * steps;
 		float stepped = (floor(t) + smoothstep(0.25, 0.75, fract(t))) / steps;
-		return mix(base, stepped, clamp(b.y, 0.0, 0.95));
+		float h = mix(base, stepped, clamp(b.y, 0.0, 0.95));
+		// c: canyon scale, width, depth (0 = none), wander - deep valleys cut
+		//    below everything else, which PlanetTerrain floods with lava
+		if (c.z > 0.0) {
+			h -= channels(dir * frequency * c.x + 71.0, c.y, c.w) * c.z;
+		}
+		return h;
 	}
 
 	if (kind == VOLCANIC) {
@@ -740,11 +871,11 @@ float raw_height(vec3 dir) {
 		// a: continent, peak and erosion weights, crater-free share of cells
 		// b: big, small and tiny crater weights, rim height
 		// c: riverbed scale, width, depth, maria amount
-		// e: riverbed wander, maria depth, crater scale
+		// e: riverbed wander, maria depth, crater scale, rim spikes (0 = none)
 		float erosion = erosion_at(dir, frequency, 3.0);
 		vec3 cp = dir * frequency * e.z;
-		float craters = crater_layer(cp * 3.5 + 7.0, a.w, b.w) * b.x
-			+ crater_layer(cp * 9.0 + 19.0, a.w, b.w) * b.y
+		float craters = crater_layer_spiked(cp * 3.5 + 7.0, a.w, b.w, e.w) * b.x
+			+ crater_layer_spiked(cp * 9.0 + 19.0, a.w, b.w, e.w) * b.y
 			+ crater_layer(cp * 24.0 + 31.0, a.w, b.w) * b.z
 			+ crater_layer(cp * 60.0 + 43.0, a.w, b.w) * 0.015;
 		float ground = continent * a.x + peaks * a.y + erosion * a.z;
@@ -807,10 +938,31 @@ float raw_height(vec3 dir) {
 		return max(floor_height, flower_layer(dir, a.y, a.z, a.w));
 	}
 
-	if (kind == SWIRL || kind == RINGS) {
+	if (kind == SWIRL) {
 		// a: continent, peak and erosion weights, feature ridge weight
 		float erosion = erosion_at(dir, frequency, 3.0);
 		return continent * a.x + peaks * a.y + erosion * a.z + feature_relief(dir, kind) * a.w;
+	}
+
+	if (kind == RINGS) {
+		// a: continent, peak and erosion weights, ring ridge weight
+		// b: sand-hill weight (0 = none), sand-hill scale, volcano weight
+		//    (0 = none), volcano scale
+		// c.x: share of cells with a volcano
+		float erosion = erosion_at(dir, frequency, 3.0);
+		float h = continent * a.x + peaks * a.y + erosion * a.z + feature_relief(dir, kind) * a.w;
+		if (b.x > 0.0) {
+			// Sand hills in patches, rounded and running in rows.
+			float dune = 1.0 - abs(noised(dir * frequency * b.y + 83.0).x * 2.0);
+			float sandy = smoothstep(0.0, 0.35, fbm(p * 0.5 + 131.0, 3) * 1.6);
+			h += dune * dune * b.x * sandy;
+		}
+		if (b.z > 0.0) {
+			// A few volcanoes: lone cones, each with a caldera at the top.
+			float cone = peak_layer(dir * frequency * b.w + 151.0, c.x, 1.6);
+			h += (cone - smoothstep(0.8, 0.95, cone) * 0.45) * b.z;
+		}
+		return h;
 	}
 
 	if (kind == FRACTAL) {
@@ -819,9 +971,23 @@ float raw_height(vec3 dir) {
 		return continent * a.x + peaks * a.y + erosion * a.z + feature_relief(dir, FRACTAL) * a.w;
 	}
 
-	if (kind == GLOOM || kind == QUAKE || kind == MERIDIAN) {
-		// a: continent, peak and erosion weights. Their cracks and lines are
-		// drawn by the planet shader, not carved here.
+	if (kind == MERIDIAN) {
+		// a: continent, peak and erosion weights, line weight
+		float erosion = erosion_at(dir, frequency, 3.0);
+		return continent * a.x + peaks * a.y + erosion * a.z + meridian_relief(dir) * a.w;
+	}
+
+	if (kind == QUAKE) {
+		// a: continent, peak and erosion weights, hole depth
+		// b: scar scale, density, size, shift - quake_* in the planet shader,
+		//    which draws the scars' rings and spokes over these holes
+		float erosion = erosion_at(dir, frequency, 3.0);
+		return continent * a.x + peaks * a.y + erosion * a.z - quake_holes(dir, b.x, b.y, b.z, b.w) * a.w;
+	}
+
+	if (kind == GLOOM) {
+		// a: continent, peak and erosion weights. Its cracks are drawn by the
+		// planet shader, not carved here.
 		float erosion = erosion_at(dir, frequency, 3.0);
 		return continent * a.x + peaks * a.y + erosion * a.z;
 	}
@@ -836,8 +1002,14 @@ float raw_height(vec3 dir) {
 		vec3 dp = dir * frequency * a.w;
 		dp += pole.xyz * dot(dp, pole.xyz) * 2.0;
 		float dune = 1.0 - abs(noised(dp + 83.0).x * 2.0);
+		// c: river scale, width, depth (0 = no rivers), wander - long beds cut
+		//    as deep as the puddles, so the muddy water runs along them too
 		float puddles = pit_layer(dir * frequency * b.z + 23.0, b.x);
-		return continent * a.x + dune * dune * a.y + erosion * a.z - puddles * b.y;
+		float h = continent * a.x + dune * dune * a.y + erosion * a.z - puddles * b.y;
+		if (c.z > 0.0) {
+			h -= channels(dir * frequency * c.x + 61.0, c.y, c.w) * c.z;
+		}
+		return h;
 	}
 
 	if (kind == BLOOM) {
