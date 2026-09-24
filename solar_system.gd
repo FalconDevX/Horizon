@@ -30,7 +30,7 @@ enum AutopilotPhase {
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
 ## planets. N rerolls it in game.
-@export var world_seed: int = 0
+@export var world_seed: int = 20260924
 
 ## How much of each kind's designed range a planet may use (see the _roll_*()
 ## functions in planet_terrain.gd): 0 is every kind's textbook look, 1 the full
