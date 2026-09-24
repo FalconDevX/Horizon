@@ -150,6 +150,75 @@ static func hyperbolic_time_to_radius(rp: float, vinf: float, r: float, mu: floa
 	return (e * sinh(fh) - fh) / sqrt(mu / pow(-a, 3))
 
 
+## Lambert's problem, single revolution, universal variables (Curtis, alg. 5.2):
+## the velocity needed at r1 to reach r2 after `tof` seconds round a body of
+## gravitational parameter mu. `prograde` picks the counter-clockwise transfer
+## (the way the planets orbit here). Returns {ok, v1, v2}.
+static func lambert(r1: Vector2, r2: Vector2, tof: float, mu: float, prograde: bool = true) -> Dictionary:
+	var fail := {"ok": false, "v1": Vector2.ZERO, "v2": Vector2.ZERO}
+	var r1n: float = r1.length()
+	var r2n: float = r2.length()
+	if r1n < 1e-6 or r2n < 1e-6 or tof <= 0.0:
+		return fail
+
+	var cos_dtheta: float = clampf(r1.dot(r2) / (r1n * r2n), -1.0, 1.0)
+	var dtheta: float = acos(cos_dtheta)
+	var cross_z: float = r1.x * r2.y - r1.y * r2.x
+	if (prograde and cross_z < 0.0) or (not prograde and cross_z >= 0.0):
+		dtheta = TAU - dtheta
+	# Degenerate geometry: the transfer plane is undefined 180 degrees apart.
+	if absf(1.0 - cos(dtheta)) < 1e-8 or absf(sin(dtheta)) < 1e-6:
+		return fail
+
+	var a_coef: float = sin(dtheta) * sqrt(r1n * r2n / (1.0 - cos(dtheta)))
+	var sqrt_mu: float = sqrt(mu)
+
+	# y(z) must stay positive; F(z) grows with z, so bisect for F(z) = 0.
+	# Very negative z is a fast hyperbola; cosh stays finite well past -2000.
+	var z_lo: float = -2000.0
+	var z_hi: float = 4.0 * PI * PI - 1e-6
+	for _i in range(200):
+		if _lambert_y(z_lo, r1n, r2n, a_coef) > 0.0:
+			break
+		z_lo += 0.05 * (z_hi - z_lo)
+	if _lambert_y(z_lo, r1n, r2n, a_coef) <= 0.0:
+		return fail
+	if _lambert_f(z_hi, r1n, r2n, a_coef, sqrt_mu, tof) < 0.0:
+		return fail # would need more than one revolution
+	if _lambert_f(z_lo, r1n, r2n, a_coef, sqrt_mu, tof) > 0.0:
+		return fail
+
+	var z: float = 0.0
+	for _i in range(80):
+		z = 0.5 * (z_lo + z_hi)
+		if _lambert_f(z, r1n, r2n, a_coef, sqrt_mu, tof) > 0.0:
+			z_hi = z
+		else:
+			z_lo = z
+
+	var y: float = _lambert_y(z, r1n, r2n, a_coef)
+	if y <= 0.0:
+		return fail
+	var f: float = 1.0 - y / r1n
+	var g: float = a_coef * sqrt(y / mu)
+	var g_dot: float = 1.0 - y / r2n
+	if absf(g) < 1e-9:
+		return fail
+	return {"ok": true, "v1": (r2 - f * r1) / g, "v2": (g_dot * r2 - r1) / g}
+
+
+static func _lambert_y(z: float, r1n: float, r2n: float, a_coef: float) -> float:
+	return r1n + r2n + a_coef * (z * stumpff_s(z) - 1.0) / sqrt(stumpff_c(z))
+
+
+static func _lambert_f(z: float, r1n: float, r2n: float, a_coef: float, sqrt_mu: float, tof: float) -> float:
+	var y: float = _lambert_y(z, r1n, r2n, a_coef)
+	if y <= 0.0:
+		return -INF
+	var c: float = stumpff_c(z)
+	return pow(y / c, 1.5) * stumpff_s(z) + a_coef * sqrt(y) - sqrt_mu * tof
+
+
 static func tangent_dir(r: Vector2, sgn: float) -> Vector2:
 	var rh: Vector2 = r.normalized()
 	return Vector2(-rh.y, rh.x) * sgn

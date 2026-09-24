@@ -56,9 +56,12 @@ const CATEGORY_LABELS: Dictionary = {
 var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[ModuleData]
 var _category_tabs: CategoryTabBar
 var _module_grid: GridContainer
+var _shown_category: int = -1
 
 const GRID_H_SEPARATION := 8
 const SLOT_TARGET_WIDTH := 140.0
+## Engine rows: width of the family-name column on the left.
+const ENGINE_NAME_WIDTH := 170.0
 
 
 func get_hull() -> ShipHull:
@@ -316,6 +319,10 @@ func _on_inventory_resized() -> void:
 func _update_grid_columns() -> void:
 	if _module_grid == null:
 		return
+	# Engines are laid out one family per row (see _show_engine_rows).
+	if _shown_category == ModuleData.Category.ENGINE:
+		_module_grid.columns = 1
+		return
 	var width: float = _inventory.size.x
 	if width < 1.0:
 		var scroll := _inventory.get_parent() as Control
@@ -338,23 +345,59 @@ func _show_category(category: ModuleData.Category) -> void:
 	for child in _module_grid.get_children():
 		child.queue_free()
 
+	_shown_category = category
 	_update_grid_columns()
 
 	var modules: Array = _modules_by_category.get(category, [])
+	if category == ModuleData.Category.ENGINE:
+		_show_engine_rows(modules)
+		return
 	for module: ModuleData in modules:
 		var slot := ModuleInventorySlot.new()
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_module_grid.add_child(slot)
 		slot.setup(module)
 		slot.module_selected.connect(_on_inventory_module_selected)
-		slot.drag_started.connect(_on_inventory_drag_started)
+
+
+## One row per engine family, top to bottom: the family name on the left and
+## its S / M / L sizes side by side.
+func _show_engine_rows(modules: Array) -> void:
+	var families: Array[String] = []
+	var by_family: Dictionary = {}
+	for module: ModuleData in modules:
+		var family: String = module.family if module.family != "" else module.title
+		if not by_family.has(family):
+			by_family[family] = []
+			families.append(family)
+		(by_family[family] as Array).append(module)
+
+	for family in families:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		_module_grid.add_child(row)
+
+		var name_label := Label.new()
+		name_label.text = family
+		name_label.custom_minimum_size.x = ENGINE_NAME_WIDTH
+		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		name_label.size_flags_vertical = Control.SIZE_FILL
+		name_label.add_theme_font_override("font", HudPanelStyle.get_font())
+		name_label.add_theme_font_size_override("font_size", 14)
+		name_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_PRIMARY)
+		row.add_child(name_label)
+
+		for module: ModuleData in by_family[family]:
+			var slot := ModuleInventorySlot.new()
+			row.add_child(slot)
+			# Added first so its own _ready defaults are in place, then pinned.
+			slot.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+			slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			slot.setup(module)
+			slot.module_selected.connect(_on_inventory_module_selected)
 
 
 func _on_inventory_module_selected(module: ModuleData) -> void:
-	_grid_ui.hold_module(module, 0)
-
-
-func _on_inventory_drag_started(module: ModuleData) -> void:
 	_grid_ui.hold_module(module, 0)
 
 
@@ -377,8 +420,6 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 	var link := ""
 	if not _ship_hull.are_hulls_connected():
 		link += " ⚠ Hulls not connected - use a Connector."
-	if not _ship_hull.are_ship_rcs_sides_covered():
-		link += " ⚠ Ship needs 1 RCS on each side except the main-engine side."
 	if module == null:
 		_hint.text = link.strip_edges()
 	else:
@@ -394,10 +435,7 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 			ModuleData.Category.RADAR:
 				floor_hint = "deck"
 			ModuleData.Category.ENGINE:
-				if module.is_corrective_engine:
-					floor_hint = "truss next to normal deck (not orange mount)"
-				else:
-					floor_hint = "orange mount only (≥1 cell) + optional truss overhang"
+				floor_hint = "orange mount only (≥1 cell) + optional truss overhang"
 			_:
 				if module.is_deck_equipment():
 					floor_hint = "deck"

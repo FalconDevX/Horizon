@@ -2,7 +2,6 @@ extends Control
 
 
 var autopilot_active := false
-var rcs_active := false
 var throttle_locked := false
 var throttle := 0.0
 
@@ -23,17 +22,15 @@ const COLOR_WARN := HudPanelStyle.COLOR_AMBER
 const COLOR_AUTOPILOT := HudPanelStyle.COLOR_EMERALD
 
 
-func set_state(p_autopilot: bool, p_rcs: bool, p_lock: bool, p_throttle: float) -> void:
+func set_state(p_autopilot: bool, p_lock: bool, p_throttle: float) -> void:
 	if (
 		autopilot_active == p_autopilot
-		and rcs_active == p_rcs
 		and throttle_locked == p_lock
 		and is_equal_approx(throttle, p_throttle)
 	):
 		return
 
 	autopilot_active = p_autopilot
-	rcs_active = p_rcs
 	throttle_locked = p_lock
 	throttle = p_throttle
 	queue_redraw()
@@ -44,7 +41,6 @@ func _draw() -> void:
 
 	var chips := [
 		{"label": "AUTOPILOT", "on": autopilot_active, "warn": false, "color": COLOR_AUTOPILOT},
-		{"label": "RCS", "on": rcs_active, "warn": false, "color": COLOR_ON},
 		{"label": "LOCK (X)", "on": throttle_locked, "warn": throttle_locked, "color": COLOR_WARN},
 	]
 

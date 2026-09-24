@@ -78,6 +78,10 @@ func _process(_delta: float) -> bool:
 
 	world.get_node("HUD").visible = false
 	world.camera_follow_ship = false
+	# The loading screen fades out on its own schedule; it must not be in shot.
+	var loading: CanvasLayer = world.get("loading_screen")
+	if loading != null:
+		loading.visible = false
 
 	if waiting_for_bake:
 		return _wait_for_bakes()

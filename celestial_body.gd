@@ -9,6 +9,7 @@ const STAR_SHADER := preload("res://planet_star.gdshader")
 const CORONA_SHADER := preload("res://planet_corona.gdshader")
 const CLOUDS_SHADER := preload("res://planet_clouds.gdshader")
 const ATMOSPHERE_SHADER := preload("res://planet_atmosphere.gdshader")
+const RINGS_SHADER := preload("res://planet_rings.gdshader")
 
 ## How far the atmosphere's glow reaches past the surface, in radii.
 const ATMOSPHERE_DEPTH := 0.12
@@ -32,7 +33,7 @@ const MAX_SPIN_WARP := 10.0
 
 ## Scales every body's surface_spin_speed, so the whole system can be made to
 ## turn slower or faster without retuning each planet in the scene.
-const SPIN_SPEED_SCALE := 0.25
+const SPIN_SPEED_SCALE := 0.06
 
 ## Quads along one edge of each cube face of the sphere mesh.
 const SPHERE_SUBDIVISIONS_LOW := 12
@@ -190,6 +191,16 @@ var surface_style: int = 0
 )
 var terrain_kind: int = 0
 
+## Rings in the equatorial plane (perpendicular to surface_spin_axis) - lean the
+## axis toward the viewer or they are seen edge-on as a thin line. Terrain
+## planets only: the colours come from the rolled palette, and the planet shader
+## draws their shadow.
+@export var has_rings: bool = false
+
+## Inner and outer edge of the ring system, in planet radii.
+@export_range(1.05, 5.0, 0.01) var ring_inner_radius: float = 1.35
+@export_range(1.1, 6.0, 0.01) var ring_outer_radius: float = 2.35
+
 ## Texels along one edge of each of the six heightmap faces.
 @export_range(32, 1024, 16) var terrain_resolution: int = 1024
 
@@ -233,6 +244,8 @@ var _clouds_3d: MeshInstance3D = null
 ## The atmosphere's glow shell, likewise. Only worlds with weather (or giants)
 ## get one - an airless rock shows a hard edge against space.
 var _atmosphere_3d: MeshInstance3D = null
+## The ring quad, a child of the sphere (planet_rings.gdshader).
+var _rings_3d: MeshInstance3D = null
 
 ## Resolved terrain look (PlanetTerrain.resolve) and, once baked, the heightmap
 ## itself (PlanetTerrain.bake). Empty until then.
@@ -370,6 +383,16 @@ func _build_visual_3d() -> void:
 func _sync_visual_position() -> void:
 	var planar: Vector2 = global_position
 	_anchor_3d.position = Vector3(planar.x, 0.0, planar.y)
+
+
+## Moves the 3D visuals to the current position without interpolating from the
+## old one - for teleports such as the random start phase.
+func snap_visual_position() -> void:
+	reset_physics_interpolation()
+	if _anchor_3d == null:
+		return
+	_sync_visual_position()
+	_anchor_3d.reset_physics_interpolation()
 
 
 func _update_visual_colors() -> void:
@@ -575,6 +598,9 @@ func _build_atmosphere(p: Dictionary) -> void:
 	material.set_shader_parameter("scale_height", ATMOSPHERE_DEPTH * 0.3)
 	material.set_shader_parameter("atmo_color", p["atmo"])
 	material.set_shader_parameter("strength", maxf(p["atmo_strength"], 0.4))
+	material.set_shader_parameter("pole_axis", surface_spin_axis)
+	material.set_shader_parameter("seed_offset", _seed_offset())
+	_push_aurora(material, p)
 
 	_atmosphere_3d = MeshInstance3D.new()
 	_atmosphere_3d.mesh = _sphere_3d.mesh
@@ -583,6 +609,59 @@ func _build_atmosphere(p: Dictionary) -> void:
 	_atmosphere_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_sphere_3d.add_child(_atmosphere_3d)
 	_update_visual_bounds()
+
+
+## The rings: one flat quad in the equatorial plane, shaded by
+## planet_rings.gdshader. Their shadow on the globe is drawn by the terrain
+## shader from the same profile, so both get the same ring parameters.
+func _build_rings(p: Dictionary) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = generation_seed ^ 0x51A7
+	var ring_seed: float = rng.randf_range(0.0, 100.0)
+	var opacity: float = rng.randf_range(0.75, 0.92)
+
+	# Colours from the planet's own palette, washed toward dusty ice so the
+	# rings read as related to the bands without copying them.
+	var land: Array = p["land"]
+	var ice := Color(0.88, 0.84, 0.76)
+	var dust := Color(0.42, 0.37, 0.32)
+	var inner: Color = (land[0] as Color).lerp(dust, 0.45)
+	var outer: Color = (land[land.size() - 1] as Color).lerp(ice, 0.5)
+	var accent: Color = (land[rng.randi_range(1, land.size() - 2)] as Color).lerp(ice, 0.25)
+
+	var material := ShaderMaterial.new()
+	material.shader = RINGS_SHADER
+	material.set_shader_parameter("ring_color_inner", inner)
+	material.set_shader_parameter("ring_color_outer", outer)
+	material.set_shader_parameter("ring_color_accent", accent)
+	for m: ShaderMaterial in [material, terrain_material]:
+		m.set_shader_parameter("ring_inner", ring_inner_radius)
+		m.set_shader_parameter("ring_outer", ring_outer_radius)
+		m.set_shader_parameter("ring_opacity", opacity)
+		m.set_shader_parameter("ring_seed", ring_seed)
+
+	var quad := PlaneMesh.new()
+	quad.size = Vector2.ONE * ring_outer_radius * 2.0
+
+	_rings_3d = MeshInstance3D.new()
+	_rings_3d.name = "Rings"
+	_rings_3d.mesh = quad
+	_rings_3d.material_override = material
+	_rings_3d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_rings_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	# PlaneMesh lies in XZ facing +Y; turn +Y onto the pole. The sphere spins
+	# about that same axis, so the plane stays put as it turns.
+	_rings_3d.basis = _basis_with_up(surface_spin_axis)
+	_sphere_3d.add_child(_rings_3d)
+	update_surface_scale()
+
+
+static func _basis_with_up(up: Vector3) -> Basis:
+	var y: Vector3 = up.normalized()
+	var helper: Vector3 = Vector3.RIGHT if absf(y.x) < 0.9 else Vector3.FORWARD
+	var z: Vector3 = helper.cross(y).normalized()
+	var x: Vector3 = y.cross(z)
+	return Basis(x, y, z)
 
 
 func _atmosphere_shell_radius() -> float:
@@ -615,6 +694,13 @@ func make_preview() -> Node3D:
 		copy.material_override = shell.material_override
 		copy.custom_aabb = bounds
 		sphere.add_child(copy)
+
+	if _rings_3d != null:
+		var rings := MeshInstance3D.new()
+		rings.mesh = _rings_3d.mesh
+		rings.material_override = _rings_3d.material_override
+		rings.basis = _rings_3d.basis
+		sphere.add_child(rings)
 
 	if is_star:
 		var corona := MeshInstance3D.new()
@@ -681,6 +767,7 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("dry_amount", p["dry_amount"])
 	terrain_material.set_shader_parameter("strata", p["strata"])
 	terrain_material.set_shader_parameter("slope_rock", p["slope_rock"])
+	terrain_material.set_shader_parameter("rock_patches", p["rock_patches"])
 	terrain_material.set_shader_parameter("cap_color", p["cap"])
 	terrain_material.set_shader_parameter("cap_latitude", p["cap_latitude"])
 	terrain_material.set_shader_parameter("pole_axis", surface_spin_axis)
@@ -698,6 +785,8 @@ func build_terrain() -> void:
 		_build_clouds(p, cyclones)
 	if p["clouds"] > 0.0 or PlanetTerrain.is_gas(kind):
 		_build_atmosphere(p)
+	if has_rings:
+		_build_rings(p)
 	terrain_material.set_shader_parameter("seed_offset", _seed_offset())
 	_push_terrain_effects(p)
 
@@ -735,14 +824,7 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("terminator_softness", p["terminator"])
 	m.set_shader_parameter("shade_contrast", p["shade_contrast"])
 
-	var aurora_colors: Array = p["aurora_colors"]
-	m.set_shader_parameter("aurora_strength", p["aurora"])
-	m.set_shader_parameter("aurora_latitude", p["aurora_latitude"])
-	m.set_shader_parameter("aurora_width", p["aurora_width"])
-	m.set_shader_parameter("aurora_speed", p["aurora_speed"])
-	m.set_shader_parameter("aurora_color_a", aurora_colors[0])
-	m.set_shader_parameter("aurora_color_b", aurora_colors[1])
-	m.set_shader_parameter("aurora_color_c", aurora_colors[2])
+	_push_aurora(m, p)
 
 	m.set_shader_parameter("crack_strength", p["cracks"])
 	m.set_shader_parameter("crack_color", p["crack_color"])
@@ -781,6 +863,19 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("mist_strength", p["mist"])
 	m.set_shader_parameter("mist_color", p["mist_color"])
 	m.set_shader_parameter("mist_height", p["mist_height"])
+
+
+## The aurora's look, for any material that includes planet_aurora.gdshaderinc
+## - the ground and the air draw the same curtains.
+func _push_aurora(m: ShaderMaterial, p: Dictionary) -> void:
+	var aurora_colors: Array = p["aurora_colors"]
+	m.set_shader_parameter("aurora_strength", p["aurora"])
+	m.set_shader_parameter("aurora_latitude", p["aurora_latitude"])
+	m.set_shader_parameter("aurora_width", p["aurora_width"])
+	m.set_shader_parameter("aurora_speed", p["aurora_speed"])
+	m.set_shader_parameter("aurora_color_a", aurora_colors[0])
+	m.set_shader_parameter("aurora_color_b", aurora_colors[1])
+	m.set_shader_parameter("aurora_color_c", aurora_colors[2])
 
 
 func _apply_terrain(data: Dictionary) -> void:
@@ -830,6 +925,11 @@ func _clear_deposits() -> void:
 	resource_deposits = []
 
 
+## False while the heightmap is still baking - the loading screen waits on it.
+func is_surface_ready() -> bool:
+	return _terrain_task < 0
+
+
 ## Terrain height 0..1 under a planet-space direction (0 until the bake lands).
 ## Multiply by the kind's relief and the radius for a distance above the sea.
 func terrain_height_at(planet_direction: Vector3) -> float:
@@ -856,11 +956,12 @@ func rebuild_surface() -> void:
 	if _uses_terrain():
 		# The new world may have clouds, air, or neither; build_terrain() makes
 		# whatever it needs.
-		for shell: MeshInstance3D in [_clouds_3d, _atmosphere_3d]:
+		for shell: MeshInstance3D in [_clouds_3d, _atmosphere_3d, _rings_3d]:
 			if shell != null:
 				shell.queue_free()
 		_clouds_3d = null
 		_atmosphere_3d = null
+		_rings_3d = null
 		_clear_deposits()
 		terrain_material = null
 		terrain_data = {}
@@ -966,7 +1067,9 @@ func update_surface_scale() -> void:
 		_apply_sphere_transform()
 		var glow_diameter: float = get_draw_radius() * (CORONA_EXTENT if is_star else 2.0) * 2.0
 		_glow_3d.scale = Vector3(glow_diameter, 1.0, glow_diameter)
-		_glow_3d.position = Vector3(0.0, -get_draw_radius() * (1.0 + _visual_relief()) - 1.0, 0.0)
+		# Below everything the body draws, rings included.
+		var depth: float = maxf(1.0 + _visual_relief(), ring_outer_radius if _rings_3d != null else 0.0)
+		_glow_3d.position = Vector3(0.0, -get_draw_radius() * depth - 1.0, 0.0)
 		return
 
 	if surface_sprite == null:

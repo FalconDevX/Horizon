@@ -17,15 +17,15 @@ const SAMPLES_PER_PERIOD := 16
 const REFINE_ITERATIONS := 8
 const VERIFIED_CANDIDATES := 4
 const TARGET_ITERATIONS := 20
-const TARGET_TOLERANCE := 15.0
-const CORRECTION_TOLERANCE := 40.0
-const MAX_TARGET_STEP := 50.0
+const TARGET_TOLERANCE := 60.0
+const CORRECTION_TOLERANCE := 160.0
+const MAX_TARGET_STEP := 200.0
 const BURN_DT := 0.5
 const MIN_DT := 0.25
 const MAX_DT := 40.0
-const DT_FACTOR := 0.003
+const DT_FACTOR := 0.00075
 const MAX_ESCAPE_TIME := 30000.0
-const RECORD_SPACING := 25.0
+const RECORD_SPACING := 100.0
 
 
 static func simulate(ctx: Dictionary, st: Dictionary, stop: int, t_stop: float, record: bool) -> Dictionary:

@@ -187,7 +187,7 @@ static func _base(r: Roller) -> Dictionary:
 		"variant": "",
 		"liquid": false, "coverage": 0.0,
 		"shallow": Color.BLACK, "deep": Color.BLACK, "emission": 0.0, "gloss": 0.0, "crust": 0.0,
-		"rock": Color(0.35, 0.33, 0.31), "slope_rock": 0.0, "strata": 0.0,
+		"rock": Color(0.35, 0.33, 0.31), "slope_rock": 0.0, "rock_patches": 0.0, "strata": 0.0,
 		"dry": Color.BLACK, "dry_amount": 0.0,
 		"cap": Color.WHITE, "cap_latitude": 2.0,
 		"atmo": Color.BLACK, "atmo_strength": 0.0, "haze": 0.0,

@@ -4,33 +4,24 @@ signal clicked
 
 const SHIP_TEXTURE := preload("res://textures/ship_blueprint.png")
 
-const FRONT_POS := Vector2(0.50, 0.10)
-const BACK_POS := Vector2(0.50, 0.72)
-const LEFT_POS := Vector2(0.03, 0.47)
-const RIGHT_POS := Vector2(0.96, 0.475)
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 
-const RCS_COLOR := HudPanelStyle.COLOR_CYAN
-const RCS_CORE_COLOR := Color(0.8, 0.95, 1.0)
 const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
 const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
 const LINE_COLOR := Color(0.6, 0.65, 0.72, 0.9)
-const RCS_ACTIVE_THRESHOLD := 0.05
 
 var throttle := 0.0
-var rcs_command := Vector2.ZERO
 
 
 func _process(_delta: float) -> void:
-	if throttle > 0.0 or rcs_command.length() > RCS_ACTIVE_THRESHOLD:
+	if throttle > 0.0:
 		queue_redraw()
 
 
-func set_state(p_throttle: float, p_rcs_command: Vector2) -> void:
-	if is_equal_approx(throttle, p_throttle) and rcs_command.is_equal_approx(p_rcs_command):
+func set_state(p_throttle: float) -> void:
+	if is_equal_approx(throttle, p_throttle):
 		return
 	throttle = p_throttle
-	rcs_command = p_rcs_command
 	queue_redraw()
 
 
@@ -51,22 +42,6 @@ func _draw() -> void:
 	var scale_ref: float = minf(image_rect.size.x, image_rect.size.y)
 
 	_draw_engine_flame(image_rect, scale_ref)
-	_draw_rcs_flame(
-		image_rect.position + FRONT_POS * image_rect.size, Vector2.UP,
-		rcs_command.x < -RCS_ACTIVE_THRESHOLD, scale_ref, 0.0, "FWD"
-	)
-	_draw_rcs_flame(
-		image_rect.position + BACK_POS * image_rect.size, Vector2.DOWN,
-		rcs_command.x > RCS_ACTIVE_THRESHOLD, scale_ref, 1.7, "AFT"
-	)
-	_draw_rcs_flame(
-		image_rect.position + LEFT_POS * image_rect.size, Vector2.LEFT,
-		rcs_command.y < -RCS_ACTIVE_THRESHOLD, scale_ref, 3.4, "L"
-	)
-	_draw_rcs_flame(
-		image_rect.position + RIGHT_POS * image_rect.size, Vector2.RIGHT,
-		rcs_command.y > RCS_ACTIVE_THRESHOLD, scale_ref, 5.1, "R"
-	)
 
 	var engine_label_pos: Vector2 = image_rect.position + ENGINE_EXIT_POS * image_rect.size + Vector2(-15.0, 10.0)
 	draw_string(
@@ -93,7 +68,8 @@ func _fit_rect() -> Rect2:
 # of a plain triangle) + sparks flying along the stream - more "life"
 # than a flat shape, but still cheap (no particles/shaders).
 func _draw_engine_flame(image_rect: Rect2, scale_ref: float) -> void:
-	if throttle <= 0.0:
+	# A near-zero flame folds into degenerate polygons Godot cannot triangulate.
+	if throttle <= 0.02:
 		return
 
 	var tip: Vector2 = image_rect.position + ENGINE_EXIT_POS * image_rect.size
@@ -163,39 +139,5 @@ func _draw_sparks(
 		var alpha: float = (1.0 - f) * 0.8
 		var radius: float = maxf(0.6, 1.4 * (1.0 - f * 0.6) * (half_width / 6.0))
 		draw_circle(pos, radius, Color(spark_color, alpha))
-
-
-func _draw_rcs_flame(
-	pos: Vector2, outward_dir: Vector2, active: bool, scale_ref: float, phase: float, label: String
-) -> void:
-	draw_circle(pos, 3.0, RCS_COLOR if active else Color(LINE_COLOR, 0.35))
-
-	var font: Font = HudPanelStyle.get_font()
-	var label_pos: Vector2 = pos - outward_dir * 14.0 - Vector2(15.0, 0.0)
-	draw_string(
-		font, label_pos, label, HORIZONTAL_ALIGNMENT_CENTER, 30.0, 8,
-		Color(RCS_COLOR, 0.9) if active else Color(LINE_COLOR, 0.5)
-	)
-
-	if not active:
-		return
-
-	var t: float = Time.get_ticks_msec() / 1000.0
-	var flicker: float = 0.75 + 0.25 * sin(t * 19.0 + phase) + 0.15 * sin(t * 53.0 + phase * 2.0)
-	var length: float = 0.13 * scale_ref * flicker
-	var half_width: float = 0.045 * scale_ref
-	var base: Vector2 = pos + outward_dir * 3.0
-
-	_draw_wavy_flame(base, outward_dir, outward_dir.orthogonal(), half_width, length, t + phase, Color(RCS_COLOR, 0.7 * flicker))
-	_draw_sparks(base, outward_dir, outward_dir.orthogonal(), half_width, length, t + phase, RCS_CORE_COLOR)
-
-	draw_colored_polygon(
-		PackedVector2Array([
-			base + outward_dir.orthogonal() * half_width * 0.4,
-			base - outward_dir.orthogonal() * half_width * 0.4,
-			base + outward_dir * length * 0.55
-		]),
-		Color(RCS_CORE_COLOR, 0.9 * flicker)
-	)
 
 

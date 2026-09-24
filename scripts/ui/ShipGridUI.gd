@@ -16,6 +16,8 @@ signal hold_changed(module: ModuleData, rotation: int)
 @export var zoom_step: float = 1.12
 @export var valid_tint := Color(0.2, 0.9, 0.35, 0.55)
 @export var invalid_tint := Color(0.95, 0.2, 0.2, 0.55)
+## Fill alpha of the green/red footprint under a module's blueprint art.
+const PLAN_TINT_ALPHA := 0.18
 @export var empty_tint := Color(0.25, 0.4, 0.7, 0.16)
 @export var deck_tint := Color(0.3, 0.5, 0.85, 0.22)
 @export var engine_mount_tint := Color(0.35, 0.6, 0.95, 0.3)
@@ -54,6 +56,8 @@ func _ready() -> void:
 	set_process_unhandled_input(true)
 	_ensure_preview()
 	_scroll_parent = _find_scroll_parent()
+	# Line thickness depends on the window's stretch scale.
+	get_viewport().size_changed.connect(queue_redraw)
 	if base_cell_size <= 0.0:
 		base_cell_size = cell_size.x
 	_zoom = cell_size.x / base_cell_size
@@ -107,28 +111,50 @@ func _sync_control_size() -> void:
 
 
 ## Cosmetic 90°-per-step counter-clockwise spin of the whole view (grid, sprites,
-## preview all inherit this node's transform). Build data and placement logic
-## never see it — Godot delivers _gui_input positions already in local,
-## unrotated space, so mount/edge rules stay left-to-right as always.
+## preview all inherit this node's transform) — like turning a camera, not the
+## ship. Build data and placement logic never see it — Godot delivers _gui_input
+## positions already in local, unrotated space, so mount/edge rules stay
+## left-to-right as always. Whatever was at the screen center stays there.
 func rotate_view(steps: int = 1) -> void:
 	if ship_hull == null:
 		return
+	var anchor := _local_point_at_view_center()
 	_view_rotation_steps = posmod(_view_rotation_steps + steps, 4)
 	_apply_view_rotation()
+	var host := get_parent() as BuildAreaHost
+	if host != null:
+		host.refresh()
+	_keep_local_point_centered(anchor)
 
 
 func _apply_view_rotation() -> void:
-	pivot_offset = _ship_center_px()
+	# Spin around the grid's own center so the host can keep it centered.
+	pivot_offset = size * 0.5
 	rotation = -_view_rotation_steps * (PI / 2.0)
 
 
-func _ship_center_px() -> Vector2:
-	if ship_hull == null:
+## On-screen footprint of the grid — width/height swap on quarter turns.
+func get_view_size() -> Vector2:
+	var s := custom_minimum_size if custom_minimum_size != Vector2.ZERO else size
+	return Vector2(s.y, s.x) if _view_rotation_steps % 2 == 1 else s
+
+
+func _local_point_at_view_center() -> Vector2:
+	if _scroll_parent == null:
 		return size * 0.5
-	var bounds := ship_hull.get_occupied_bounds()
-	if bounds.size == Vector2i.ZERO:
-		return size * 0.5
-	return (Vector2(bounds.position) + Vector2(bounds.size) * 0.5) * cell_size
+	var center := _scroll_parent.get_global_rect().get_center()
+	return get_global_transform().affine_inverse() * center
+
+
+func _keep_local_point_centered(local_point: Vector2) -> void:
+	if _scroll_parent == null:
+		return
+	# Wait one frame so the ScrollContainer picks up the host's new size.
+	await get_tree().process_frame
+	var center := _scroll_parent.get_global_rect().get_center()
+	var delta := get_global_transform() * local_point - center
+	_scroll_parent.scroll_horizontal += roundi(delta.x)
+	_scroll_parent.scroll_vertical += roundi(delta.y)
 
 
 func bind_hull(hull: ShipHull) -> void:
@@ -462,7 +488,25 @@ func _draw() -> void:
 			if ship_hull.get_equipment_at(cell) != null:
 				fill = occupied_tint
 			draw_rect(rect, fill, true)
-			draw_rect(rect, grid_line, false, 1.0)
+	_draw_grid_lines(grid)
+
+
+## Grid lines as filled strips starting on each cell edge, at least one physical
+## pixel thick. A width-1 outline is centered on the edge, and once the canvas
+## stretch makes it thinner than a pixel it misses every pixel center at some
+## zoom levels and drops out.
+func _draw_grid_lines(grid: Vector2i) -> void:
+	var screen_scale := (get_viewport().get_final_transform() * get_global_transform_with_canvas()).get_scale().abs()
+	var tx := maxf(1.0, 1.0 / maxf(screen_scale.x, 0.001))
+	var ty := maxf(1.0, 1.0 / maxf(screen_scale.y, 0.001))
+	var w := float(roundi(grid.x * cell_size.x))
+	var h := float(roundi(grid.y * cell_size.y))
+	for x in grid.x + 1:
+		var px := minf(float(roundi(x * cell_size.x)), w - tx)
+		draw_rect(Rect2(px, 0.0, tx, h), grid_line, true)
+	for y in grid.y + 1:
+		var py := minf(float(roundi(y * cell_size.y)), h - ty)
+		draw_rect(Rect2(0.0, py, w, ty), grid_line, true)
 
 
 func _draw_preview() -> void:
@@ -482,8 +526,24 @@ func _draw_preview() -> void:
 		var tint := valid_tint if (_hover_valid and not blocked) else invalid_tint
 		if _hover_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
 			tint = valid_tint if _hover_valid else invalid_tint
-		_preview.draw_rect(rect, tint, true)
+		# With blueprint art on top, a light wash keeps the sketch readable; the
+		# outline still says green/red.
+		var fill := tint
+		if _hover_module.plan_texture != null:
+			fill.a = PLAN_TINT_ALPHA
+		_preview.draw_rect(rect, fill, true)
 		_preview.draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.95), false, 2.0)
+
+	# Blueprint art over the footprint while the module is held or dragged.
+	if _hover_module.plan_texture != null:
+		var bounds := _hover_module.get_bounding_size(_hover_rotation)
+		var top_left := _cell_rect(_hover_origin).position
+		var bottom_right := _cell_rect(_hover_origin + bounds - Vector2i.ONE).end
+		_preview.draw_texture_rect(
+			_plan_texture_for(_hover_module, _hover_rotation),
+			Rect2(top_left, bottom_right - top_left),
+			false
+		)
 
 	# Also preview cargo ghosts when moving a hull.
 	if _hover_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
@@ -619,6 +679,9 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x), true)
 	elif rotation == 0 and data.texture != null:
 		tex = data.texture
+	elif data.category == ModuleData.Category.ENGINE and data.texture != null:
+		# Engine art is a picture, not a generated tile - turn the picture.
+		tex = _rotated_texture(data.texture, rotation)
 	else:
 		tex = ModuleCatalog.make_shape_texture(
 			data.grid_shape,
@@ -631,6 +694,29 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 
 	_texture_cache[key] = tex
 	return tex
+
+
+func _plan_texture_for(data: ModuleData, rotation: int) -> Texture2D:
+	var key := "plan:%s:%d" % [str(data.id), rotation]
+	if not _texture_cache.has(key):
+		_texture_cache[key] = (
+			data.plan_texture if posmod(rotation, 4) == 0
+			else _rotated_texture(data.plan_texture, rotation)
+		)
+	return _texture_cache[key]
+
+
+## `rotation` quarter turns clockwise on screen, matching ModuleData.rotate_shape.
+static func _rotated_texture(source: Texture2D, rotation: int) -> Texture2D:
+	var img: Image = source.get_image()
+	if img == null:
+		return source
+	img = img.duplicate()
+	if img.is_compressed():
+		img.decompress()
+	for _i in posmod(rotation, 4):
+		img.rotate_90(CLOCKWISE)
+	return ImageTexture.create_from_image(img)
 
 
 func _free_sprite(instance_id: int) -> void:

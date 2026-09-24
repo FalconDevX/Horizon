@@ -69,36 +69,40 @@ exports below. Existing nodes are the template (`solar_system.tscn` lines ~151-2
 `visual_radius = radius` and `show_soi = true`; `soi_radius` / `soi_line_width` are
 overwritten every frame by `update_soi_visuals` / `update_screen_space_visuals`.
 
-Current system (sun `Virelia`, mass 1000, radius 800):
+Current system (sun `Virelia`, mass 1000, radius 3 200) - master scaled every orbit and
+radius 4x (masses unchanged, so SOIs scaled 4x too). Asteroid belts (`asteroid_belts.gd`
+`BELTS`) fill 154 000-177 200, 752 000-864 000 and 4 160 000-4 800 000; keep planets out:
 
 | # | Name | Orbit radius | Radius | Mass |
 | --- | --- | --- | --- | --- |
-| 0 | Emberrock | 9 000 | 220 | 9 |
-| 1 | Coralyss (home) | 17 500 | 430 | 50 |
-| 2 | Duskveil | 32 300 | 300 | 12 |
-| 3 | Thornix | 57 800 | 500 | 25 |
-| 4 | Glacenna | 102 300 | 350 | 14 |
-| 5 | Marrow | 163 800 | 260 | 6 |
-| 6 | Vantauri | 295 000 | 700 | 34 |
-| 7 | Nyxholm | 548 500 | 560 | 18 |
-| 8 | Anthea | 5 000 | 160 | 4 |
-| 9 | Dunmere | 131 750 | 320 | 1.8 |
-| 10 | Cindral | 6 900 | 130 | 0.6 |
-| 11 | Vesk | 24 800 | 190 | 1.0 |
-| 12 | Ashkar | 78 000 | 230 | 0.4 |
-| 13 | Oruvel | 850 000 | 520 | 15 |
-| 14 | Mireth | 41 000 | 200 | 0.5 |
-| 15 | Cinderhal | 201 850 | 300 | 0.8 |
-| 16 | Aurumbra | 388 000 | 380 | 0.2 |
-| 17 | Hoarveil | 422 000 | 330 | 0.2 |
-| 18 | Rimebeck | 675 000 | 150 | 0.04 |
-| 19 | Taurvane | 1 250 000 | 650 | 8 |
+| 0 | Emberrock | 36 000 | 880 | 9 |
+| 1 | Coralyss (home) | 70 000 | 1 720 | 50 |
+| 2 | Duskveil | 129 200 | 1 200 | 12 |
+| 3 | Thornix | 231 200 | 2 000 | 25 |
+| 4 | Glacenna | 409 200 | 1 400 | 14 |
+| 5 | Marrow | 655 200 | 1 040 | 6 |
+| 6 | Vantauri | 1 180 000 | 2 800 | 34 |
+| 7 | Nyxholm | 2 194 000 | 2 240 | 18 |
+| 8 | Anthea | 20 000 | 640 | 4 |
+| 9 | Dunmere | 527 000 | 1 280 | 1.8 |
+| 10 | Cindral | 27 600 | 520 | 0.6 |
+| 11 | Vesk | 99 200 | 760 | 1.0 |
+| 12 | Ashkar | 312 000 | 920 | 0.4 |
+| 13 | Oruvel | 3 400 000 | 2 080 | 15 |
+| 14 | Mireth | 45 000 | 800 | 0.5 |
+| 15 | Cinderhal | 291 000 | 1 200 | 0.04 |
+| 16 | Aurumbra | 1 552 000 | 1 520 | 0.2 |
+| 17 | Hoarveil | 1 688 000 | 1 320 | 0.2 |
+| 18 | Rimebeck | 2 700 000 | 600 | 0.04 |
+| 19 | Taurvane | 5 600 000 | 2 600 | 8 |
 
-Cindral, Vesk and Ashkar start at 140, 250 and 60 degrees round their orbits and
-Oruvel at 200; the rest start at 0. Cindral and Vesk squeeze between their neighbours'
-SOIs with ~300-450 to spare - keep them light.
+Starting phases are random every launch: `_ready()` keeps each planet's orbit
+radius from the scene but rotates it to a random angle round the sun (then calls
+`snap_visual_position()` so the 3D visuals don't interpolate across). Angles
+authored in the scene no longer matter. Cindral and Vesk squeeze between their neighbours'
+SOIs with ~1 200-1 800 to spare - keep them light.
 
-Dunmere's SOI (~10 500) clears Glacenna's and Marrow's by only ~400 each side - SOI
+Dunmere's SOI (~42 000) clears Glacenna's and Marrow's by only ~1 500 each side - SOI
 grows with distance, so outer gaps only fit very light planets.
 
 ### Constraints when touching the planet set
@@ -106,9 +110,8 @@ grows with distance, so outer gaps only fit very light planets.
 - `HOME_PLANET_INDEX := 1` indexes `planets` **by scene child order**. The ship spawns
   1000 units from that planet. Inserting a node above `Coralyss` silently moves the
   spawn - append new planets at the end, or update the constant.
-- Every planet currently sits at `position = Vector2(R, 0)`, so they all start phased at
-  angle 0. Give a new planet a starting phase with `position = R * Vector2(cos t, sin t)`;
-  the circular velocity follows automatically.
+- Only the distance of a planet's scene `position` from the sun matters - the start
+  angle is randomised in `_ready()`, and the circular velocity follows automatically.
 - **Circular orbits are assumed in three more places.** Elliptical planet orbits are not
   a data-only change:
   - `update_orbit_line` draws a circle of radius = current distance to the sun;
@@ -338,12 +341,13 @@ still shows the blob preview.
   outside the corona (4000) - so it orbits ~2.4x faster) and **Dunmere** (Oasis).
   Cindral (Barren), Vesk (Toxic), Ashkar (Desert) and Oruvel (Ice giant) give the
   older kinds a planet each; the three small ones bake at `terrain_resolution = 512`
-  to save memory. **Mireth** (Slime) was added back, then the outer gaps filled with
-  the last unused kinds: Cinderhal (Volcanic, 120 degrees), Aurumbra (Gloom, 220),
-  Hoarveil (Ice, 40), Rimebeck (Frozen, 300, bakes at 512) and Taurvane (Gas giant,
-  160, past Oruvel - its SOI fits no inner gap). Their masses are kept low so each
-  SOI clears its neighbours by ~2 500-5 000 (Taurvane ~60 000). Every kind now has
-  a planet.
+  to save memory. **Mireth** (Slime) was added back, then the last unused kinds got
+  a planet each: Cinderhal (Volcanic), Aurumbra (Gloom), Hoarveil (Ice), Rimebeck
+  (Frozen, bakes at 512) and Taurvane (Gas giant, past Oruvel and belt 3 - its SOI
+  fits no inner gap). At 4x scale Mireth sits between Emberrock and Coralyss and
+  Cinderhal between Thornix and Ashkar (both moved out of the asteroid belts;
+  Cinderhal's mass cut to 0.04 to fit). Masses kept low so each SOI clears its
+  neighbours by ~1 500-19 000 (Taurvane clears belt 3). Every kind has a planet.
 - **Catalog text** (`scripts/data/PlanetLore.gd`) is written per *kind*, not per planet
   name, and `describe()` adds what the roll produced (lava vs cryo, liquid share,
   clouds, aurora, storm) - so a reroll or a kind change never leaves stale text. A new
@@ -377,8 +381,6 @@ still shows the blob preview.
   uses `DepositDrift` (slow meandering slide) right now. The beanstalks' sway is
   shader-only (`wiggle`), not a motion.
   `celestial_body._process()` calls `ResourceDeposits.advance()` with game time.
-- **Mireth** (Slime, radius 200, mass 0.5) sits at 41 000, 300 degrees round, between
-  Duskveil's and Thornix's SOIs (~1 200 spare inside, ~1 600 outside).
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
@@ -410,6 +412,26 @@ still shows the blob preview.
   task in `_process` and waits for it in `_exit_tree`.
 - Gameplay: `terrain_height_at(dir)` / `is_liquid_at(dir)` read the same texels.
 - Poles/bands/caps use `surface_spin_axis` as the planet-space pole.
+
+## Asteroid belts, rings, loading screen
+
+- **Belts** (`asteroid_belts.gd`, `asteroid_belt.gdshader`) are scenery: no gravity,
+  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (38.5-44.3k,
+  188-216k, 1.04-1.2M) sit in SOI gaps - recheck the gaps before moving one. Each belt
+  is 3 MultiMeshes (rock shape variants); orbits advance on the GPU from
+  `total_sim_time` (split hi/lo for float32), rocks grow to >= 1.1 px when zoomed out,
+  and the mesh swaps between 3 LODs by on-screen size. `asteroid_belt_map.gd` tints
+  each band light red on the `BehindWorld` layer.
+- **Rings**: `has_rings` / `ring_inner_radius` / `ring_outer_radius` exports on
+  `celestial_body.gd` (terrain planets only; Vantauri has them). The ring plane is
+  perpendicular to `surface_spin_axis`, so the axis must lean toward the viewer or the
+  rings are edge-on. Profile lives in `planet_rings.gdshaderinc`, shared by
+  `planet_rings.gdshader` and `planet_terrain.gdshader` (ring shadow on the globe).
+- **Loading screen** (`scripts/ui/LoadingScreen.gd`): the menu puts it on the root
+  before `change_scene_to_file`; `solar_system.gd` takes it over via
+  `LoadingScreen.current` and waits on `is_surface_ready()` of every body. While it is
+  up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
+  A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
 
 ## Autopilot
 
