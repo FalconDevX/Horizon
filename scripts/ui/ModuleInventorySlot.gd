@@ -1,9 +1,8 @@
 class_name ModuleInventorySlot
 extends PanelContainer
-## Inventory tile that starts a drag / click-to-hold with ModuleData payload.
+## Inventory tile: clicking it hands its ModuleData to the grid to hold.
 ## Icon size matches the module footprint (2×2 modules show a 2×2 icon).
 
-signal drag_started(module: ModuleData)
 signal module_selected(module: ModuleData)
 
 @export var preview_cell_size: float = 28.0
@@ -137,60 +136,12 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			# Click-to-hold only: the grid then shows the module's blueprint in
+			# the cell under the cursor, and a click places it. Drag-and-drop
+			# is off, so no loose picture trails the cursor.
 			module_selected.emit(module_data)
-			# Don't accept — allow drag to still start on motion.
+			accept_event()
 
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
-	if module_data == null:
-		return null
-
-	set_drag_preview(_build_preview(0))
-	drag_started.emit(module_data)
-	return {
-		"type": "ship_module",
-		"module": module_data,
-		"rotation": 0,
-	}
-
-
-func _build_preview(rotation: int) -> Control:
-	var root := Control.new()
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var cell := preview_cell_size
-	var shape := module_data.get_shape(rotation)
-	var bounds := ModuleData.bounding_size_of(shape)
-	var tex := module_data.texture
-	if rotation != 0:
-		tex = ModuleCatalog.make_shape_texture(
-			module_data.grid_shape,
-			module_data.category,
-			rotation,
-			int(cell)
-		)
-
-	if tex != null:
-		var icon := TextureRect.new()
-		icon.texture = tex
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_SCALE
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		icon.size = Vector2(bounds) * cell
-		icon.modulate = Color(1, 1, 1, 0.85)
-		root.add_child(icon)
-	else:
-		for offset: Vector2i in shape:
-			var panel := Panel.new()
-			panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			panel.position = Vector2(offset) * cell
-			panel.size = Vector2(cell, cell)
-			var style := StyleBoxFlat.new()
-			style.bg_color = Color(0.2, 0.55, 0.85, 0.55)
-			style.border_color = Color(0.55, 0.85, 1.0, 0.9)
-			style.set_border_width_all(1)
-			panel.add_theme_stylebox_override("panel", style)
-			root.add_child(panel)
-
-	root.position = -Vector2(cell, cell) * 0.5
-	return root
+	return null

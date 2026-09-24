@@ -59,7 +59,6 @@ var _zoom_slider_rect := Rect2()
 var _pan_slider_rect := Rect2()
 var _toggle_smoothing_rect := Rect2()
 var _toggle_warp_drop_rect := Rect2()
-var _toggle_auto_engine_rect := Rect2()
 
 # Tab 1: Graphics rects
 var _toggle_fullscreen_rect := Rect2()
@@ -216,11 +215,6 @@ func _handle_gameplay_clicks(pos: Vector2) -> void:
 		settings.auto_drop_warp_on_thrust = not settings.auto_drop_warp_on_thrust
 		settings.save_settings()
 		setting_changed.emit("auto_drop_warp_on_thrust", settings.auto_drop_warp_on_thrust)
-		queue_redraw()
-	elif _toggle_auto_engine_rect.has_point(pos):
-		settings.autopilot_default_main_engine = not settings.autopilot_default_main_engine
-		settings.save_settings()
-		setting_changed.emit("autopilot_default_main_engine", settings.autopilot_default_main_engine)
 		queue_redraw()
 
 
@@ -444,20 +438,14 @@ func _draw_tab_gameplay(top_y: float) -> void:
 	var ctrl_x: float = col1_x + 175.0
 	var ctrl_w: float = 177.0
 
-	# 1. RCS Turn Rate
-	_draw_setting_label(Vector2(inner_x, y), "RCS Turn Rate", "Maximum angular speed (RMB hold)")
+	# 1. Turn Rate
+	_draw_setting_label(Vector2(inner_x, y), "Turn Rate", "How fast the ship turns (A / D, RMB)")
 	_rot_slider_rect = Rect2(ctrl_x, y + 4.0, ctrl_w - 56.0, 16.0)
 	var rot_frac: float = (settings.ship_rotation_speed - 1.0) / (5.0 - 1.0)
 	_draw_slider(_rot_slider_rect, rot_frac, false)
 	_draw_badge_value(Vector2(ctrl_x + ctrl_w - 50.0, y + 2.0), "%.1f r/s" % settings.ship_rotation_speed)
 
-	# 2. Autopilot Main Engine
-	y += 74.0
-	_draw_setting_label(Vector2(inner_x, y), "Autopilot Main Engine", "Allow main thruster in burns")
-	_toggle_auto_engine_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
-	_draw_switch(_toggle_auto_engine_rect, settings.autopilot_default_main_engine, "ON", "OFF")
-
-	# 3. Drop Warp on Thrust
+	# 2. Drop Warp on Thrust
 	y += 74.0
 	_draw_setting_label(Vector2(inner_x, y), "Drop Warp on Thrust", "Reset to 1x when pressing W")
 	_toggle_warp_drop_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
@@ -584,10 +572,11 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	_draw_card_background(card1)
 
 	var y: float = card1.position.y + 14.0
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "W / S", "Main Thruster (Forward / Reverse)")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "W / S", "Main Engine (Burn / Brake)")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "X", "Throttle Lock Toggle")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "A / D", "Lateral RCS Thrusters")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "RMB (Hold)", "Orient ship towards cursor")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "A / D", "Rotate ship (also arrows)")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "RMB (Hold)", "Turn toward cursor")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Shift (Hold)", "Precision: 20% thrust and turning")
 
 	var y_time: float = top_y + 192.0
 	_draw_section_header(Vector2(col1_x, y_time), "Time Warp & Simulation", col_w)
@@ -609,6 +598,8 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Tab", "Cycle target celestial body")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Scroll (Target)", "Adjust target orbit altitude")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "G", "Fire weapon at FOV lock")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "Z / C", "Hold prograde / retrograde")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "V", "Flight assist (arcade handling)")
 
 	var y_cam: float = top_y + 218.0
 	_draw_section_header(Vector2(col2_x, y_cam), "Camera & Tracking", col_w)
@@ -661,7 +652,7 @@ func _draw_tab_audio(top_y: float) -> void:
 
 	# SFX
 	y += 42.0
-	_draw_audio_row_header(Vector2(label_x, y), icon_volume_2, "RCS & Engine SFX")
+	_draw_audio_row_header(Vector2(label_x, y), icon_volume_2, "Engine & Effects SFX")
 	_sfx_slider_rect = Rect2(slider_x, y + 4.0, slider_w, 16.0)
 	_draw_slider(_sfx_slider_rect, settings.sfx_volume, settings.sfx_muted)
 	_draw_badge_value(Vector2(slider_x + slider_w + 10.0, y + 2.0), "%d%%" % roundi(settings.sfx_volume * 100.0))

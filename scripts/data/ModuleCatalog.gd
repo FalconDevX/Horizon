@@ -33,26 +33,74 @@ static func connector() -> ModuleData:
 	return m
 
 
-## Star rating (1-5) -> in-game values:
+## Star rating (1-5) -> in-game values for a size-S (1x1) engine:
 ##   thrust: 8 / 16 / 24 / 32 / 40
 ##   fuel:   1 / 2.5 / 4.5 / 7 / 10   (higher = more consumption)
 ##   energy: 1.5 / 4 / 8 / 13 / 18
 ##   mass:   3 / 6 / 10 / 15 / 22
+const _STAR_THRUST: Array[float] = [8.0, 16.0, 24.0, 32.0, 40.0]
+const _STAR_FUEL: Array[float] = [1.0, 2.5, 4.5, 7.0, 10.0]
+const _STAR_ENERGY: Array[float] = [1.5, 4.0, 8.0, 13.0, 18.0]
+const _STAR_MASS: Array[float] = [3.0, 6.0, 10.0, 15.0, 22.0]
+
+## Engine sizes S / M / L: square footprints 1x1 / 2x2 / 3x3. Bigger engines
+## get a little more thrust per unit of fuel and mass.
+const _ENGINE_SIZES := [
+	{"suffix": "S", "id": "s", "cells": 1, "thrust": 1.0, "fuel": 1.0, "energy": 1.0, "mass": 1.0, "heat": 1.0},
+	{"suffix": "M", "id": "m", "cells": 2, "thrust": 2.5, "fuel": 2.3, "energy": 2.3, "mass": 2.2, "heat": 1.8},
+	{"suffix": "L", "id": "l", "cells": 3, "thrust": 4.5, "fuel": 4.0, "energy": 4.0, "mass": 3.8, "heat": 2.6},
+]
+
+
+## Five engine types in three sizes each. Stars: thrust, fuel, energy, mass.
+## Sprites: textures/modules/engine_<type>_<1|2|3>.png, nozzle pointing left
+## (the aft side, where the orange ENGINE_MOUNT tiles are).
 static func engines() -> Array[ModuleData]:
-	return [
-		# Chemical:        thrust ***** fuel ***** energy *     mass **
-		_engine("Chemical", &"engine_chemical", 40.0, 10.0, 1.5, 6.0, 120.0, _shape_1x1()),
-		# Nuclear thermal: thrust ****  fuel ***   energy **    mass *****
-		_engine("Nuclear Thermal", &"engine_nuclear", 32.0, 4.5, 4.0, 22.0, 180.0, _shape_2x1()),
-		# Ion:             thrust *     fuel *      energy ***** mass *
-		_engine("Ion", &"engine_ion", 8.0, 1.0, 18.0, 3.0, 90.0, _shape_1x1()),
-		# Plasma:          thrust ***   fuel **     energy ****  mass ***
-		_engine("Plasma", &"engine_plasma", 24.0, 2.5, 13.0, 10.0, 200.0, _shape_2x2()),
-		# Fusion:          thrust ***** fuel *      energy ***** mass *****
-		_engine("Fusion", &"engine_fusion", 40.0, 1.0, 18.0, 22.0, 260.0, _shape_l()),
-		# Corrective / RCS — truss adjacent to normal deck only.
-		_corrective_engine("Corrective Engine", &"engine_corrective", 4.0, 0.8, 1.0, 2.0, 60.0, _shape_1x1()),
-	]
+	var list: Array[ModuleData] = []
+	list.append_array(_engine_family("Chemical", "chemical", 5, 5, 1, 2, 120.0))
+	list.append_array(_engine_family("Nuclear Thermal", "nuclear", 4, 3, 2, 4, 180.0))
+	list.append_array(_engine_family("Ion", "ion", 1, 1, 3, 1, 90.0))
+	list.append_array(_engine_family("Plasma", "plasma", 3, 2, 4, 3, 200.0))
+	list.append_array(_engine_family("Fusion", "fusion", 5, 1, 5, 5, 260.0))
+	return list
+
+
+static func _engine_family(
+	title: String,
+	key: String,
+	thrust_stars: int,
+	fuel_stars: int,
+	energy_stars: int,
+	mass_stars: int,
+	base_heat: float
+) -> Array[ModuleData]:
+	var list: Array[ModuleData] = []
+	for size: Dictionary in _ENGINE_SIZES:
+		var cells: int = size["cells"]
+		var shape: Array[Vector2i] = []
+		for y in cells:
+			for x in cells:
+				shape.append(Vector2i(x, y))
+		var m := _engine(
+			"%s %s" % [title, size["suffix"]],
+			StringName("engine_%s_%s" % [key, size["id"]]),
+			_STAR_THRUST[thrust_stars - 1] * float(size["thrust"]),
+			_STAR_FUEL[fuel_stars - 1] * float(size["fuel"]),
+			_STAR_ENERGY[energy_stars - 1] * float(size["energy"]),
+			_STAR_MASS[mass_stars - 1] * float(size["mass"]),
+			base_heat * float(size["heat"]),
+			shape
+		)
+		var sprite := "res://textures/modules/engine_%s_%d.png" % [key, cells]
+		if ResourceLoader.exists(sprite):
+			m.texture = load(sprite)
+		var plan := "res://textures/modules/engine_%s_%d_plan.png" % [key, cells]
+		if ResourceLoader.exists(plan):
+			m.plan_texture = load(plan)
+		m.family = title
+		m.family_stars = [thrust_stars, fuel_stars, energy_stars, mass_stars]
+		list.append(m)
+	return list
 
 
 static func weapons() -> Array[ModuleData]:
@@ -399,22 +447,6 @@ static func _engine(
 	m.fuel_consumption = fuel
 	m.max_heat = max_heat
 	m.is_corrective_engine = false
-	return m
-
-
-static func _corrective_engine(
-	title: String,
-	id: StringName,
-	thrust: float,
-	fuel: float,
-	energy: float,
-	mass: float,
-	max_heat: float,
-	shape: Array[Vector2i]
-) -> ModuleData:
-	var m := _engine(title, id, thrust, fuel, energy, mass, max_heat, shape)
-	m.is_corrective_engine = true
-	m.health = 18.0
 	return m
 
 

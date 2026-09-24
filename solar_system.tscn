@@ -9,7 +9,8 @@
 [ext_resource type="Script" path="res://autopilot_panel.gd" id="7_autopilot_panel"]
 [ext_resource type="Script" path="res://ship_blueprint_panel.gd" id="8_ship_blueprint"]
 [ext_resource type="Texture2D" path="res://textures/background.png" id="9_background"]
-[ext_resource type="AudioStream" path="res://sounds/rcs.mp3" id="10_rcs_sound"]
+[ext_resource type="AudioStream" path="res://sounds/autopilot_on.wav" id="10_autopilot_on"]
+[ext_resource type="AudioStream" path="res://sounds/thrust_locked.wav" id="10_thrust_locked"]
 [ext_resource type="Script" path="res://time_warp_panel.gd" id="11_time_warp"]
 [ext_resource type="Script" path="res://left_panel_bg.gd" id="12_left_panel_bg"]
 [ext_resource type="Script" path="res://planet_info_panel.gd" id="13_planet_info"]
@@ -159,8 +160,8 @@ text = "ArrivalMarker"
 
 [node name="Sun" type="Node2D" parent="." unique_id=592866294]
 script = ExtResource("1_hbvo3")
-radius = 800.0
-visual_radius = 800.0
+radius = 3200
+visual_radius = 3200
 color = Color(1, 0.85, 0.3, 1)
 mass = 1000.0
 body_name = "Virelia"
@@ -170,10 +171,10 @@ is_star = true
 [node name="Planets" type="Node2D" parent="." unique_id=1016710538]
 
 [node name="Emberrock" type="Node2D" parent="Planets" unique_id=224297438]
-position = Vector2(9000, 0)
+position = Vector2(36000, 0)
 script = ExtResource("1_hbvo3")
-radius = 220.0
-visual_radius = 220.0
+radius = 880
+visual_radius = 880
 color = Color(0.85, 0.42, 0.2, 1)
 mass = 9.0
 body_name = "Emberrock"
@@ -186,10 +187,10 @@ surface_spin_axis = Vector3(0.035, 0.999, 0.0)
 terrain_kind = 3
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
-position = Vector2(17500, 0)
+position = Vector2(70000, 0)
 script = ExtResource("1_hbvo3")
-radius = 430.0
-visual_radius = 430.0
+radius = 1720
+visual_radius = 1720
 color = Color(0.2, 0.8, 0.55, 1)
 mass = 50.0
 body_name = "Coralyss"
@@ -203,10 +204,10 @@ surface_spin_axis = Vector3(0.391, 0.921, 0.0)
 terrain_kind = 1
 
 [node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
-position = Vector2(32300, 0)
+position = Vector2(129200, 0)
 script = ExtResource("1_hbvo3")
-radius = 300.0
-visual_radius = 300.0
+radius = 1200
+visual_radius = 1200
 color = Color(0.45, 0.6, 0.2, 1)
 mass = 12.0
 body_name = "Duskveil"
@@ -219,10 +220,10 @@ surface_spin_axis = Vector3(0.0, 0.999, 0.052)
 terrain_kind = 10
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
-position = Vector2(57800, 0)
+position = Vector2(231200, 0)
 script = ExtResource("1_hbvo3")
-radius = 500.0
-visual_radius = 500.0
+radius = 2000
+visual_radius = 2000
 color = Color(0.4, 0.04, 0.04, 1)
 mass = 25.0
 body_name = "Thornix"
@@ -235,10 +236,10 @@ surface_spin_axis = Vector3(-0.423, 0.906, 0.0)
 terrain_kind = 11
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
-position = Vector2(102300, 0)
+position = Vector2(409200, 0)
 script = ExtResource("1_hbvo3")
-radius = 350.0
-visual_radius = 350.0
+radius = 1400
+visual_radius = 1400
 color = Color(0.56, 0.84, 0.92, 1)
 mass = 14.0
 body_name = "Glacenna"
@@ -251,10 +252,10 @@ surface_spin_axis = Vector3(0.0, -0.139, 0.990)
 terrain_kind = 4
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
-position = Vector2(163800, 0)
+position = Vector2(655200, 0)
 script = ExtResource("1_hbvo3")
-radius = 260.0
-visual_radius = 260.0
+radius = 1040
+visual_radius = 1040
 color = Color(0.7, 0.82, 0.9, 1)
 mass = 6.0
 body_name = "Marrow"
@@ -268,10 +269,10 @@ surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
 terrain_kind = 9
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
-position = Vector2(295000, 0)
+position = Vector2(1180000, 0)
 script = ExtResource("1_hbvo3")
-radius = 700.0
-visual_radius = 700.0
+radius = 2800
+visual_radius = 2800
 color = Color(0.88, 0.7, 0.3, 1)
 mass = 34.0
 body_name = "Vantauri"
@@ -281,14 +282,15 @@ surface_seed = 1007
 surface_blob_count = 110
 surface_style = 3
 surface_spin_speed = 0.55
-surface_spin_axis = Vector3(0.0, 0.999, -0.052)
+surface_spin_axis = Vector3(0.22, 0.89, 0.4)
 terrain_kind = 7
+has_rings = true
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
-position = Vector2(548500, 0)
+position = Vector2(2194000, 0)
 script = ExtResource("1_hbvo3")
-radius = 560.0
-visual_radius = 560.0
+radius = 2240
+visual_radius = 2240
 color = Color(0.2, 0.3, 0.6, 1)
 mass = 18.0
 body_name = "Nyxholm"
@@ -301,10 +303,10 @@ surface_spin_axis = Vector3(0.332, 0.883, 0.332)
 terrain_kind = 12
 
 [node name="Anthea" type="Node2D" parent="Planets"]
-position = Vector2(5000, 0)
+position = Vector2(20000, 0)
 script = ExtResource("1_hbvo3")
-radius = 160.0
-visual_radius = 160.0
+radius = 640
+visual_radius = 640
 color = Color(0.4, 0.3, 0.6, 1)
 mass = 4.0
 body_name = "Anthea"
@@ -317,10 +319,10 @@ surface_spin_axis = Vector3(0.1, 0.995, 0.0)
 terrain_kind = 13
 
 [node name="Dunmere" type="Node2D" parent="Planets"]
-position = Vector2(131750, 0)
+position = Vector2(527000, 0)
 script = ExtResource("1_hbvo3")
-radius = 320.0
-visual_radius = 320.0
+radius = 1280
+visual_radius = 1280
 color = Color(0.6, 0.48, 0.28, 1)
 mass = 1.8
 body_name = "Dunmere"
@@ -333,10 +335,10 @@ surface_spin_axis = Vector3(-0.08, 0.997, 0.0)
 terrain_kind = 14
 
 [node name="Cindral" type="Node2D" parent="Planets"]
-position = Vector2(-5285.7, 4435.2)
+position = Vector2(-21142.8, 17740.8)
 script = ExtResource("1_hbvo3")
-radius = 130.0
-visual_radius = 130.0
+radius = 520
+visual_radius = 520
 color = Color(0.55, 0.45, 0.38, 1)
 mass = 0.6
 body_name = "Cindral"
@@ -350,10 +352,10 @@ terrain_kind = 5
 terrain_resolution = 512
 
 [node name="Vesk" type="Node2D" parent="Planets"]
-position = Vector2(-8482.1, -23304.4)
+position = Vector2(-33928.4, -93217.6)
 script = ExtResource("1_hbvo3")
-radius = 190.0
-visual_radius = 190.0
+radius = 760
+visual_radius = 760
 color = Color(0.55, 0.75, 0.25, 1)
 mass = 1.0
 body_name = "Vesk"
@@ -367,10 +369,10 @@ terrain_kind = 6
 terrain_resolution = 512
 
 [node name="Ashkar" type="Node2D" parent="Planets"]
-position = Vector2(39000.0, 67550.0)
+position = Vector2(156000, 270200)
 script = ExtResource("1_hbvo3")
-radius = 230.0
-visual_radius = 230.0
+radius = 920
+visual_radius = 920
 color = Color(0.85, 0.5, 0.25, 1)
 mass = 0.4
 body_name = "Ashkar"
@@ -384,10 +386,10 @@ terrain_kind = 2
 terrain_resolution = 512
 
 [node name="Oruvel" type="Node2D" parent="Planets"]
-position = Vector2(-798738.7, -290717.1)
+position = Vector2(-3194954.8, -1162868.4)
 script = ExtResource("1_hbvo3")
-radius = 520.0
-visual_radius = 520.0
+radius = 2080
+visual_radius = 2080
 color = Color(0.35, 0.65, 0.85, 1)
 mass = 15.0
 body_name = "Oruvel"
@@ -400,13 +402,8 @@ surface_spin_axis = Vector3(0.25, 0.95, 0.18)
 terrain_kind = 8
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
-position = Vector2(18500, 0)
+position = Vector2(74000, 0)
 script = ExtResource("3_ship")
-
-[node name="RcsSound" type="AudioStreamPlayer" parent="Ship" unique_id=730025986]
-stream = ExtResource("10_rcs_sound")
-volume_db = -6.0
-bus = &"SFX"
 
 [node name="ClickArea" type="Area2D" parent="Ship" unique_id=1384908549]
 
@@ -429,6 +426,14 @@ environment = SubResource("Environment_world3d")
 
 [node name="MusicPlayer" type="AudioStreamPlayer" parent="." unique_id=987654321]
 bus = &"Music"
+
+[node name="AutopilotOnSound" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("10_autopilot_on")
+bus = &"SFX"
+
+[node name="ThrustLockedSound" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("10_thrust_locked")
+bus = &"SFX"
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1393702548]
 
@@ -628,28 +633,6 @@ offset_right = -12.0
 offset_bottom = 318.0
 mouse_filter = 2
 script = ExtResource("7_autopilot_panel")
-
-[node name="MainThrusterToggle" type="CheckButton" parent="HUD/AutopilotPanel" unique_id=855681495]
-layout_mode = 0
-offset_left = 12.0
-offset_top = 244.0
-offset_right = 288.0
-offset_bottom = 268.0
-theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
-theme_override_font_sizes/font_size = 13
-button_pressed = true
-text = "Main thruster"
-
-[node name="MainThrusterCaption" type="Label" parent="HUD/AutopilotPanel" unique_id=855681496]
-layout_mode = 0
-offset_left = 34.0
-offset_top = 268.0
-offset_right = 300.0
-offset_bottom = 286.0
-mouse_filter = 2
-theme_override_colors/font_color = Color(0.5, 0.55, 0.62, 0.7)
-theme_override_font_sizes/font_size = 10
-text = "Autopilot may use main engine"
 
 [node name="ShipBlueprintPanel" type="Control" parent="HUD" unique_id=577215664]
 anchor_left = 1.0

@@ -171,7 +171,7 @@ static func _base(r: Roller) -> Dictionary:
 		"variant": "",
 		"liquid": false, "coverage": 0.0,
 		"shallow": Color.BLACK, "deep": Color.BLACK, "emission": 0.0, "gloss": 0.0, "crust": 0.0,
-		"rock": Color(0.35, 0.33, 0.31), "slope_rock": 0.0, "strata": 0.0,
+		"rock": Color(0.35, 0.33, 0.31), "slope_rock": 0.0, "rock_patches": 0.0, "strata": 0.0,
 		"dry": Color.BLACK, "dry_amount": 0.0,
 		"cap": Color.WHITE, "cap_latitude": 2.0,
 		"atmo": Color.BLACK, "atmo_strength": 0.0, "haze": 0.0,
@@ -955,11 +955,12 @@ static func _roll_oasis(r: Roller) -> Dictionary:
 		Vector2(0.04, 0.1), Vector2(0.2, 0.32), Vector2(0.45, 0.58),
 		Vector2(0.68, 0.8), Vector2(0.88, 0.97),
 	])
-	p["rock"] = r.tone(hue - 0.02, 0.02, saturation, r.between(0.4, 0.5))
-	p["slope_rock"] = r.between(0.2, 0.45)
+	p["rock"] = r.tone(hue - 0.025, 0.02, saturation * 0.65, r.between(0.3, 0.42))
+	p["slope_rock"] = r.between(0.5, 0.75)
+	p["rock_patches"] = r.between(0.5, 0.7)
 	p["strata"] = r.between(0.3, 0.7)
 	p["dry"] = r.tone(hue, 0.02, saturation * 0.8, r.between(0.82, 0.92))
-	p["dry_amount"] = r.between(0.2, 0.5)
+	p["dry_amount"] = r.between(0.55, 0.8)
 	p["atmo"] = r.hsv(Vector2(0.08, 0.12), Vector2(0.3, 0.5), Vector2(0.95, 1.0))
 	p["atmo_strength"] = r.between(0.3, 0.6)
 	p["haze"] = r.between(0.02, 0.08)
@@ -972,17 +973,17 @@ static func _roll_oasis(r: Roller) -> Dictionary:
 	# Puddles just deep enough to be the lowest ground; deeper and they read
 	# as black holes.
 	p["detail"] = _detail([
-		r.between(0.25, 0.45), r.between(0.15, 0.35), r.between(0.05, 0.12), r.between(2.5, 5.0),
+		r.between(0.25, 0.45), r.between(0.35, 0.6), r.between(0.1, 0.2), r.between(1.8, 3.2),
 		r.between(0.2, 0.4), r.between(0.35, 0.6), r.between(4.0, 8.0),
 	])
 
 	p["buds"] = 1.0
 	p["bud_color"] = r.hsv(Vector2(0.22, 0.38), Vector2(0.55, 0.8), Vector2(0.55, 0.75))
 	# Small, but around ten pixels across when the planet fills the view.
-	p["bud_scale"] = r.between(12.0, 22.0)
-	p["bud_size"] = r.between(0.22, 0.34)
+	p["bud_scale"] = r.between(90.0, 140.0)
+	p["bud_size"] = r.between(0.12, 0.2)
 	p["bud_spike"] = r.between(0.12, 0.25)
-	p["bud_density"] = r.between(0.35, 0.7)
+	p["bud_density"] = r.between(0.2, 0.4)
 	p["bud_reach"] = r.between(0.04, 0.12)
 	return p
 

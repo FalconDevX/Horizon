@@ -26,9 +26,13 @@ func _fit_to_viewport_and_grid() -> void:
 	var view := scroll.size if scroll != null else size
 	var grid_size := Vector2.ZERO
 	if _grid != null:
-		grid_size = _grid.custom_minimum_size
-		if grid_size == Vector2.ZERO:
-			grid_size = _grid.size
+		if _grid.has_method("get_view_size"):
+			# Rotated view: reserve room for the on-screen (possibly swapped) footprint.
+			grid_size = _grid.get_view_size()
+		else:
+			grid_size = _grid.custom_minimum_size
+			if grid_size == Vector2.ZERO:
+				grid_size = _grid.size
 
 	var host := Vector2(
 		maxi(ceili(view.x), ceili(grid_size.x)),

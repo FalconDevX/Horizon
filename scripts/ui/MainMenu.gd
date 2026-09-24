@@ -11,6 +11,8 @@ const COLOR_TEXT_FAINT := HudPanelStyle.COLOR_TEXT_FAINT
 
 const SUBTITLE := "EXPLORE   ORBIT   ENGINEER"
 const VERSION_TAG := "HORIZON   v0.1.0"
+const GAME_SCENE := "res://solar_system.tscn"
+const HOVER_SOUND := preload("res://sounds/menu_hover.wav")
 
 const CONTRIBUTORS := [
 	{"rank": "#1", "name": "FalconDevX"},
@@ -22,6 +24,7 @@ const CONTRIBUTORS := [
 const MENU_MARGIN := 110.0
 const MENU_COLUMN_WIDTH := 300.0
 const MENU_ROW_HEIGHT := 52.0
+const HOVER_RESPONSE := 13.0
 
 
 class MenuItem:
@@ -46,8 +49,14 @@ var menu_items: Array[MenuItem] = []
 var _item_rects: Array[Rect2] = []
 var hovered_index: int = -1
 var selected_index: int = 0
+var _highlight: Array[float] = []
+var _keyboard_selection_active := false
 
 var _credits_open: bool = false
+## Loading screen put up on New Game; it stays up across the scene change and
+## the solar system takes it over.
+var _loading: LoadingScreen = null
+var _hover_player: AudioStreamPlayer = null
 var _credits_panel_rect := Rect2()
 
 
@@ -55,6 +64,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
 	grab_focus()
+	mouse_exited.connect(_on_mouse_exited)
 
 	settings_mgr = SettingsManager.new()
 	music_mgr = MusicManager.new()
@@ -74,8 +84,26 @@ func _ready() -> void:
 		MenuItem.new("CREDITS", true, _on_credits),
 		MenuItem.new("EXIT", true, _on_exit),
 	]
+	_highlight.resize(menu_items.size())
+	_highlight.fill(0.0)
 
 	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	var changed := false
+	var active_index: int = hovered_index if hovered_index != -1 else (selected_index if _keyboard_selection_active else -1)
+	var blend := 1.0 - exp(-HOVER_RESPONSE * delta)
+	for i in _highlight.size():
+		var target := 1.0 if menu_items[i].enabled and i == active_index else 0.0
+		var next_value: float = lerpf(_highlight[i], target, blend)
+		if absf(next_value - target) < 0.002:
+			next_value = target
+		if not is_equal_approx(next_value, _highlight[i]):
+			_highlight[i] = next_value
+			changed = true
+	if changed:
+		queue_redraw()
 
 
 func _setup_gradient() -> void:
@@ -119,18 +147,18 @@ func _draw() -> void:
 	for i in menu_items.size():
 		var item: MenuItem = menu_items[i]
 		var row_y: float = menu_y + i * MENU_ROW_HEIGHT
-		var is_hot: bool = item.enabled and (i == hovered_index or i == selected_index)
+		var highlight: float = _highlight[i]
 		var color: Color = COLOR_TEXT_FAINT
 		if item.enabled:
-			color = COLOR_TEXT_PRIMARY if is_hot else COLOR_TEXT_SECONDARY
+			color = COLOR_TEXT_SECONDARY.lerp(COLOR_TEXT_PRIMARY, highlight)
 		_draw_tracked_text(Vector2(MENU_MARGIN, row_y), item.label, 20, color, 3.0)
 
 		var rect := Rect2(MENU_MARGIN - 12.0, row_y - 26.0, MENU_COLUMN_WIDTH, 40.0)
 		_item_rects.append(rect)
 
-		if is_hot:
-			draw_line(Vector2(MENU_MARGIN - 20.0, row_y - 12.0), Vector2(MENU_MARGIN - 20.0, row_y + 12.0), COLOR_CYAN, 2.0)
-			draw_line(Vector2(MENU_MARGIN, row_y + 14.0), Vector2(MENU_MARGIN + MENU_COLUMN_WIDTH - 24.0, row_y + 14.0), Color(COLOR_CYAN, 0.7), 1.0)
+		if highlight > 0.002:
+			# The rule unfolds from the label.
+			draw_line(Vector2(MENU_MARGIN, row_y + 14.0), Vector2(MENU_MARGIN + (MENU_COLUMN_WIDTH - 24.0) * highlight, row_y + 14.0), Color(COLOR_CYAN, 0.7 * highlight), 1.0)
 
 	_draw_tracked_text(Vector2(MENU_MARGIN, h - 40.0), VERSION_TAG, 12, COLOR_TEXT_FAINT, 2.0)
 
@@ -186,10 +214,12 @@ func _gui_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion:
 		var new_hover: int = _index_at(event.position)
+		_keyboard_selection_active = false
 		if new_hover != hovered_index:
 			hovered_index = new_hover
 			if new_hover != -1:
 				selected_index = new_hover
+				_play_hover_sound()
 			queue_redraw()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var idx: int = _index_at(event.position)
@@ -238,10 +268,29 @@ func _move_selection(dir: int) -> void:
 	for _i in n:
 		idx = posmod(idx + dir, n)
 		if menu_items[idx].enabled:
+			if idx != selected_index:
+				_play_hover_sound()
 			selected_index = idx
 			break
 	hovered_index = -1
+	_keyboard_selection_active = true
 	queue_redraw()
+
+
+## Soft chime when the pointer (or the keyboard) moves onto an option.
+## Restarts on every new option rather than stacking copies.
+func _play_hover_sound() -> void:
+	if _hover_player == null:
+		_hover_player = AudioStreamPlayer.new()
+		_hover_player.stream = HOVER_SOUND
+		_hover_player.bus = &"SFX"
+		_hover_player.volume_db = -6.0
+		add_child(_hover_player)
+	_hover_player.play()
+
+
+func _on_mouse_exited() -> void:
+	hovered_index = -1
 
 
 func _activate(idx: int) -> void:
@@ -253,7 +302,19 @@ func _activate(idx: int) -> void:
 
 
 func _on_new_game() -> void:
-	get_tree().change_scene_to_file("res://solar_system.tscn")
+	if _loading != null:
+		return
+	# Put the loading screen up first and let it reach the screen, then load
+	# the game scene. The screen lives on the root, so it survives the scene
+	# change and the solar system takes it over (LoadingScreen.current) to
+	# fill the bar as the planets generate. (A threaded load of the scene
+	# fails on the scripts' preloads, so the load itself stays blocking.)
+	_loading = LoadingScreen.new()
+	_loading.status_text = "Loading"
+	get_tree().root.add_child(_loading)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().change_scene_to_file(GAME_SCENE)
 
 
 func _on_settings() -> void:

@@ -18,6 +18,9 @@ enum Category {
 @export var category: Category = Category.UTILITY
 @export var grid_shape: Array[Vector2i] = [Vector2i.ZERO]
 @export var texture: Texture2D
+## Optional blueprint-style art shown while the module is being dragged or
+## held over the grid; `texture` takes over once it is placed.
+@export var plan_texture: Texture2D
 @export var id: StringName = &""
 
 ## For Category.HULL — defines local size, mass, capacity (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
@@ -34,6 +37,10 @@ enum Category {
 @export var max_heat: float = 100.0
 ## When true, this engine is RCS-only (truss next to normal deck, not ENGINE_MOUNT).
 @export var is_corrective_engine: bool = false
+## Engine family this size belongs to (e.g. "Chemical") and its star ratings
+## [thrust, fuel, energy, mass] - the shipyard groups engines into rows by it.
+@export var family: String = ""
+@export var family_stars: Array[int] = []
 
 @export_group("Weapon")
 @export var damage: float = 0.0

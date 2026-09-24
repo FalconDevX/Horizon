@@ -13,6 +13,8 @@ const LASER_BOLT_SCENE := preload("res://scenes/enemies/LaserBolt.tscn")
 @export var move_speed: float = 160.0
 @export var turn_speed: float = 2.6
 @export var fire_cooldown: float = 0.35
+## Played once per shot; the tank sets its own heavier one.
+@export var laser_sound: AudioStream = preload("res://sounds/laser.wav")
 @export var laser_speed: float = 420.0
 ## How far a bolt flies before it burns out, in world units.
 @export var laser_range: float = 840.0
@@ -35,6 +37,7 @@ const FLAME_CORE_COLOR := Color(1.0, 0.55, 0.35)
 
 var _throttle := 0.0
 var _fire_timer := 0.0
+var _laser_player: AudioStreamPlayer = null
 
 
 func _process(delta: float) -> void:
@@ -74,6 +77,7 @@ func _try_fire() -> void:
 func fire_laser() -> void:
 	if get_parent() == null:
 		return
+	_play_laser_sound()
 	var dir := Vector2.RIGHT.rotated(rotation)
 	var draw_size := _get_draw_size()
 	for frac in muzzles:
@@ -86,6 +90,17 @@ func fire_laser() -> void:
 		get_parent().add_child(bolt)
 		bolt.global_position = global_position + muzzle_local.rotated(rotation)
 		bolt.velocity = dir * laser_speed
+
+
+## One shot, one sound, however many muzzles fire. Quick shots overlap.
+func _play_laser_sound() -> void:
+	if _laser_player == null:
+		_laser_player = AudioStreamPlayer.new()
+		_laser_player.stream = laser_sound
+		_laser_player.bus = &"SFX"
+		_laser_player.max_polyphony = 4
+		add_child(_laser_player)
+	_laser_player.play()
 
 
 func _get_draw_size() -> Vector2:

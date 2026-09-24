@@ -88,8 +88,10 @@ Current system (sun `Virelia`, mass 1000, radius 800):
 | 12 | Ashkar | 78 000 | 230 | 0.4 |
 | 13 | Oruvel | 850 000 | 520 | 15 |
 
-Cindral, Vesk and Ashkar start at 140, 250 and 60 degrees round their orbits and
-Oruvel at 200; the rest start at 0. Cindral and Vesk squeeze between their neighbours'
+Starting phases are random every launch: `_ready()` keeps each planet's orbit
+radius from the scene but rotates it to a random angle round the sun (then calls
+`snap_visual_position()` so the 3D visuals don't interpolate across). Angles
+authored in the scene no longer matter. Cindral and Vesk squeeze between their neighbours'
 SOIs with ~300-450 to spare - keep them light.
 
 Dunmere's SOI (~10 500) clears Glacenna's and Marrow's by only ~400 each side - SOI
@@ -100,9 +102,8 @@ grows with distance, so outer gaps only fit very light planets.
 - `HOME_PLANET_INDEX := 1` indexes `planets` **by scene child order**. The ship spawns
   1000 units from that planet. Inserting a node above `Coralyss` silently moves the
   spawn - append new planets at the end, or update the constant.
-- Every planet currently sits at `position = Vector2(R, 0)`, so they all start phased at
-  angle 0. Give a new planet a starting phase with `position = R * Vector2(cos t, sin t)`;
-  the circular velocity follows automatically.
+- Only the distance of a planet's scene `position` from the sun matters - the start
+  angle is randomised in `_ready()`, and the circular velocity follows automatically.
 - **Circular orbits are assumed in three more places.** Elliptical planet orbits are not
   a data-only change:
   - `update_orbit_line` draws a circle of radius = current distance to the sun;
@@ -315,6 +316,26 @@ still shows the blob preview.
   task in `_process` and waits for it in `_exit_tree`.
 - Gameplay: `terrain_height_at(dir)` / `is_liquid_at(dir)` read the same texels.
 - Poles/bands/caps use `surface_spin_axis` as the planet-space pole.
+
+## Asteroid belts, rings, loading screen
+
+- **Belts** (`asteroid_belts.gd`, `asteroid_belt.gdshader`) are scenery: no gravity,
+  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (38.5-44.3k,
+  188-216k, 1.04-1.2M) sit in SOI gaps - recheck the gaps before moving one. Each belt
+  is 3 MultiMeshes (rock shape variants); orbits advance on the GPU from
+  `total_sim_time` (split hi/lo for float32), rocks grow to >= 1.1 px when zoomed out,
+  and the mesh swaps between 3 LODs by on-screen size. `asteroid_belt_map.gd` tints
+  each band light red on the `BehindWorld` layer.
+- **Rings**: `has_rings` / `ring_inner_radius` / `ring_outer_radius` exports on
+  `celestial_body.gd` (terrain planets only; Vantauri has them). The ring plane is
+  perpendicular to `surface_spin_axis`, so the axis must lean toward the viewer or the
+  rings are edge-on. Profile lives in `planet_rings.gdshaderinc`, shared by
+  `planet_rings.gdshader` and `planet_terrain.gdshader` (ring shadow on the globe).
+- **Loading screen** (`scripts/ui/LoadingScreen.gd`): the menu puts it on the root
+  before `change_scene_to_file`; `solar_system.gd` takes it over via
+  `LoadingScreen.current` and waits on `is_surface_ready()` of every body. While it is
+  up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
+  A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
 
 ## Autopilot
 

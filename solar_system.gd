@@ -1,6 +1,10 @@
 extends Node2D
 
-const G: float = 3000.0
+## World scale: every distance in the scene is 4x what the system was first
+## built at, and G is 4^3 = 64x, so every orbital period is unchanged while
+## speeds are 4x. Distance constants below were scaled with it.
+const G: float = 192000.0
+const AUTOPILOT_OFF_SOUND := preload("res://sounds/autopilot_off.wav")
 
 enum AutopilotPhase {
 	OFF,
@@ -60,7 +64,6 @@ enum AutopilotPhase {
 @onready var resource_bars_panel: Control = $HUD/ResourceBarsPanel
 @onready var ship_blueprint_panel: Control = $HUD/ShipBlueprintPanel
 @onready var time_warp_panel: Control = $HUD/TimeWarpPanel
-@onready var main_thruster_toggle: CheckButton = $HUD/AutopilotPanel/MainThrusterToggle
 @onready var pe_gauge: Control = $HUD/PeGauge
 @onready var ap_gauge: Control = $HUD/ApGauge
 @onready var distance_label: Label = $HUD/PanelContainer/VBoxContainer/DistanceLabel
@@ -72,6 +75,9 @@ enum AutopilotPhase {
 @onready var trajectory_label: Label = $HUD/PanelContainer/VBoxContainer/TrajectoryLabel
 @onready var eccentricity_label: Label = $HUD/PanelContainer/VBoxContainer/EccentricityLabel
 @onready var music_player: AudioStreamPlayer = $MusicPlayer
+@onready var autopilot_on_sound: AudioStreamPlayer = $AutopilotOnSound
+var autopilot_off_sound: AudioStreamPlayer
+@onready var thrust_locked_sound: AudioStreamPlayer = $ThrustLockedSound
 @onready var settings_menu: Control = $HUD/SettingsMenu
 @onready var pause_menu: Control = $HUD/PauseMenu
 @onready var ship_builder_panel: Control = $HUD/ShipBuilderPanel
@@ -142,11 +148,10 @@ var osculating_periapsis_direction := Vector2.RIGHT
 var target_orbit_flash := 0.0
 var autopilot_selecting := false
 var autopilot_active := false
-var autopilot_main_thruster_allowed := true
 var autopilot_body: Node2D = null
-var autopilot_target_altitude := 500.0
-var autopilot_target_pe_altitude := 500.0
-var autopilot_target_ap_altitude := 500.0
+var autopilot_target_altitude := 2000.0
+var autopilot_target_pe_altitude := 2000.0
+var autopilot_target_ap_altitude := 2000.0
 var autopilot_phase: AutopilotPhase = AutopilotPhase.OFF
 var autopilot_raising := true
 var autopilot_planned_delta_v1 := 0.0
@@ -156,18 +161,41 @@ var station_keeping_correcting_apoapsis := true
 var station_keeping_wait_time := 0.0
 var autopilot_departure_body: Node2D = null
 var autopilot_selectable_bodies: Array[Node2D] = []
-var interplanetary_correction_timer := 0.0
 var route_plan: Dictionary = {}
 var route_task_id := -1
 var route_task_holder: Dictionary = {}
 var trajectory_task_id := -1
 var trajectory_task_holder: Dictionary = {}
+## The last finished prediction: absolute points, each point's sim time after
+## `_trajectory_t0`. Redrawn every frame from the ship onward (see
+## refresh_trajectory_line), so the line stays on the ship between the 10 Hz
+## predictions instead of trailing behind and jumping.
+var _trajectory_points := PackedVector2Array()
+var _trajectory_times := PackedFloat32Array()
+var _trajectory_t0 := 0.0
+## Index into `planets` when the whole prediction stays inside that planet's
+## SOI - the line is then drawn relative to the planet (a clean ellipse that
+## rides along with it) from `_trajectory_rel_points`. -1 draws it round the sun.
+var _trajectory_ref := -1
+var _trajectory_rel_points := PackedVector2Array()
 var route_task_phase: AutopilotPhase = AutopilotPhase.OFF
 var route_replan_timer := 0.0
 var transfer_dv := Vector2.ZERO
 var transfer_delivered := Vector2.ZERO
 var last_transfer_burn_end := -INF
 var total_sim_time := 0.0
+var _cruise_burning := false
+## Planned free-flight intercept (plan_intercept): arrival sim time (-1 = none),
+## transfer direction, and the velocity the transfer wants right now.
+var _intercept_arrival := -1.0
+var _intercept_prograde := true
+var _intercept_velocity := Vector2.ZERO
+var _intercept_resolve_timer := 0.0
+## Scenery only - see asteroid_belts.gd.
+var asteroid_belts: AsteroidBelts
+var asteroid_belt_map: AsteroidBeltMap
+## Up while the planets are still generating; the sim and input wait for it.
+var loading_screen: LoadingScreen
 var physics_planets: Array[PhysicsBody] = []
 var physics_ship: PhysicsBody
 var soi_radii_cache: PackedFloat64Array = []
@@ -177,7 +205,7 @@ var mu_planets: PackedFloat64Array = []
 const TARGET_ORBIT_COLOR := Color(0.55, 1.0, 0.62, 0.8)
 const TARGET_ORBIT_FLASH_COLOR := Color(0.8, 1.0, 0.85, 1.0)
 const TARGET_ORBIT_FLASH_FADE := 4.0
-const ZOOM_MIN := 0.001
+const ZOOM_MIN := 0.00005
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
 ## On-screen radius, in pixels, above which a body switches to its fine sphere.
@@ -186,9 +214,20 @@ const DETAIL_HIGH_SCREEN_RADIUS := 40.0
 ## clear the tallest mountain; orthographic, so it does not change the size.
 const CAMERA_3D_HEIGHT := 50000.0
 const ZOOM_STEP := 1.2
+## Planets pull on the ship this much less than their scene mass says, so
+## orbits are slower and easier to leave. Applied to the planets' `mass` once at
+## start, so the sim, predictor, autopilot, SOI sizes and the catalog all agree.
+## (Planets themselves only feel the sun, so their own orbits are unaffected.)
+const PLANET_GRAVITY_SCALE := 0.4
+## Smallest a planet's SOI may be, in planet radii (see get_soi_radius).
+const MIN_SOI_RADII := 5.0
 const PREDICTION_STEPS := 6000
 const PREDICTION_DT := 0.8
+## A predicted point is kept at least every this many steps...
 const PREDICTION_DRAW_INTERVAL := 20
+## ...and sooner wherever the path has turned by this much (radians), so tight
+## loops round a planet come out round instead of as a polygon.
+const PREDICTION_DRAW_TURN := 0.025
 const SIM_DT := 1.0 / 120.0
 const MAX_SIM_STEPS_PER_FRAME := 6000
 const TRAJECTORY_CONFIRM_FRAMES := 10
@@ -196,25 +235,34 @@ const PREDICTION_UPDATE_INTERVAL := 0.1
 const ORBIT_LINE_SCREEN_WIDTH := 1.0
 const TRAJECTORY_LINE_SCREEN_WIDTH := 2.0
 const SOI_LINE_SCREEN_WIDTH := 1.0
-const AUTOPILOT_TOLERANCE := 10.0
-const STATION_KEEPING_TRIGGER := 150.0
+const AUTOPILOT_TOLERANCE := 40.0
+const STATION_KEEPING_TRIGGER := 600.0
 const STATION_KEEPING_EMERGENCY_FACTOR := 2.5
 const STATION_KEEPING_MAX_WAIT_FRACTION := 0.55
-const AUTOPILOT_SCROLL_STEP := 250.0
+const AUTOPILOT_SCROLL_STEP := 1000.0
 const AUTOPILOT_SCROLL_STEP_FRACTION := 0.02
-const AUTOPILOT_MIN_ALTITUDE := 100.0
+const AUTOPILOT_MIN_ALTITUDE := 400.0
 const AUTOPILOT_MAX_SOI_FACTOR := 0.8
-const APSIS_BURN_WINDOW := 15.0
+const APSIS_BURN_WINDOW := 60.0
 const APSIS_BURN_MAX_ANGLE := deg_to_rad(60.0)
 const SHIP_TRUE_SCALE_ZOOM_THRESHOLD := 4.0
 const INTERPLANETARY_WINDOW_TOLERANCE := 0.12
 const INTERPLANETARY_ESCAPE_SOI_FACTOR := 1.5
 const INTERPLANETARY_HOMING_SOI_FACTOR := 4.0
 const INTERPLANETARY_APPROACH_TIME := 90.0
-const INTERPLANETARY_CORRECTION_INTERVAL := 20.0
+## Speed error (units/s) that starts a cruise correction burn.
+const CRUISE_BURN_START := 1.0
+## Flight times tried when planning an intercept from free flight.
+const INTERCEPT_SAMPLES := 64
+## Planning penalty per second of flight, in units/s of delta-v: 0.02 makes an
+## hour of flight worth 72 units/s, so fast direct routes win.
+const INTERCEPT_TIME_COST := 0.02
+## Replan once the planned arrival is closer than this (s) - the homing
+## branch should have taken over by then.
+const INTERCEPT_MIN_TIME_LEFT := 20.0
 const ROUTE_REPLAN_INTERVAL := 0.5
 const ROUTE_CORRECTION_COOLDOWN := 300.0
-const ROUTE_MIN_CORRECTION_DV := 0.003
+const ROUTE_MIN_CORRECTION_DV := 0.012
 const ROUTE_MIN_TIME_TO_ARRIVAL := 200.0
 
 
@@ -257,6 +305,8 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if loading_screen != null:
+		return
 	# The planet catalog sits over everything and keeps the keyboard to itself.
 	if planet_info_panel.visible:
 		if event is InputEventKey and event.pressed and not event.echo and (
@@ -268,6 +318,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
 			get_viewport().set_input_as_handled()
 		return
+
+	# Taking the controls: any manual thrust or turn hands the ship back to the
+	# player. Not consumed, so the key still does its normal job.
+	if autopilot_active and _test_enemy == null and _is_manual_flight_input(event):
+		disengage_autopilot()
 
 	if (
 		event is InputEventKey
@@ -310,6 +365,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if ship_builder_panel != null and ship_builder_panel.visible:
+		return
+
+	if (
+		event is InputEventKey and event.pressed and not event.echo
+		and (event.keycode == KEY_Z or event.keycode == KEY_C) and _test_enemy == null
+	):
+		# 1 = prograde, 2 = retrograde (ship.gd AttitudeHold).
+		ship.toggle_attitude_hold(1 if event.keycode == KEY_Z else 2)
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
+		ship.toggle_flight_assist()
+		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_G:
@@ -436,6 +505,18 @@ func _ready() -> void:
 	var sun_mass: float = sun.get("mass")
 	mu_sun = G * sun_mass
 
+	# Each launch starts every planet at a random point on its orbit; only the
+	# orbit radius comes from the scene. Velocity below follows from the new position.
+	var phase_rng := RandomNumberGenerator.new()
+	phase_rng.randomize()
+	for planet in planets:
+		var rel: Vector2 = planet.position - sun.position
+		planet.position = sun.position + Vector2(rel.length(), 0.0).rotated(phase_rng.randf() * TAU)
+		planet.call("snap_visual_position")
+
+	for planet in planets:
+		planet.set("mass", float(planet.get("mass")) * PLANET_GRAVITY_SCALE)
+
 	for planet in planets:
 		planet.velocity = get_circular_orbit_velocity(
 			planet.position,
@@ -456,10 +537,40 @@ func _ready() -> void:
 		orbit_line_radii.append(-1.0)
 		line.add_point(planet.position)
 
+	autopilot_off_sound = AudioStreamPlayer.new()
+	autopilot_off_sound.name = "AutopilotOffSound"
+	autopilot_off_sound.stream = AUTOPILOT_OFF_SOUND
+	autopilot_off_sound.bus = &"SFX"
+	add_child(autopilot_off_sound)
+
+	asteroid_belts = AsteroidBelts.new()
+	asteroid_belts.name = "AsteroidBelts"
+	add_child(asteroid_belts)
+	asteroid_belts.setup(sun.global_position, mu_sun, world_seed)
+	asteroid_belt_map = AsteroidBeltMap.new()
+	asteroid_belt_map.name = "AsteroidBeltMap"
+	$BehindWorld.add_child(asteroid_belt_map)
+	# Under the orbit lines.
+	$BehindWorld.move_child(asteroid_belt_map, 0)
+	asteroid_belt_map.setup(sun.global_position)
+
+	# The planets' terrain bakes started in their own _ready; hold the sim and
+	# input behind the loading screen until every one has landed. Coming from
+	# the menu the screen is already up (on the root); run straight from the
+	# editor, make one.
+	loading_screen = LoadingScreen.current
+	if loading_screen == null:
+		loading_screen = LoadingScreen.new()
+		add_child(loading_screen)
+	loading_screen.status_text = "Generating planets"
+	loading_screen.target_progress = LoadingScreen.SCENE_SHARE
+	loading_screen.track_bodies(celestial_bodies)
+	loading_screen.finished.connect(func() -> void: loading_screen = null)
+
 	var home: Node2D = planets[HOME_PLANET_INDEX]
 	var home_mass: float = home.get("mass")
 
-	ship.position = home.position + Vector2(1000, 0)
+	ship.position = home.position + Vector2(4000, 0)
 	var local_ship_velocity: Vector2 = get_circular_orbit_velocity(
 		ship.position,
 		home.position,
@@ -470,7 +581,6 @@ func _ready() -> void:
 	physics_ship = PhysicsBody.new(ship)
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
-	main_thruster_toggle.toggled.connect(_on_main_thruster_toggled)
 	time_warp_panel.time_scale_selected.connect(_on_time_scale_selected)
 	time_warp_panel.pause_toggled.connect(toggle_pause)
 	time_warp_panel.step_requested.connect(step_simulation_once)
@@ -531,6 +641,7 @@ func _process(delta: float) -> void:
 	update_autopilot_hover_selection()
 
 	update_trajectory_prediction_async(delta)
+	refresh_trajectory_line()
 
 	update_osculating_orbit_line()
 	update_target_orbit_visual()
@@ -548,6 +659,8 @@ func _process(delta: float) -> void:
 		camera.position = camera.position.lerp(follow_pos, catch_up)
 
 	_sync_camera_3d()
+	asteroid_belts.update_view(total_sim_time, camera_zoom)
+	asteroid_belt_map.set_zoom(camera_zoom)
 
 
 # The top-down orthographic 3D camera shows exactly what the Camera2D shows:
@@ -607,6 +720,16 @@ func start_autopilot_selection() -> void:
 		autopilot_selecting = false
 		return
 
+	# Flying free (not in any planet's SOI)? Default to the nearest planet
+	# rather than to a solar orbit at the ship's current distance - that is
+	# almost always what the player wants. Tab still reaches the sun.
+	if autopilot_body == sun:
+		var nearby: Node2D = get_nearest_planet()
+		if nearby != null:
+			autopilot_body = null
+			set_autopilot_target_body(nearby)
+			return
+
 	var body_radius: float = autopilot_body.get("radius")
 	var current_altitude: float = (
 		ship.position.distance_to(autopilot_body.position)
@@ -620,6 +743,18 @@ func start_autopilot_selection() -> void:
 		rounded_altitude,
 		AUTOPILOT_MIN_ALTITUDE
 	)
+
+
+## The planet closest to the ship right now, or null.
+func get_nearest_planet() -> Node2D:
+	var best: Node2D = null
+	var best_distance: float = INF
+	for planet in planets:
+		var distance: float = ship.position.distance_to(planet.position)
+		if distance < best_distance:
+			best = planet
+			best_distance = distance
+	return best
 
 
 func get_autopilot_altitude_range(body: Node2D) -> Dictionary:
@@ -697,7 +832,20 @@ func change_autopilot_target_ap(direction: float) -> void:
 	flash_target_orbit()
 
 
-func disengage_autopilot() -> void:
+## W / A / S / D, the turn arrows, or RMB (turn toward the cursor).
+func _is_manual_flight_input(event: InputEvent) -> bool:
+	if event is InputEventKey and event.pressed and not event.echo:
+		return event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_LEFT, KEY_RIGHT]
+	if event is InputEventMouseButton and event.pressed:
+		return event.button_index == MOUSE_BUTTON_RIGHT
+	return false
+
+
+## `announce` plays the autopilot-off call - for F and for grabbing the
+## controls; the throttle lock (X) turns it off silently.
+func disengage_autopilot(announce: bool = true) -> void:
+	if announce and autopilot_active:
+		autopilot_off_sound.play()
 	autopilot_active = false
 	autopilot_selecting = false
 	autopilot_phase = AutopilotPhase.OFF
@@ -803,11 +951,20 @@ func get_orbit_elements(body: Node2D) -> Dictionary:
 
 func engage_autopilot() -> void:
 	autopilot_selecting = false
+	_intercept_arrival = -1.0
+	_cruise_burning = false
 
 	ship.disengage_manual_main_engine()
 
 	if autopilot_body == null:
 		return
+
+	# Never aim for an orbit outside the target's SOI - the ship would leave it,
+	# fall back to chasing, re-capture and leave again forever.
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_altitude = clampf(
+		autopilot_target_altitude, AUTOPILOT_MIN_ALTITUDE, altitude_range.max_altitude
+	)
 
 	var origin_body: Node2D = get_current_orbit_body()
 
@@ -815,11 +972,19 @@ func engage_autopilot() -> void:
 		engage_local_autopilot()
 	else:
 		engage_interplanetary_autopilot(origin_body)
+	if autopilot_active:
+		autopilot_on_sound.play()
 
 
 func engage_local_autopilot() -> void:
 	var elements = get_orbit_elements(autopilot_body)
 	if not elements.bound:
+		# On an escape path from the target (after a locked-throttle burn, or
+		# flying free fast enough to leave even the sun): brake into orbit
+		# first. CAPTURE_BURN hands over to the normal local plan once the
+		# orbit closes.
+		autopilot_active = true
+		autopilot_phase = AutopilotPhase.CAPTURE_BURN
 		return
 
 	var body_radius: float = autopilot_body.get("radius")
@@ -880,10 +1045,11 @@ func engage_local_autopilot() -> void:
 
 func engage_interplanetary_autopilot(origin_body: Node2D) -> void:
 	autopilot_departure_body = origin_body
+	_intercept_arrival = -1.0
+	_cruise_burning = false
 	autopilot_planned_delta_v1 = 0.0
 	autopilot_planned_delta_v2 = 0.0
 	autopilot_remaining_delta_v = 0.0
-	interplanetary_correction_timer = 0.0
 	autopilot_active = true
 	route_plan = {}
 	route_replan_timer = ROUTE_REPLAN_INTERVAL
@@ -1310,13 +1476,12 @@ func get_autopilot_max_acceleration() -> float:
 
 
 func get_autopilot_thrust_force() -> float:
-	return ship.thrust_force if autopilot_main_thruster_allowed else ship.correction_thrust_force
+	return ship.thrust_force
 
 
 func is_autopilot_using_main_engine() -> bool:
 	return (
 		autopilot_active
-		and autopilot_main_thruster_allowed
 		and ship.autopilot_thrust != Vector2.ZERO
 	)
 
@@ -1537,12 +1702,120 @@ func update_interplanetary_cruise(dt: float) -> void:
 			set_autopilot_direction(error_vector.normalized(), throttle)
 		return
 
-	interplanetary_correction_timer += dt
-	if interplanetary_correction_timer < INTERPLANETARY_CORRECTION_INTERVAL:
+	if _fly_intercept(dt):
 		return
-	interplanetary_correction_timer = 0.0
+	_cruise_match_target_radius()
 
-	var mu_sun: float = G * sun.get("mass")
+
+## Out of the target's reach: fly a Lambert transfer that arrives where the
+## target will be (plan_intercept), burning whenever the velocity strays from
+## the transfer. False if no transfer could be found.
+func _fly_intercept(dt: float) -> bool:
+	if autopilot_body == sun:
+		return false
+	var time_left: float = _intercept_arrival - total_sim_time
+	if _intercept_arrival < 0.0 or time_left < INTERCEPT_MIN_TIME_LEFT:
+		if not plan_intercept():
+			return false
+		time_left = _intercept_arrival - total_sim_time
+
+	_intercept_resolve_timer -= dt
+	if _intercept_resolve_timer <= 0.0:
+		var solution: Dictionary = OrbitMath.lambert(
+			ship.position - sun.position,
+			_target_sun_offset_after(time_left),
+			time_left,
+			mu_sun,
+			_intercept_prograde
+		)
+		if not solution.ok:
+			_intercept_arrival = -1.0
+			return false
+		_intercept_velocity = solution.v1
+		_intercept_resolve_timer = 0.25 if _cruise_burning else 2.0
+
+	var error: Vector2 = _intercept_velocity - ship.velocity
+	var error_mag: float = error.length()
+	if error_mag > CRUISE_BURN_START:
+		_cruise_burning = true
+	elif error_mag < 0.1:
+		_cruise_burning = false
+	if _cruise_burning:
+		set_autopilot_direction(error / error_mag, clampf(error_mag, 0.2, 1.0))
+		_intercept_resolve_timer = minf(_intercept_resolve_timer, 0.25)
+	else:
+		ship.clear_autopilot_thrust()
+	autopilot_remaining_delta_v = error_mag
+	return true
+
+
+## Picks the best single-revolution transfer from here to the target: tries a
+## spread of flight times in both directions and scores each by the burn now,
+## the speed left to kill on arrival, and INTERCEPT_TIME_COST per second of
+## flight - so it brakes and heads more or less straight there rather than
+## saving fuel on an hours-long arc round the sun. Sets _intercept_*.
+func plan_intercept() -> bool:
+	var r1: Vector2 = ship.position - sun.position
+	var target_r: float = (autopilot_body.position - sun.position).length()
+	var r1n: float = r1.length()
+	if r1n < 1.0 or target_r < 1.0:
+		return false
+
+	# Flight times around a Hohmann half-orbit between the two radii.
+	var hohmann: float = PI * sqrt(pow(0.5 * (r1n + target_r), 3.0) / mu_sun)
+	var best_cost: float = INF
+	var best_tof: float = -1.0
+	var best_prograde: bool = true
+	var best_v1: Vector2 = Vector2.ZERO
+	for i in range(INTERCEPT_SAMPLES):
+		# Log-spaced from a fast, nearly straight dash to a slow drifting arc.
+		var tof: float = hohmann * 0.01 * pow(250.0, float(i) / float(INTERCEPT_SAMPLES - 1))
+		var r2: Vector2 = _target_sun_offset_after(tof)
+		var v_target: Vector2 = _target_sun_velocity_after(tof)
+		for prograde: bool in [true, false]:
+			var solution: Dictionary = OrbitMath.lambert(r1, r2, tof, mu_sun, prograde)
+			if not solution.ok:
+				continue
+			var cost: float = (
+				(solution.v1 - ship.velocity).length()
+				+ (solution.v2 - v_target).length()
+				+ tof * INTERCEPT_TIME_COST
+			)
+			if cost < best_cost:
+				best_cost = cost
+				best_tof = tof
+				best_prograde = prograde
+				best_v1 = solution.v1
+
+	if best_tof < 0.0:
+		return false
+	_intercept_arrival = total_sim_time + best_tof
+	_intercept_prograde = best_prograde
+	_intercept_velocity = best_v1
+	_intercept_resolve_timer = 0.0
+	return true
+
+
+## The target's offset from the sun `dt` seconds from now (circular orbit).
+func _target_sun_offset_after(dt: float) -> Vector2:
+	var rel: Vector2 = autopilot_body.position - sun.position
+	return rel.rotated(_target_angular_rate() * dt)
+
+
+func _target_sun_velocity_after(dt: float) -> Vector2:
+	var velocity: Vector2 = autopilot_body.get("velocity")
+	return velocity.rotated(_target_angular_rate() * dt)
+
+
+func _target_angular_rate() -> float:
+	var rel: Vector2 = autopilot_body.position - sun.position
+	var velocity: Vector2 = autopilot_body.get("velocity")
+	return (rel.x * velocity.y - rel.y * velocity.x) / maxf(rel.length_squared(), 1.0)
+
+
+## Fallback when no transfer is found: burn onto a solar orbit that at least
+## reaches the target's distance from the sun.
+func _cruise_match_target_radius() -> void:
 	var ship_r_vec: Vector2 = ship.position - sun.position
 	var ship_r: float = ship_r_vec.length()
 	var target_r: float = autopilot_body.position.distance_to(sun.position)
@@ -1555,9 +1828,17 @@ func update_interplanetary_cruise(dt: float) -> void:
 	if ship.velocity.dot(tangent_dir) < 0.0:
 		tangent_dir = -tangent_dir
 
+	# Burn continuously; lights up past CRUISE_BURN_START and runs down to the
+	# targeting burn's own cutoff, so the engine does not flicker.
 	var remaining: float = execute_apsis_targeting_burn(
 		ship_r, target_r, mu_sun, tangent_dir, ship.velocity
 	)
+	if remaining > CRUISE_BURN_START:
+		_cruise_burning = true
+	elif remaining <= 0.0:
+		_cruise_burning = false
+	if not _cruise_burning:
+		ship.clear_autopilot_thrust()
 	autopilot_remaining_delta_v = remaining
 
 
@@ -1937,7 +2218,12 @@ const PLACEHOLDER_SHIELD_PCT := 1.0
 
 
 func update_hud() -> void:
-	var speed: float = ship.velocity.length()
+	# Speed relative to the body whose SOI the ship is in (the sun out in deep
+	# space) - what the player actually steers. Against the sun, a planet's own
+	# orbital speed would swing the reading as the nose turns.
+	var speed_body: Node2D = get_current_orbit_body()
+	var speed_body_velocity: Vector2 = Vector2.ZERO if speed_body == sun else speed_body.get("velocity")
+	var speed: float = (ship.velocity - speed_body_velocity).length()
 	var distance: float = ship.position.distance_to(sun.position)
 
 	speed_gauge.speed = speed
@@ -1945,15 +2231,21 @@ func update_hud() -> void:
 	distance_label.text = hud_row("Sun distance", "%.1f SU" % distance)
 	distance_label.add_theme_color_override("font_color", COLOR_MONO)
 
-	var rcs_command: Vector2 = ship.autopilot_rcs_local_command + ship.manual_rcs_local_command
-	hud_status.set_state(autopilot_active, rcs_command.length() > 0.05, ship.throttle_locked, ship.throttle)
+	hud_status.set_state(autopilot_active, ship.throttle_locked, ship.throttle)
 	time_warp_panel.set_state(time_scale)
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
-	ship_blueprint_panel.set_state(main_engine_display, rcs_command)
+	ship_blueprint_panel.set_state(main_engine_display)
 	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
 	resource_bars_panel.set_state(PLACEHOLDER_FUEL_PCT, PLACEHOLDER_ENERGY_PCT, PLACEHOLDER_SHIELD_PCT)
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
+	if ship.flight_assist and not ship.throttle_locked:
+		lock_suffix += "  [FA]"
+	match int(ship.attitude_hold):
+		1:
+			lock_suffix += "  [PRO]"
+		2:
+			lock_suffix += "  [RETRO]"
 
 	if time_scale == 0.0:
 		thrust_label.text = hud_row("Thrust", "PAUSED" + lock_suffix)
@@ -2082,7 +2374,8 @@ func update_autopilot_hud() -> void:
 		burn_mode_text = "MAIN ENGINE"
 		burn_mode_color = Color(1.0, 0.6, 0.2)
 	elif ship.autopilot_thrust != Vector2.ZERO:
-		burn_mode_text = "RCS"
+		# Burn commanded but the nose is still swinging onto it.
+		burn_mode_text = "ALIGNING"
 		burn_mode_color = Color(0.4, 0.75, 1.0)
 	else:
 		burn_mode_text = "COASTING"
@@ -2115,7 +2408,6 @@ func update_autopilot_hud() -> void:
 		"remaining_color": get_delta_v_color(autopilot_remaining_delta_v),
 		"eta_text": eta_text,
 		"eta_color": eta_color,
-		"rcs_lines": get_rcs_status(),
 		"status_lines": get_autopilot_status().split("\n"),
 		"status_color": get_phase_color(autopilot_phase),
 		"burn_mode_text": burn_mode_text,
@@ -2187,19 +2479,6 @@ func get_body_name(body: Node2D) -> String:
 		return "None"
 
 	return body.get("body_name")
-
-
-func get_rcs_status() -> PackedStringArray:
-	var thrust: Vector2 = ship.autopilot_thrust
-	var up_strength: float = maxf(-thrust.y, 0.0)
-	var down_strength: float = maxf(thrust.y, 0.0)
-	var left_strength: float = maxf(-thrust.x, 0.0)
-	var right_strength: float = maxf(thrust.x, 0.0)
-
-	return PackedStringArray([
-		"↑ %.2f  ↓ %.2f" % [up_strength, down_strength],
-		"← %.2f  → %.2f" % [left_strength, right_strength],
-	])
 
 
 func get_autopilot_status() -> String:
@@ -2310,6 +2589,8 @@ func build_trajectory_snapshot() -> Dictionary:
 		"masses": masses,
 		"soi_radii": soi_radii,
 		"names": names,
+		"t0": total_sim_time,
+		"ref": planets.find(get_current_orbit_body()),
 		"prediction_steps": 12000 if (settings_mgr != null and settings_mgr.trajectory_long_prediction) else PREDICTION_STEPS,
 	}
 
@@ -2318,7 +2599,12 @@ func apply_trajectory_result(result: Dictionary) -> void:
 	if result.is_empty():
 		return
 
-	trajectory_prediction.points = result.get("points", PackedVector2Array())
+	_trajectory_points = result.get("points", PackedVector2Array())
+	_trajectory_times = result.get("times", PackedFloat32Array())
+	_trajectory_t0 = result.get("t0", total_sim_time)
+	_trajectory_ref = result.get("ref", -1)
+	_trajectory_rel_points = result.get("rel_points", PackedVector2Array())
+	refresh_trajectory_line()
 	update_trajectory_status(result.get("status", "ORBIT"), result.get("target", ""))
 
 	match trajectory_status:
@@ -2333,8 +2619,33 @@ func apply_trajectory_result(result: Dictionary) -> void:
 		trajectory_prediction.default_color = Color.PINK
 
 
+## Draws the stored prediction from where the ship is now: points the ship has
+## already flown past are dropped and the line starts at the ship itself.
+## Cheap enough for every frame - it only slices the stored arrays.
+func refresh_trajectory_line() -> void:
+	if _trajectory_points.is_empty() or _trajectory_times.size() != _trajectory_points.size():
+		return
+
+	var elapsed: float = total_sim_time - _trajectory_t0
+	var first: int = _trajectory_times.bsearch(elapsed, false)
+	if first >= _trajectory_points.size():
+		trajectory_prediction.points = PackedVector2Array([ship.position])
+		return
+
+	var drawn := PackedVector2Array([ship.position])
+	if _trajectory_ref >= 0 and _trajectory_ref < planets.size():
+		# Orbit round one planet: offsets from it, placed where it is now.
+		var origin: Vector2 = planets[_trajectory_ref].position
+		for i in range(first, _trajectory_rel_points.size()):
+			drawn.append(origin + _trajectory_rel_points[i])
+	else:
+		drawn.append_array(_trajectory_points.slice(first))
+	trajectory_prediction.points = drawn
+
+
 static func predict_trajectory(snap: Dictionary) -> Dictionary:
 	var points := PackedVector2Array()
+	var times := PackedFloat32Array()
 	var predicted_status := "ORBIT"
 	var predicted_target := ""
 	var collision_detected := false
@@ -2353,7 +2664,18 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 	var names: Array = snap.names
 	var count: int = positions.size()
 
+	# Relative copies for drawing round the starting SOI body, as long as the
+	# ship never leaves its SOI.
+	var ref: int = snap.get("ref", -1)
+	var rel_points := PackedVector2Array()
+	var stays_in_ref: bool = ref >= 0
+
 	points.append(ship_pos)
+	times.append(0.0)
+	if stays_in_ref:
+		rel_points.append(ship_pos - positions[ref])
+	var last_heading: Vector2 = ship_vel.normalized()
+	var steps_since_point: int = 0
 
 	var accelerations := PackedVector2Array()
 	accelerations.resize(count)
@@ -2417,6 +2739,7 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 
 		if hit != null:
 			points.append(hit)
+			times.append((step + 1) * PREDICTION_DT)
 			predicted_status = "IMPACT"
 			collision_detected = true
 			break
@@ -2427,13 +2750,27 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 
 		if hit != null:
 			points.append(hit)
+			times.append((step + 1) * PREDICTION_DT)
 			predicted_status = "IMPACT"
 			predicted_target = snap.sun_name
 			collision_detected = true
 			break
 
-		if step % PREDICTION_DRAW_INTERVAL == 0:
+		if stays_in_ref and ship_pos.distance_squared_to(positions[ref]) > soi_radii[ref] * soi_radii[ref]:
+			stays_in_ref = false
+
+		steps_since_point += 1
+		var heading: Vector2 = (ship_pos - points[points.size() - 1]).normalized()
+		if (
+			steps_since_point >= PREDICTION_DRAW_INTERVAL
+			or absf(last_heading.angle_to(heading)) > PREDICTION_DRAW_TURN
+		):
 			points.append(ship_pos)
+			times.append((step + 1) * PREDICTION_DT)
+			if stays_in_ref:
+				rel_points.append(ship_pos - positions[ref])
+			last_heading = ship_vel.normalized()
+			steps_since_point = 0
 
 	if not collision_detected:
 		predicted_status = (
@@ -2441,7 +2778,15 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 			else "ORBIT"
 		)
 
-	return {"points": points, "status": predicted_status, "target": predicted_target}
+	return {
+		"points": points,
+		"times": times,
+		"t0": snap.get("t0", 0.0),
+		"ref": ref if stays_in_ref and rel_points.size() == points.size() else -1,
+		"rel_points": rel_points,
+		"status": predicted_status,
+		"target": predicted_target,
+	}
 
 
 static func _gravity_at(position: Vector2, source_position: Vector2, source_mass: float) -> Vector2:
@@ -2868,10 +3213,6 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 		"ship_rotation_speed":
 			if ship != null:
 				ship.rotation_speed = float(value)
-		"autopilot_default_main_engine":
-			autopilot_main_thruster_allowed = bool(value)
-			if main_thruster_toggle != null:
-				main_thruster_toggle.button_pressed = bool(value)
 		"camera_smoothing":
 			pass
 
@@ -2888,13 +3229,6 @@ func _apply_all_settings() -> void:
 		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
 	if ship != null:
 		ship.rotation_speed = settings_mgr.ship_rotation_speed
-	autopilot_main_thruster_allowed = settings_mgr.autopilot_default_main_engine
-	if main_thruster_toggle != null:
-		main_thruster_toggle.button_pressed = settings_mgr.autopilot_default_main_engine
-
-
-func _on_main_thruster_toggled(pressed: bool) -> void:
-	autopilot_main_thruster_allowed = pressed
 
 
 func _on_time_scale_selected(value: float) -> void:
@@ -2985,10 +3319,16 @@ func get_soi_radius(body: Node2D) -> float:
 	var body_mass: float = body.get("mass")
 	var sun_mass: float = sun.get("mass")
 
-	return distance_to_sun * pow(
+	var laplace: float = distance_to_sun * pow(
 		body_mass / sun_mass,
 		0.4
 	)
+	# Small, light planets close to the sun get a Laplace sphere barely wider
+	# than the planet - no room to orbit. Give every planet at least
+	# MIN_SOI_RADII of its own radius (checked against its neighbours' SOIs).
+	if body == sun:
+		return laplace
+	return maxf(laplace, float(body.get("radius")) * MIN_SOI_RADII)
 
 
 func is_inside_soi(
@@ -3171,6 +3511,8 @@ func update_soi_visuals() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if loading_screen != null:
+		return
 	simulation_accumulator += delta * time_scale
 	sim_time += delta * time_scale
 
@@ -3201,8 +3543,11 @@ func _physics_process(delta: float) -> void:
 func simulation_step(dt: float) -> void:
 	update_orbit_autopilot(dt)
 
-	if ship.poll_lock_toggle(time_scale <= 1.0) and autopilot_active:
-		disengage_autopilot()
+	if ship.poll_lock_toggle(time_scale <= 1.0):
+		thrust_locked_sound.play()
+		if autopilot_active:
+			# The lock has its own sound; no autopilot-off call on top.
+			disengage_autopilot(false)
 
 	var autopilot_on_main_engine: bool = is_autopilot_using_main_engine()
 	var autopilot_thrusting: bool = ship.autopilot_thrust != Vector2.ZERO
@@ -3210,6 +3555,11 @@ func simulation_step(dt: float) -> void:
 	# While test-flying a sandbox enemy (E menu), the player ship stops reading
 	# WASD/mouse-aim so both craft don't respond to the same keys at once.
 	if _test_enemy == null:
+		# Prograde / retrograde hold follows the orbit around the current SOI body.
+		var hold_body: Node2D = get_current_orbit_body()
+		var hold_body_velocity: Vector2 = Vector2.ZERO if hold_body == sun else hold_body.get("velocity")
+		ship.hold_reference_velocity = ship.velocity - hold_body_velocity
+
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			ship.update_rotation(dt)
 		elif autopilot_on_main_engine:
@@ -3292,13 +3642,10 @@ func get_ship_acceleration_precise() -> Vector2:
 			break
 
 	if time_scale <= 1.0:
-		acceleration += ship.get_thrust_acceleration()
-		acceleration += ship.get_manual_rcs_acceleration()
+		acceleration += ship.get_manual_acceleration()
 	elif ship.throttle_locked:
 		acceleration += ship.get_thrust_acceleration()
-	acceleration += ship.get_autopilot_acceleration(
-		get_autopilot_thrust_force(), is_autopilot_using_main_engine()
-	)
+	acceleration += ship.get_autopilot_acceleration(get_autopilot_thrust_force())
 
 	return acceleration
 

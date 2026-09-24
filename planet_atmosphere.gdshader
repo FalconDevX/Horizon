@@ -19,9 +19,19 @@ uniform float strength : hint_range(0.0, 4.0) = 1.0;
 // Tips the sunlight up toward the camera - see planet_surface_3d.gdshader.
 uniform float light_lift : hint_range(0.0, 2.0) = 0.35;
 
+// For the aurora (planet_aurora.gdshaderinc): the planet's spin axis and its
+// noise offset, the same values the terrain gets.
+uniform vec3 pole_axis = vec3(0.0, 1.0, 0.0);
+uniform float seed_offset = 0.0;
+// How high the aurora's curtains stand past the limb, in planet radii.
+uniform float aurora_height = 0.07;
+
 global uniform vec3 sun_position;
 
 varying vec3 v_dir;
+
+#include "res://planet_noise.gdshaderinc"
+#include "res://planet_aurora.gdshaderinc"
 
 void vertex() {
 	v_dir = normalize(VERTEX);
@@ -68,5 +78,13 @@ void fragment() {
 	// Only seen edge-on: over the disc it would tint the whole night side.
 	vec3 col = atmo_color * day + vec3(1.0, 0.45, 0.2) * twilight * 0.55 * beyond_limb;
 
-	ALBEDO = col * glow * strength;
+	vec3 light = col * glow * strength;
+
+	// Aurora curtains standing up off the limb, brightest against the dark.
+	if (aurora_strength > 0.0 && beyond_limb > 0.0) {
+		float altitude = impact - base_radius;
+		light += aurora_limb(lit_dir, altitude, aurora_height) * aurora_strength * (1.0 - 0.6 * day);
+	}
+
+	ALBEDO = light;
 }

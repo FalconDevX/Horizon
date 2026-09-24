@@ -39,6 +39,7 @@ uniform float liquid_gloss : hint_range(0.0, 1.0) = 0.8;
 
 uniform vec3 rock_color : source_color = vec3(0.4);
 uniform float slope_rock : hint_range(0.0, 1.0) = 0.5;
+uniform float rock_patches : hint_range(0.0, 1.0) = 0.0;
 // Sediment bands across exposed rock; 0 = plain rock.
 uniform float strata : hint_range(0.0, 1.0) = 0.0;
 
@@ -73,14 +74,7 @@ uniform float light_wrap : hint_range(0.0, 1.0) = 0.15;
 uniform float terminator_softness : hint_range(0.05, 2.0) = 1.0;
 uniform float shade_contrast : hint_range(0.5, 4.0) = 1.0;
 
-// Aurora: glowing curtains around the poles, drawn as light. 0 = none.
-uniform float aurora_strength : hint_range(0.0, 3.0) = 0.0;
-uniform float aurora_latitude : hint_range(0.0, 1.0) = 0.75;
-uniform float aurora_width : hint_range(0.01, 0.3) = 0.1;
-uniform float aurora_speed = 0.03;
-uniform vec3 aurora_color_a : source_color = vec3(0.2, 1.0, 0.5);
-uniform vec3 aurora_color_b : source_color = vec3(0.2, 0.8, 1.0);
-uniform vec3 aurora_color_c : source_color = vec3(0.9, 0.3, 0.9);
+// Aurora uniforms live in planet_aurora.gdshaderinc (shared with the air).
 
 // Glowing cracks drawn over the ground (not carved, so they can glow and need
 // no match in the heightmap). 0 = none.
@@ -214,6 +208,8 @@ float ground(float h) {
 
 #include "res://planet_noise.gdshaderinc"
 #include "res://planet_clouds.gdshaderinc"
+#include "res://planet_aurora.gdshaderinc"
+#include "res://planet_rings.gdshaderinc"
 
 // The terrain below heightmap resolution: eroded fBm (octaves damped where
 // the ones before are steep) with its gradient in planet space. xyz is the
@@ -458,36 +454,6 @@ vec2 buds_at(vec3 d, vec3 t, vec3 b, float footprint) {
 	return best * fade;
 }
 
-// Aurora light at d: curtains streaked along the auroral oval, drifting, their
-// colour sliding between the three stops and going violet at the poleward edge.
-vec3 aurora_at(vec3 d, float latitude) {
-	float offset = abs(latitude) - aurora_latitude;
-	float oval = exp(-pow(offset / aurora_width, 2.0));
-	if (oval < 0.01) {
-		return vec3(0.0);
-	}
-
-	vec3 helper = abs(pole_axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-	vec3 e1 = normalize(cross(pole_axis, helper));
-	vec3 e2 = cross(pole_axis, e1);
-	float lon = atan(dot(d, e2), dot(d, e1));
-	vec2 ring = vec2(cos(lon), sin(lon));
-	float t = planet_time * aurora_speed;
-
-	float body = clamp(0.5 + noised(vec3(ring * 6.0, t) + seed_offset).x * 1.4, 0.0, 1.0);
-	float streak = pow(0.5 + 0.5 * sin(lon * 40.0 + noised(vec3(ring * 3.0, t * 0.7)).x * 8.0), 3.0);
-	float curtain = oval * body * mix(1.0, streak, 0.6);
-
-	float mixer = clamp(0.5 + noised(vec3(ring * 2.0, t * 0.5) + 17.0).x * 1.4, 0.0, 1.0);
-	vec3 color = mix(
-		mix(aurora_color_a, aurora_color_b, clamp(mixer * 2.0, 0.0, 1.0)),
-		aurora_color_c,
-		clamp(mixer * 2.0 - 1.0, 0.0, 1.0)
-	);
-	color = mix(color, aurora_color_c, smoothstep(0.0, aurora_width, offset) * 0.6);
-	return color * curtain;
-}
-
 // ---------------------------------------------------------------------------
 
 void vertex() {
@@ -625,7 +591,12 @@ void fragment() {
 				band += (value_noise(vec3(h_fine * 400.0, 0.0, 0.0)) - 0.5) * 0.6;
 				rock *= mix(1.0, 0.7 + 0.55 * band, strata);
 			}
-			col = mix(col, rock, smoothstep(0.08, 0.35, slope) * slope_rock);
+			float rocky_ground = smoothstep(0.08, 0.35, slope) * slope_rock;
+			if (rock_patches > 0.0) {
+				float outcrop = fbm(d + seed_offset * 0.13 + 31.0, 3, 8.0, footprint);
+				rocky_ground = max(rocky_ground, smoothstep(0.05, 0.28, outcrop) * rock_patches);
+			}
+			col = mix(col, rock, rocky_ground);
 			col *= 0.92 + 0.16 * grain;
 
 			// Hollows darker, crests a touch brighter.
@@ -693,6 +664,9 @@ void fragment() {
 		vec3 shadow_dir = normalize(d + L_planet * 0.015);
 		shadow = 1.0 - 0.6 * cloud_field(shadow_dir, footprint, 1).y;
 	}
+	// Shadow of the rings (planet_rings.gdshaderinc), which lie in the plane
+	// perpendicular to the pole.
+	shadow *= mix(1.0, ring_transmission(d, L_planet, pole_axis), 0.85);
 
 	vec3 lit = col * (ambient + (1.0 - ambient) * diffuse * shadow * sun_color + atmo_color * sky_fill);
 
@@ -727,7 +701,7 @@ void fragment() {
 	// Aurora last, over the haze (the cloud shell is drawn on top of this
 	// surface separately), strongest on the night side where nothing drowns it.
 	if (aurora_strength > 0.0 && !is_gas) {
-		lit += aurora_at(d, latitude) * aurora_strength * (1.0 - 0.7 * day);
+		lit += aurora_ground(d, latitude) * aurora_strength * (1.0 - 0.7 * day);
 	}
 
 	ALBEDO = lit;
