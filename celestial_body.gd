@@ -10,6 +10,11 @@ const CORONA_SHADER := preload("res://planet_corona.gdshader")
 const CLOUDS_SHADER := preload("res://planet_clouds.gdshader")
 const ATMOSPHERE_SHADER := preload("res://planet_atmosphere.gdshader")
 const RINGS_SHADER := preload("res://planet_rings.gdshader")
+const BLACK_HOLE_SHADER := preload("res://black_hole.gdshader")
+
+## Half-size of a black hole's ray-traced quad, in horizon radii - far enough
+## out that the lensing has faded to nothing at its edge.
+const BLACK_HOLE_EXTENT := 16.0
 
 ## How far the atmosphere's glow reaches past the surface, in radii.
 const ATMOSPHERE_DEPTH := 0.12
@@ -102,6 +107,12 @@ var fov_contact: int = 0:
 ## (planet_star.gdshader, planet_corona.gdshader) instead of a flat ball.
 @export var is_star: bool = false
 
+## Draws the body as a black hole (black_hole.gdshader): `radius` is the event
+## horizon. The ball is hidden; a ray-traced quad shows the shadow, a lensed
+## accretion disk and the bent starfield behind. Gravity, SOI, prediction and
+## the autopilot treat it like any other body.
+@export var is_black_hole: bool = false
+
 @export var surface_blob_count: int = 0
 
 ## Leave at 0 to roll the count from the seed - more colours is rarer, and is
@@ -186,7 +197,8 @@ var surface_style: int = 0
 ## blob preview. Seeded from generation_seed.
 @export_enum(
 	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant",
-	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis"
+	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis",
+	"Lotus", "Swirl", "Rings", "Quake", "Fractal", "Meridian"
 )
 var terrain_kind: int = 0
 
@@ -260,6 +272,15 @@ var _terrain_key: String = ""
 # reaped in _process once done and their results thrown away.
 var _stale_terrain_tasks: Array[int] = []
 
+## Resource deposits standing on the surface (ResourceDeposits.place), each
+## with its node under `"node"`. Placed once the heightmap lands.
+var resource_deposits: Array = []
+## Parent of the deposits' nodes, a child of the sphere so they turn with it.
+var _deposits_3d: Node3D = null
+var _deposit_ground: ResourceDeposits.Ground = null
+## Game time since the deposits were placed, for their motions.
+var _deposit_time := 0.0
+
 
 func _ready() -> void:
 	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
@@ -269,6 +290,8 @@ func _ready() -> void:
 
 	if is_star and _sphere_3d != null:
 		build_star()
+	elif is_black_hole and _sphere_3d != null:
+		build_black_hole()
 	elif _uses_terrain():
 		build_terrain()
 	elif surface_blob_count > 0:
@@ -318,6 +341,10 @@ func _process(delta: float) -> void:
 	).normalized()
 
 	push_surface_rotation()
+
+	if not resource_deposits.is_empty():
+		_deposit_time += delta * spin_rate
+		ResourceDeposits.advance(resource_deposits, _deposit_ground, delta * spin_rate, _deposit_time)
 
 
 # solar_system.gd is the parent and physics-processes first, so the orbit has
@@ -553,9 +580,10 @@ func build_surface() -> void:
 func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
 	var material := ShaderMaterial.new()
 	material.shader = CLOUDS_SHADER
-	# Over the plains, not the summits: only the odd peak ever reaches this
-	# high, and a deck at full relief would hover visibly off the limb.
-	material.set_shader_parameter("shell_height", p["relief"] * 0.45 + CLOUD_CLEARANCE)
+	# Over the plains, not the summits (`cloud_height` < 1): only the odd peak
+	# ever reaches this high, and a deck at full relief would hover visibly off
+	# the limb - unless the kind's high ground is widespread.
+	material.set_shader_parameter("shell_height", p["relief"] * p["cloud_height"] + CLOUD_CLEARANCE)
 	material.set_shader_parameter("pole_axis", surface_spin_axis)
 	material.set_shader_parameter("seed_offset", _seed_offset())
 	material.set_shader_parameter("cloud_color", p["cloud_color"])
@@ -650,7 +678,7 @@ static func _basis_with_up(up: Vector3) -> Basis:
 
 
 func _atmosphere_shell_radius() -> float:
-	return 1.0 + terrain_params.get("relief", 0.0) * 0.45 + ATMOSPHERE_DEPTH
+	return 1.0 + terrain_params.get("relief", 0.0) * terrain_params.get("cloud_height", 0.45) + ATMOSPHERE_DEPTH
 
 
 ## A stand-alone copy of this body's 3D look at unit radius - surface, cloud
@@ -696,6 +724,22 @@ func make_preview() -> Node3D:
 		root.add_child(corona)
 
 	return root
+
+
+## Hides the ball and turns the glow plane into the ray-traced black hole.
+func build_black_hole() -> void:
+	surface_spin_speed = 0.0
+	var flat := _sphere_3d.material_override as StandardMaterial3D
+	if flat != null:
+		# The catalog preview reuses this material: a plain black ball.
+		flat.albedo_color = Color.BLACK
+	_sphere_3d.visible = false
+
+	var material := ShaderMaterial.new()
+	material.shader = BLACK_HOLE_SHADER
+	material.set_shader_parameter("extent", BLACK_HOLE_EXTENT)
+	_glow_3d.material_override = material
+	update_surface_scale()
 
 
 ## Swaps the flat ball and its glow sprite for the star shaders.
@@ -821,9 +865,20 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("sigil_count", sigils["count"])
 	m.set_shader_parameter("sigils", sigils["centres"])
 	m.set_shader_parameter("sigil_styles", sigils["styles"])
-	m.set_shader_parameter("sigil_tentacles", sigils["tentacles"])
+	m.set_shader_parameter("sigil_extra", sigils["extras"])
+	m.set_shader_parameter("sigil_mode", p["sigil_mode"])
 	m.set_shader_parameter("sigil_color", p["sigil_color"])
+	m.set_shader_parameter("sigil_color_b", p["sigil_color_b"])
 	m.set_shader_parameter("sigil_glow", p["sigil_glow"])
+
+	m.set_shader_parameter("quake_strength", p["quake"])
+	m.set_shader_parameter("quake_color", p["quake_color"])
+	m.set_shader_parameter("quake_scale", p["quake_scale"])
+	m.set_shader_parameter("quake_density", p["quake_density"])
+	m.set_shader_parameter("quake_size", p["quake_size"])
+	m.set_shader_parameter("quake_rings", p["quake_rings"])
+	m.set_shader_parameter("quake_spokes", p["quake_spokes"])
+	m.set_shader_parameter("quake_shift", p["quake_shift"])
 
 	m.set_shader_parameter("bud_strength", p["buds"])
 	m.set_shader_parameter("bud_color", p["bud_color"])
@@ -832,6 +887,7 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("bud_spike", p["bud_spike"])
 	m.set_shader_parameter("bud_density", p["bud_density"])
 	m.set_shader_parameter("bud_reach", p["bud_reach"])
+	m.set_shader_parameter("bud_near_features", p["bud_near_features"])
 
 	m.set_shader_parameter("mist_strength", p["mist"])
 	m.set_shader_parameter("mist_color", p["mist_color"])
@@ -868,6 +924,34 @@ func _apply_terrain(data: Dictionary) -> void:
 	terrain_material.set_shader_parameter("has_liquid", sea_level >= 0.0)
 	terrain_material.set_shader_parameter("sea_level", maxf(sea_level, 0.0))
 	_sphere_3d.material_override = terrain_material
+	_place_deposits()
+
+
+func _place_deposits() -> void:
+	_clear_deposits()
+	_deposit_ground = ResourceDeposits.Ground.new(terrain_params, terrain_data, surface_spin_axis)
+	_deposit_time = 0.0
+	resource_deposits = ResourceDeposits.place(
+		terrain_kind as PlanetTerrain.Kind, _deposit_ground, generation_seed
+	)
+	if resource_deposits.is_empty():
+		return
+
+	_deposits_3d = Node3D.new()
+	_deposits_3d.name = "Deposits"
+	_deposits_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_sphere_3d.add_child(_deposits_3d)
+	for deposit: Dictionary in resource_deposits:
+		var node: MeshInstance3D = ResourceDeposits.make_node(deposit)
+		_deposits_3d.add_child(node)
+		deposit["node"] = node
+
+
+func _clear_deposits() -> void:
+	if _deposits_3d != null:
+		_deposits_3d.queue_free()
+		_deposits_3d = null
+	resource_deposits = []
 
 
 ## False while the heightmap is still baking - the loading screen waits on it.
@@ -907,6 +991,7 @@ func rebuild_surface() -> void:
 		_clouds_3d = null
 		_atmosphere_3d = null
 		_rings_3d = null
+		_clear_deposits()
 		terrain_material = null
 		terrain_data = {}
 		build_terrain()
@@ -1009,6 +1094,11 @@ func update_surface_scale() -> void:
 	# when zoomed out.
 	if _sphere_3d != null:
 		_apply_sphere_transform()
+		if is_black_hole:
+			var span: float = get_draw_radius() * BLACK_HOLE_EXTENT * 2.0
+			_glow_3d.scale = Vector3(span, 1.0, span)
+			_glow_3d.position = Vector3.ZERO
+			return
 		var glow_diameter: float = get_draw_radius() * (CORONA_EXTENT if is_star else 2.0) * 2.0
 		_glow_3d.scale = Vector3(glow_diameter, 1.0, glow_diameter)
 		# Below everything the body draws, rings included.

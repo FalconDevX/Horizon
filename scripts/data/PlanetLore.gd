@@ -18,6 +18,16 @@ const STAR := {
 	],
 }
 
+const BLACK_HOLE := {
+	"class": "Stellar black hole",
+	"description": "A collapsed star so dense that not even light escapes from inside its event horizon. What you see is its shadow - about two and a half times wider than the horizon itself - ringed by a white-hot accretion disk. Light from the far side of the disk is bent over and under the shadow, and the stars behind are smeared into arcs and rings.",
+	"facts": [
+		"One side of the disk is brighter: the gas there is racing toward you at a sizeable fraction of light speed, and relativistic beaming concentrates its light forward.",
+		"The thin bright ring hugging the shadow is light that circled the hole, possibly more than once, before escaping.",
+		"Gas can orbit stably only down to three horizon radii; inside that it plunges straight in.",
+	],
+}
+
 const KINDS := {
 	# Filled in by describe(): lava or cryo, depending on the roll.
 	PlanetTerrain.Kind.VOLCANIC: {"class": "Volcanic world", "description": "", "facts": []},
@@ -104,7 +114,7 @@ const KINDS := {
 	},
 	PlanetTerrain.Kind.OCCULT: {
 		"class": "Anomalous world",
-		"description": "A black, dusty world marked by things no geology explains: huge crater-eyes whose irises glow red, and coiling ridges like tentacles, ringed with sucker-like bumps.",
+		"description": "A black, dusty world marked by things no geology explains: huge crater-eyes with glowing red irises, and coiling ridges like tentacles, ringed with sucker-like bumps.",
 		"facts": [
 			"Its 'eyes' are real craters - rim, iris ring and a pupil pit - but no impact makes that shape.",
 			"The glow comes only from the irises; the rest of each eye is stained, not lit.",
@@ -136,6 +146,60 @@ const KINDS := {
 			"Its dunes line up with the prevailing winds, like ripples on a beach.",
 			"Life clusters where the water is - a green halo around every pool.",
 			"The pools shrink and grow as the dunes creep over them.",
+		],
+	},
+	PlanetTerrain.Kind.LOTUS: {
+		"class": "Lotus world",
+		"description": "A shallow global ocean with no land at all - only giant four-petalled flowers, white, pink and yellow, spread open on lily pads wide enough to land on.",
+		"facts": [
+			"Each flower is a single plant, rooted in the sea floor far below.",
+			"Its pads float on the surface and ride the tides up and down.",
+			"The petals close at night, so the planet looks greener after dark.",
+		],
+	},
+	PlanetTerrain.Kind.SWIRL: {
+		"class": "Spiral world",
+		"description": "A crimson planet marked by about ten huge snail-shell spirals, each a raised orange ridge coiled around a sunken trench of the same shape.",
+		"facts": [
+			"Every spiral winds the same number of turns from the centre to its edge.",
+			"The trenches run deeper than any canyon the wind could carve.",
+			"No two neighbouring spirals are guaranteed to turn the same way.",
+		],
+	},
+	PlanetTerrain.Kind.RINGS: {
+		"class": "Ringmark world",
+		"description": "A lush green planet in every happy shade, scarred here and there by onion-like sets of concentric rings, dark red and near black in turn and broken by gaps, with patches of violet bushes growing round them.",
+		"facts": [
+			"The rings stand slightly proud of the ground around them.",
+			"Every ring breaks at a few points, and never at the same angle as its neighbour.",
+			"Nothing grows on the rings themselves.",
+		],
+	},
+	PlanetTerrain.Kind.QUAKE: {
+		"class": "Quake world",
+		"description": "A brown world washing into a metallic cast, pocked all over by small sunken holes, each ringed with silver cracks and fractures running out from it - left by countless quakes.",
+		"facts": [
+			"Each scar marks the epicentre of a single quake.",
+			"The silver is fresh rock, still unweathered where the ground split open.",
+			"Its crust is still settling - new scars appear every year.",
+		],
+	},
+	PlanetTerrain.Kind.FRACTAL: {
+		"class": "Fractal world",
+		"description": "A barren brown-grey plain, free of craters, where a few great massifs rise in the exact shape of the Mandelbrot set - domed bulbs crowned in yellow over purple flanks, fringed with navy filament ridges.",
+		"facts": [
+			"Zoom in on any filament and it keeps branching; the survey drones never found the end of one.",
+			"The thin straight ridge running off each massif is the set's own antenna.",
+			"How the ground came to take this shape is still an open question.",
+		],
+	},
+	PlanetTerrain.Kind.MERIDIAN: {
+		"class": "Meridian world",
+		"description": "A planet crossed from pole to pole by long mountain ridges and carved valleys - some straight, some winding, some zig-zagging - that lean, wander and cut across each other. Pink-and-white seas fill the low ground and run up the valleys as long channels; the crests stand pale above them.",
+		"facts": [
+			"Every ridge and valley starts at one pole and ends at the other.",
+			"Where a ridge crosses a valley, the two meet in a saddle.",
+			"Its seas owe their pink to something living in them; the shallows bleach it almost white.",
 		],
 	},
 }
@@ -171,6 +235,29 @@ static func describe(kind: int, params: Dictionary, is_star: bool) -> Dictionary
 				"The dimple in a volcano's summit is a caldera: left when the magma chamber empties and the top collapses.",
 				"Its weather is ash, not water.",
 			]
+
+	if kind == PlanetTerrain.Kind.OCCULT and params.get("variant", "dust") != "dust":
+		var eye: String = "purple" if params["variant"] == "obsidian_purple" else "yellow"
+		entry["description"] = "A world of glassy obsidian, violet-black where the light catches it, marked by things no geology explains: huge crater-eyes with glowing deep %s irises, and coiling ridges like tentacles, ringed with sucker-like bumps." % eye
+
+	match [kind, params.get("variant", "")]:
+		[PlanetTerrain.Kind.RINGS, "sandy"]:
+			extra.append("Sand drifts over its lowlands and piles into hills.")
+		[PlanetTerrain.Kind.RINGS, "volcanic"]:
+			extra.append("A few dark volcanoes rise out of the green.")
+		[PlanetTerrain.Kind.DESERT, "lava"]:
+			extra.append("Deep canyons cut through it, running with lava.")
+		[PlanetTerrain.Kind.BARREN, "spiked"]:
+			extra.append("Its crater rims are thrown up into jagged teeth, turning metallic as they climb.")
+	if kind == PlanetTerrain.Kind.RINGS and params.get("liquid", false):
+		extra.append("Some of its ring sets stand as islands in a ring of sea.")
+	if kind == PlanetTerrain.Kind.BARREN and params.get("cracks", 0.0) > 0.0:
+		extra.append("Fine dark cracks split the ground.")
+	if params.get("mist", 0.0) > 0.0 and kind == PlanetTerrain.Kind.BARREN:
+		entry["description"] = String(entry["description"]).replace("An airless ball", "A ball").replace(
+			"With no air or weather", "With air this thin"
+		)
+		extra.append("A thin red mist lies in the low ground.")
 
 	var coverage: float = params.get("coverage", 0.0)
 	if params.get("liquid", false) and coverage > 0.0:

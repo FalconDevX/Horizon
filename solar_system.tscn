@@ -175,16 +175,16 @@ position = Vector2(36000, 0)
 script = ExtResource("1_hbvo3")
 radius = 880
 visual_radius = 880
-color = Color(0.85, 0.42, 0.2, 1)
+color = Color(0.66, 0.14, 0.22, 1)
 mass = 9.0
 body_name = "Emberrock"
-atmosphere = "Trace CO2, volcanic ash"
+atmosphere = "Thin, rusty, swirling dust"
 show_soi = true
 surface_seed = 1001
 surface_blob_count = 64
 surface_spin_speed = 0.06
 surface_spin_axis = Vector3(0.035, 0.999, 0.0)
-terrain_kind = 3
+terrain_kind = 16
 
 [node name="Coralyss" type="Node2D" parent="Planets" unique_id=589198419]
 position = Vector2(70000, 0)
@@ -208,16 +208,16 @@ position = Vector2(129200, 0)
 script = ExtResource("1_hbvo3")
 radius = 1200
 visual_radius = 1200
-color = Color(0.45, 0.6, 0.2, 1)
+color = Color(0.35, 0.7, 0.35, 1)
 mass = 12.0
 body_name = "Duskveil"
-atmosphere = "Spore fog, methane"
+atmosphere = "Mild, sweet, green"
 show_soi = true
 surface_seed = 1003
 surface_blob_count = 48
 surface_spin_speed = -0.03
 surface_spin_axis = Vector3(0.0, 0.999, 0.052)
-terrain_kind = 10
+terrain_kind = 17
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(231200, 0)
@@ -240,67 +240,66 @@ position = Vector2(409200, 0)
 script = ExtResource("1_hbvo3")
 radius = 1400
 visual_radius = 1400
-color = Color(0.56, 0.84, 0.92, 1)
+color = Color(0.85, 0.7, 0.8, 1)
 mass = 14.0
 body_name = "Glacenna"
-atmosphere = "Frozen nitrogen fog"
+atmosphere = "Humid, floral"
 show_soi = true
 surface_seed = 1005
 surface_blob_count = 56
 surface_spin_speed = 0.10
 surface_spin_axis = Vector3(0.0, -0.139, 0.990)
-terrain_kind = 4
+terrain_kind = 15
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
 position = Vector2(655200, 0)
 script = ExtResource("1_hbvo3")
 radius = 1040
 visual_radius = 1040
-color = Color(0.7, 0.82, 0.9, 1)
+color = Color(0.45, 0.4, 0.62, 1)
 mass = 6.0
 body_name = "Marrow"
-atmosphere = "Trace oxygen, aurorae"
+atmosphere = "None (airless)"
 show_soi = true
 surface_seed = 1006
 surface_blob_count = 40
 surface_style = 1
 surface_spin_speed = 0.04
 surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
-terrain_kind = 9
+terrain_kind = 19
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(1180000, 0)
 script = ExtResource("1_hbvo3")
 radius = 2800
 visual_radius = 2800
-color = Color(0.88, 0.7, 0.3, 1)
+color = Color(0.6, 0.6, 0.6, 1)
 mass = 34.0
 body_name = "Vantauri"
-atmosphere = "Dense hydrogen/helium"
+atmosphere = "Thin, still"
 show_soi = true
 surface_seed = 1007
 surface_blob_count = 110
 surface_style = 3
 surface_spin_speed = 0.55
-surface_spin_axis = Vector3(0.22, 0.89, 0.4)
-terrain_kind = 7
-has_rings = true
+surface_spin_axis = Vector3(0.0, 0.999, -0.052)
+terrain_kind = 20
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
 position = Vector2(2194000, 0)
 script = ExtResource("1_hbvo3")
 radius = 2240
 visual_radius = 2240
-color = Color(0.2, 0.3, 0.6, 1)
+color = Color(0.45, 0.45, 0.52, 1)
 mass = 18.0
 body_name = "Nyxholm"
-atmosphere = "Thin, cold, still"
+atmosphere = "Thin, dusty, restless"
 show_soi = true
 surface_seed = 1008
 surface_blob_count = 88
 surface_spin_speed = 0.50
 surface_spin_axis = Vector3(0.332, 0.883, 0.332)
-terrain_kind = 12
+terrain_kind = 18
 
 [node name="Anthea" type="Node2D" parent="Planets"]
 position = Vector2(20000, 0)
@@ -401,6 +400,116 @@ surface_spin_speed = 0.55
 surface_spin_axis = Vector3(0.25, 0.95, 0.18)
 terrain_kind = 8
 
+[node name="Mireth" type="Node2D" parent="Planets"]
+position = Vector2(22500.0, -38971.1)
+script = ExtResource("1_hbvo3")
+radius = 800.0
+visual_radius = 800.0
+color = Color(0.45, 0.8, 0.35, 1)
+mass = 0.5
+body_name = "Mireth"
+atmosphere = "Damp, spore-laden"
+show_soi = true
+surface_seed = 1015
+surface_blob_count = 40
+surface_spin_speed = 0.14
+surface_spin_axis = Vector3(-0.06, 0.997, 0.04)
+terrain_kind = 10
+terrain_resolution = 512
+
+[node name="Cinderhal" type="Node2D" parent="Planets"]
+position = Vector2(-145500.0, 252013.4)
+script = ExtResource("1_hbvo3")
+radius = 1200.0
+visual_radius = 1200.0
+color = Color(0.85, 0.35, 0.15, 1)
+mass = 0.04
+body_name = "Cinderhal"
+atmosphere = "Sulphurous, ash-laden"
+show_soi = true
+surface_seed = 1016
+surface_blob_count = 40
+surface_spin_speed = 0.18
+surface_spin_axis = Vector3(0.04, 0.998, -0.03)
+terrain_kind = 3
+
+[node name="Aurumbra" type="Node2D" parent="Planets"]
+position = Vector2(-1188901.0, -997606.4)
+script = ExtResource("1_hbvo3")
+radius = 1520.0
+visual_radius = 1520.0
+color = Color(0.2, 0.25, 0.45, 1)
+mass = 0.2
+body_name = "Aurumbra"
+atmosphere = "Thin, still"
+show_soi = true
+surface_seed = 1017
+surface_blob_count = 40
+surface_spin_speed = 0.1
+surface_spin_axis = Vector3(-0.1, 0.99, 0.05)
+terrain_kind = 12
+
+[node name="Hoarveil" type="Node2D" parent="Planets"]
+position = Vector2(1293083.0, 1085025.5)
+script = ExtResource("1_hbvo3")
+radius = 1320.0
+visual_radius = 1320.0
+color = Color(0.75, 0.88, 0.95, 1)
+mass = 0.2
+body_name = "Hoarveil"
+atmosphere = "Thin, frigid"
+show_soi = true
+surface_seed = 1018
+surface_blob_count = 40
+surface_spin_speed = 0.22
+surface_spin_axis = Vector3(0.08, 0.996, 0.0)
+terrain_kind = 4
+
+[node name="Rimebeck" type="Node2D" parent="Planets"]
+position = Vector2(1350000.0, -2338268.6)
+script = ExtResource("1_hbvo3")
+radius = 600.0
+visual_radius = 600.0
+color = Color(0.8, 0.85, 0.9, 1)
+mass = 0.04
+body_name = "Rimebeck"
+atmosphere = "None (airless), frosted"
+show_soi = true
+surface_seed = 1019
+surface_blob_count = 40
+surface_spin_speed = 0.12
+surface_spin_axis = Vector3(0.0, 0.999, -0.04)
+terrain_kind = 9
+terrain_resolution = 512
+
+[node name="Taurvane" type="Node2D" parent="Planets"]
+position = Vector2(-5262278.7, 1915312.8)
+script = ExtResource("1_hbvo3")
+radius = 2600.0
+visual_radius = 2600.0
+color = Color(0.85, 0.7, 0.5, 1)
+mass = 8.0
+body_name = "Taurvane"
+atmosphere = "Hydrogen, helium, ammonia"
+show_soi = true
+surface_seed = 1020
+surface_blob_count = 40
+surface_spin_speed = 0.5
+surface_spin_axis = Vector3(-0.2, 0.88, 0.42)
+terrain_kind = 7
+has_rings = true
+[node name="Erebus" type="Node2D" parent="Planets"]
+position = Vector2(14000000, 0)
+script = ExtResource("1_hbvo3")
+radius = 30000
+visual_radius = 30000
+color = Color(1, 0.55, 0.2, 1)
+mass = 300.0
+body_name = "Erebus"
+atmosphere = "None - event horizon"
+show_soi = true
+is_black_hole = true
+
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
 position = Vector2(74000, 0)
 script = ExtResource("3_ship")
@@ -411,6 +520,10 @@ script = ExtResource("3_ship")
 shape = SubResource("CircleShape2D_ship")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=641785987]
+limit_left = -50000000
+limit_top = -50000000
+limit_right = 50000000
+limit_bottom = 50000000
 
 [node name="Camera3D" type="Camera3D" parent="."]
 physics_interpolation_mode = 2

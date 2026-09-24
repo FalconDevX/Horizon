@@ -14,6 +14,7 @@ extends SceneTree
 const KIND_NAMES: Array[String] = [
 	"None", "Terran", "Desert", "Volcanic", "Ice", "Barren", "Toxic", "Gas giant", "Ice giant",
 	"Frozen", "Slime", "Occult", "Gloom", "Bloom", "Oasis",
+	"Lotus", "Swirl", "Rings", "Quake", "Fractal", "Meridian",
 ]
 const TILE := 360
 const SETTLE_FRAMES := 10
@@ -77,6 +78,10 @@ func _process(_delta: float) -> bool:
 
 	world.get_node("HUD").visible = false
 	world.camera_follow_ship = false
+	# The loading screen fades out on its own schedule; it must not be in shot.
+	var loading: CanvasLayer = world.get("loading_screen")
+	if loading != null:
+		loading.visible = false
 
 	if waiting_for_bake:
 		return _wait_for_bakes()

@@ -24,19 +24,26 @@ grep -n "^func \|^const \|^var \|^class " solar_system.gd
 | File | Role |
 | --- | --- |
 | `solar_system.gd` | Main scene script: sim loop, autopilot, trajectory prediction, HUD, camera, input |
-| `solar_system.tscn` | Scene: `Sun`, `Planets/*` (8 planet nodes), `Ship`, line/marker nodes, `HUD/*` |
+| `solar_system.tscn` | Scene: `Sun`, `Planets/*` (20 planets + the black hole Erebus), `Ship`, line/marker nodes, `HUD/*` |
 | `celestial_body.gd` | `@tool` Node2D for the sun and every planet: exports, `_draw` (glow, SOI ring), surface sprite + spin |
 | `planet_surface.gd` | `PlanetSurface` static lib: palette generator, blob generation, CPU-side blob lookup |
 | `planet_surface.gdshader` | Canvas shader: projects a sphere onto the disc and colours it by nearest blob |
 | `orbit_math.gd` | `OrbitMath` static lib: Kepler propagation, orbital elements, transfer solving |
 | `interplanetary_planner.gd` | `InterplanetaryPlanner` static lib: off-thread transfer planning |
-| `ship.gd` | Ship node: thrust, RCS, rotation, throttle lock |
+| `ship.gd` | Ship node: main engine (no RCS), flight assist, attitude hold, throttle lock, engine/laser/beep sounds |
 | `*_panel.gd`, `*_gauge.gd`, `hud_panel_style.gd` | HUD widgets, all custom `_draw` |
 
 ## How the simulation works
 
-- Gravity constant `G = 3000.0` in `solar_system.gd`; `planet_info_panel.gd` hardcodes
-  its own copy as `GRAVITY_CONSTANT` - keep them in sync.
+- **World scale 4x.** Every distance and radius is 4x what the system was first built
+  at, and `G = 192000.0` (= 3000 x 4^3), so orbital periods are unchanged and speeds
+  are 4x. Distance-type constants (autopilot tolerances/altitudes, planner tolerances,
+  belts, spawn offset) were scaled with it; `planet_info_panel.gd` reads `G` from the
+  script, so there is only one copy.
+- `PLANET_GRAVITY_SCALE := 0.4` multiplies every planet's `mass` once in `_ready()`
+  (planets only feel the sun, so this only weakens their pull on the ship). Sim,
+  predictor, autopilot, SOI sizes and the catalog all see the scaled mass - scene
+  masses in the table below are pre-scale.
 - `_physics_process` accumulates `delta * time_scale` and runs fixed `SIM_DT = 1/120`
   steps (velocity Verlet) via `simulation_step`, up to `MAX_SIM_STEPS_PER_FRAME`.
 - Positions are held in `PhysicsBody` wrappers (`physics_planets`, `physics_ship`) as
@@ -46,8 +53,9 @@ grep -n "^func \|^const \|^var \|^class " solar_system.gd
   gravity anywhere - not in the sim, not in the predictor, not in the planner.
 - The ship feels the sun, *or* - when inside one planet's SOI - that planet plus the
   planet's own sun-acceleration (patched conics, first match wins, `break`).
-- `get_soi_radius(body) = distance_to_sun * (mass / sun_mass) ** 0.4`. Recomputed every
-  physics frame into `soi_radii_cache`.
+- `get_soi_radius(body) = max(distance_to_sun * (mass / sun_mass) ** 0.4,
+  radius * MIN_SOI_RADII)` (floor 5 radii, so small planets near the sun still have
+  room to orbit). Recomputed every physics frame into `soi_radii_cache`.
 
 ## Planets
 
@@ -69,38 +77,49 @@ exports below. Existing nodes are the template (`solar_system.tscn` lines ~151-2
 `visual_radius = radius` and `show_soi = true`; `soi_radius` / `soi_line_width` are
 overwritten every frame by `update_soi_visuals` / `update_screen_space_visuals`.
 
-Current system (sun `Virelia`, mass 1000, radius 800):
+Current system (sun `Virelia`, mass 1000, radius 3 200), 4x scale. Asteroid belts
+(`asteroid_belts.gd` `BELTS`) fill 154 000-177 200, 752 000-864 000 and
+4 160 000-4 800 000; keep planets and their SOIs out:
 
 | # | Name | Orbit radius | Radius | Mass |
 | --- | --- | --- | --- | --- |
-| 0 | Emberrock | 9 000 | 220 | 9 |
-| 1 | Coralyss (home) | 17 500 | 430 | 50 |
-| 2 | Duskveil | 32 300 | 300 | 12 |
-| 3 | Thornix | 57 800 | 500 | 25 |
-| 4 | Glacenna | 102 300 | 350 | 14 |
-| 5 | Marrow | 163 800 | 260 | 6 |
-| 6 | Vantauri | 295 000 | 700 | 34 |
-| 7 | Nyxholm | 548 500 | 560 | 18 |
-| 8 | Anthea | 5 000 | 160 | 4 |
-| 9 | Dunmere | 131 750 | 320 | 1.8 |
-| 10 | Cindral | 6 900 | 130 | 0.6 |
-| 11 | Vesk | 24 800 | 190 | 1.0 |
-| 12 | Ashkar | 78 000 | 230 | 0.4 |
-| 13 | Oruvel | 850 000 | 520 | 15 |
+| 0 | Emberrock | 36 000 | 880 | 9 |
+| 1 | Coralyss (home) | 70 000 | 1 720 | 50 |
+| 2 | Duskveil | 129 200 | 1 200 | 12 |
+| 3 | Thornix | 231 200 | 2 000 | 25 |
+| 4 | Glacenna | 409 200 | 1 400 | 14 |
+| 5 | Marrow | 655 200 | 1 040 | 6 |
+| 6 | Vantauri | 1 180 000 | 2 800 | 34 |
+| 7 | Nyxholm | 2 194 000 | 2 240 | 18 |
+| 8 | Anthea | 20 000 | 640 | 4 |
+| 9 | Dunmere | 527 000 | 1 280 | 1.8 |
+| 10 | Cindral | 27 600 | 520 | 0.6 |
+| 11 | Vesk | 99 200 | 760 | 1.0 |
+| 12 | Ashkar | 312 000 | 920 | 0.4 |
+| 13 | Oruvel | 3 400 000 | 2 080 | 15 |
+| 14 | Mireth | 45 000 | 800 | 0.5 |
+| 15 | Cinderhal | 291 000 | 1 200 | 0.04 |
+| 16 | Aurumbra | 1 552 000 | 1 520 | 0.2 |
+| 17 | Hoarveil | 1 688 000 | 1 320 | 0.2 |
+| 18 | Rimebeck | 2 700 000 | 600 | 0.04 |
+| 19 | Taurvane | 5 600 000 | 2 600 | 8 |
+| 20 | Erebus (black hole) | 14 000 000 | 30 000 | 300 |
 
 Starting phases are random every launch: `_ready()` keeps each planet's orbit
 radius from the scene but rotates it to a random angle round the sun (then calls
 `snap_visual_position()` so the 3D visuals don't interpolate across). Angles
-authored in the scene no longer matter. Cindral and Vesk squeeze between their neighbours'
-SOIs with ~300-450 to spare - keep them light.
+authored in the scene no longer matter.
 
-Dunmere's SOI (~10 500) clears Glacenna's and Marrow's by only ~400 each side - SOI
-grows with distance, so outer gaps only fit very light planets.
+The tightest SOI gaps (after the 0.4 gravity scale and the 5-radii floor) are
+Emberrock-Mireth (~600), Cindral-Emberrock (~1 400) and Anthea-Cindral (~1 800); Taurvane
+clears Erebus's SOI by ~1.8 M. Recheck every gap (and the belts) after touching a mass,
+radius or orbit - a quick script over `solar_system.tscn` computing
+`max(d * (0.4 m / 1000)^0.4, 5 r)` per body does it.
 
 ### Constraints when touching the planet set
 
 - `HOME_PLANET_INDEX := 1` indexes `planets` **by scene child order**. The ship spawns
-  1000 units from that planet. Inserting a node above `Coralyss` silently moves the
+  4000 units from that planet. Inserting a node above `Coralyss` silently moves the
   spawn - append new planets at the end, or update the constant.
 - Only the distance of a planet's scene `position` from the sun matters - the start
   angle is randomised in `_ready()`, and the circular velocity follows automatically.
@@ -158,7 +177,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
 - **Seeds.** `surface_seed` is only a planet's *local* seed. Everything — blob rolls,
   terrain colours, the elevation bake, the shaders' `seed_offset` — reads
   `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, set at the
-  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`),
+  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 20260924),
   read through `owner` in `get_world_seed()` because planets `_ready` before the root.
   Changing the script default of `surface_seed` does nothing - every planet overrides
   it in the scene. `set_world_seed(value)` clears `PlanetTerrain`'s bake cache and
@@ -234,7 +253,21 @@ still shows the blob preview.
   sigils), Gloom (dark blue, glowing gold cracks, hard lighting), Bloom (navy/crimson
   flower fields, brown valleys, purple ground mist), Oasis (east-west dunes, muddy
   glossy puddles filling `pit_layer()` pits - coverage kept to about the pits' own area
-  or the dune troughs flood - and spiky green buds). There are no fixed presets: `resolve()` dispatches to one
+  or the dune troughs flood - and spiky green buds), Lotus (ocean whose only land is
+  giant four-petal flowers on lily pads, `flower_layer()`; sea level pinned by
+  `sea_fixed` instead of the coverage histogram), Swirl (crimson ground, ~10 snail-shell
+  spirals: one arm a raised orange ridge, the other a pit), Rings (greens with a few dark-red/black onion rings broken by
+  gaps), Quake (brown with a steel-blue cast, small silver circle scars from
+  `quakes_at()`), Fractal (craterless brown-grey barren with big Mandelbrot-set massifs,
+  `mandel_height()`: bulbs domed, filaments lower ridges, coloured by height navy →
+  purple → yellow crown; the thin straight ridge off each massif is the set's real
+  antenna), Meridian (any hue; 14–24 pole-to-pole mountain ridges and carved valleys
+  from `meridian_relief()` in the bake, one feature slot per line, each on its own
+  course - straight, curving or zig-zag, own swing/frequency/phase/lean - so they
+  cross; tapered out near the poles; pink-and-white seas (30–45% coverage) flood
+  the valleys and low plains - the land hue is rolled from 0.03–0.8 so it is never
+  pink/magenta/red; coloured by height: thin dark shore rim → base plains →
+  near-white crests. Nothing drawn in the planet shader). There are no fixed presets: `resolve()` dispatches to one
   `_roll_<kind>()` per kind, which builds the whole look from ranges that keep the
   kind's idea (Terran water always blue-ish, grass green-ish in many shades, desert
   palette *families* - sand/orange/rust/ochre/rose/salt - always on a strong
@@ -246,6 +279,20 @@ still shows the blob preview.
   lava/cryo crust over, acid does not (a crust on acid reads as polka dots).
   Liquid kinds: Terran (water), Volcanic (lava or cryo, emissive), Ice, Toxic (acid).
   `terrain_liquid_coverage` overrides the share (0 = dry).
+- **Per-kind variants** (rolled in `_roll_*()`, name in `params.variant` where it
+  matters, described by `PlanetLore.describe()`): Gloom cracks gold → crimson; Bloom
+  fields mix two hues from navy–purple–crimson by height band; Slime green / yellow /
+  teal / blue; Oasis sand → orange, 50% long muddy rivers (`channels()` as deep as
+  the puddles, coverage raised); Desert 25% `lava` (canyons via `channels()` in
+  `detail` c, lava liquid); Barren 35% `spiked` (`crater_layer_spiked()` teeth, top of
+  the gradient metallic green/blue), 50% dark drawn cracks, 30% red mist + red
+  clouds; Quake cast steel / metallic green / metallic blue, and every scar is a
+  carved hole (`quake_holes()` in the bake mirrors `quakes_at()` via `hash3_plain()`
+  and the shared `quake_shift`); Rings `green` / `sandy` (dry biome sand + dune
+  patches) / `volcanic` (`peak_layer()` cones with calderas, dark slope rock), 40% of
+  ring sets are islands (`extra.z`; plateau + moat per `ISLAND_MOAT`, sea coverage
+  = 0.27·size² per island, blue ocean), violet bushes round every set (buds with
+  `bud_near_features` → `feature_surroundings()`).
 - **Bake recipe per planet.** `recipe` (continent warp, mountain-belt thresholds,
   ridge sharpness) is shared by every rocky kind; `detail` is 16 kind-specific floats
   sent as `detail[4]` in the bake's `Params` - their meaning is commented per branch
@@ -256,6 +303,19 @@ still shows the blob preview.
   cells), Barren craters + dry riverbeds (`channels()`) + maria basins, giants with
   uneven band widths, sharpness, turbulence and an optional storm (`params.storm`).
   `cache_key()` hashes everything the bake reads (`_bake_values()`).
+- **Cloud deck height** is `relief * cloud_height` (+ `CLOUD_CLEARANCE`); `cloud_height`
+  defaults to 0.45 (over the plains), Swirl sets 1.0 so its raised spirals do not poke
+  through. The atmosphere shell follows the same height.
+- **Clouds and air are separate shells** (from master): `_build_clouds()` /
+  `_build_atmosphere()` add `planet_clouds.gdshader` / `planet_atmosphere.gdshader`
+  meshes as children of the sphere; the terrain shader only reads
+  `planet_clouds.gdshaderinc` for cloud shadows, and noise helpers live in
+  `planet_noise.gdshaderinc`. Cyclones come from `PlanetTerrain.roll_cyclones()`,
+  seeded by `generation_seed`. `rebuild_surface()` frees both shells before
+  rebuilding. The catalog (I key) calls `make_preview()` on each body; unknown names
+  in `PlanetLore` (Anthea, Dunmere) just show blank lore. Cloud *amount* reads much
+  heavier on the shell than it did in-shader, so the `clouds` ranges in `_roll_*()`
+  may want lowering.
 - **Drawn-on effects** (planet shader only, not in the heightmap, pushed by
   `_push_terrain_effects()`; all off unless a `_roll_*()` sets them): aurora curtains
   on the auroral oval (Ice, Frozen), glowing cracks (`cracks_at()`, Gloom), low-ground
@@ -263,9 +323,19 @@ still shows the blob preview.
   Oasis: one jittered spiky dot per 3D cell, each testing the height under its own
   centre so it is whole or absent, denser in the wet band above the waterline, faded
   out once under a pixel).
-- **Occult eyes and tentacles are carved *and* drawn.** `_roll_occult()` places up to
-  `MAX_SIGILS` = 8 features with `_spaced_direction()`: eyes, plus 1–2 eyeless tentacle
-  nests (`pupil` < 0). `PlanetTerrain.sigil_arrays()` packs them for both shaders. The
+- **Placed features ("sigils") are carved *and* drawn.** Up to `MAX_SIGILS` = 24 per
+  planet, each a dict `{direction, size, reach, style: Vector4, extra: Vector4}`;
+  `_place_features()` / `_spaced_direction()` scatter them without overlap, and
+  `sigil_mode` (`FeatureMode`: EYES = Occult, SWIRLS, RINGS, BAKE_ONLY = Fractal and
+  Meridian, whose lines use the slots with `direction` unused) says
+  how the planet shader colours them. `PlanetTerrain.sigil_arrays()` packs `sigils`,
+  `sigil_styles`, `sigil_extra` for both shaders; what style/extra mean is commented in
+  each `_roll_*()`. `sigil_frame()` is azimuthal-equidistant (|q| = true angle / size),
+  so big features keep their shape and the `s.w * 1.4` cull matches the fades. Swirl/Rings/Fractal relief comes from `feature_relief()` in the
+  bake, with `swirl_parts()` / `ring_parts()` mirrored in the planet shader
+  (`feature_color_at()`).
+- **Occult eyes and tentacles.** `_roll_occult()` places eyes, plus 1–2 eyeless
+  tentacle nests (`pupil` < 0). The
   bake carves eye craters (`eye_relief()`: bowl, rim, hood, iris ring, pupil pit, drip
   grooves) and tentacle ridges (`tentacle_ridges()`: curling, tapering, rounded, sucker
   bumps) via `occult_marks()`; the planet shader mirrors `sigil_frame()`, `eye_lens()`,
@@ -275,16 +345,55 @@ still shows the blob preview.
   character is per planet too: `ambient`, `light_wrap`, `terminator_softness`,
   `shade_contrast` (Gloom runs them hard). Emissive light goes through `emit`, added
   after lighting; lava's `glow` path is separate.
-- **Scene right now** (temporary until every planet rolls a biome per world): Marrow
-  = Frozen, Duskveil = Slime, Thornix = Occult, Nyxholm = Gloom, plus **Anthea** (Bloom,
-  radius 160, mass 4) appended last at 5000 from the sun - inside Emberrock, outside
-  the corona (4000) - so it orbits ~2.4x faster. Cindral (Barren), Vesk (Toxic),
-  Ashkar (Desert) and Oruvel (Ice giant) give the older kinds a planet each; the three
-  small ones bake at `terrain_resolution = 512` to save memory.
+- **Scene right now** (temporary until every planet rolls a biome per world):
+  Coralyss = Terran (home), Emberrock = Swirl, Duskveil = Rings, Thornix = Occult,
+  Glacenna = Lotus, Marrow = Fractal, Vantauri = Meridian, Nyxholm = Quake, plus
+  **Anthea** (Bloom, radius 160, mass 4, at 5000 from the sun - inside Emberrock,
+  outside the corona (4000) - so it orbits ~2.4x faster) and **Dunmere** (Oasis).
+  Cindral (Barren), Vesk (Toxic), Ashkar (Desert) and Oruvel (Ice giant) give the
+  older kinds a planet each; the three small ones bake at `terrain_resolution = 512`
+  to save memory. **Mireth** (Slime) was added back, then the last unused kinds got
+  a planet each: Cinderhal (Volcanic), Aurumbra (Gloom), Hoarveil (Ice), Rimebeck
+  (Frozen, bakes at 512) and Taurvane (Gas giant, past Oruvel and belt 3 - its SOI
+  fits no inner gap; it carries the system's **rings**, with its spin axis leaned
+  toward the camera so they are not edge-on). **Erebus**, the black hole, is last in
+  `Planets`, at 14 M. At 4x scale Mireth sits between Emberrock and Coralyss and
+  Cinderhal between Thornix and Ashkar (both moved out of the asteroid belts;
+  Cinderhal's mass cut to 0.04 to fit). Masses kept low so each SOI clears its
+  neighbours by ~1 500-19 000 (Taurvane clears belt 3). Every kind has a planet.
 - **Catalog text** (`scripts/data/PlanetLore.gd`) is written per *kind*, not per planet
   name, and `describe()` adds what the roll produced (lava vs cryo, liquid share,
   clouds, aurora, storm) - so a reroll or a kind change never leaves stale text. A new
   kind needs an entry there too.
+- **Resource deposits** are separate objects, not terrain: `MeshInstance3D`s under a
+  `Deposits` node parented to `_sphere_3d` (planet space, unit radius), so they spin
+  with the surface. `resource_deposits.gd` (`ResourceDeposits`) holds two tables:
+  `TYPES` (per resource: `mesh` look, `size` in planet radii, colour, `shine`, `glow`,
+  optional `wiggle` / `spots`) and `SPAWNS` (per `PlanetTerrain.Kind`: entries with
+  `type`, `count`, `on` land/liquid/any, `land` height band in colour-gradient units,
+  `lowest` (the planet's lowest share of land, via `Ground.land_below()` - use it for
+  valleys, since a roll's heights may never reach a fixed band), `slope`, `feature` (e.g. `&"swirl_ridge"`, a CPU mirror of `swirl_parts()`),
+  `motion`). Kinds missing from `SPAWNS` get nothing (gas giants, Volcanic, Ice,
+  Frozen, Gloom, Quake, Meridian for now). `place()` runs once the bake lands
+  (`_apply_terrain()` → `_place_deposits()`), rolled from `generation_seed`, using
+  `PlanetTerrain.height_at()`; liquid spawns sit at the unit sphere (the sea surface).
+  Shapes are built per deposit from its seed in `deposit_meshes.gd` (`DepositMeshes`:
+  crystals, tiles, scrap, beanstalk, pillars, egg, pebbles, bones, slabs; +Y up,
+  ~1 unit across, feet sunk; vertex colours for inner shading); add a look there and
+  in `build()`. Lit by `resource_deposit.gdshader` (`sun_position` global, wiggle
+  driven by the pausable `planet_time` global, procedural spots). Data per deposit in
+  the body's `resource_deposits`: `type`, `direction` (kept current as it moves),
+  `lift`, `size`, `seed`, `motion`, `node`. `rebuild_surface()` clears them.
+- **Deposit motions** are pluggable: each deposit owns a `DepositMotion`
+  (`deposit_motion.gd`; the base stands still). A walk is a subclass overriding
+  `start()` (seeded `rng`), `update(ground, delta, time)` (steer with `walk()` /
+  `turn()`, which follow the sphere in ≤ `MAX_STEP` substeps and refuse any spot the
+  deposit's own `SPAWNS` rule would not allow), `pose(time)` (bob / waddle / spin in
+  the deposit's frame: +Y up, -Z heading, cluster units) and `animates()`; register
+  it in `ResourceDeposits.MOTIONS`. A spawn's `motion` defaults to still; nothing
+  uses `DepositDrift` (slow meandering slide) right now. The beanstalks' sway is
+  shader-only (`wiggle`), not a motion.
+  `celestial_body._process()` calls `ResourceDeposits.advance()` with game time.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
@@ -320,14 +429,14 @@ still shows the blob preview.
 ## Asteroid belts, rings, loading screen
 
 - **Belts** (`asteroid_belts.gd`, `asteroid_belt.gdshader`) are scenery: no gravity,
-  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (38.5-44.3k,
-  188-216k, 1.04-1.2M) sit in SOI gaps - recheck the gaps before moving one. Each belt
+  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (154-177.2k,
+  752-864k, 4.16-4.8M) sit in SOI gaps - recheck the gaps before moving one. Each belt
   is 3 MultiMeshes (rock shape variants); orbits advance on the GPU from
   `total_sim_time` (split hi/lo for float32), rocks grow to >= 1.1 px when zoomed out,
   and the mesh swaps between 3 LODs by on-screen size. `asteroid_belt_map.gd` tints
   each band light red on the `BehindWorld` layer.
 - **Rings**: `has_rings` / `ring_inner_radius` / `ring_outer_radius` exports on
-  `celestial_body.gd` (terrain planets only; Vantauri has them). The ring plane is
+  `celestial_body.gd` (terrain planets only; Taurvane has them). The ring plane is
   perpendicular to `surface_spin_axis`, so the axis must lean toward the viewer or the
   rings are edge-on. Profile lives in `planet_rings.gdshaderinc`, shared by
   `planet_rings.gdshader` and `planet_terrain.gdshader` (ring shadow on the globe).
@@ -336,6 +445,41 @@ still shows the blob preview.
   `LoadingScreen.current` and waits on `is_surface_ready()` of every body. While it is
   up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
   A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
+
+## Black hole
+
+`is_black_hole` on a `celestial_body.gd` body (Erebus): `radius` is the event horizon.
+`build_black_hole()` hides the sphere and turns the glow plane into a quad
+`BLACK_HOLE_EXTENT` (16) horizon radii across each way, shaded by `black_hole.gdshader`:
+per-pixel ray tracing in Schwarzschild units (Rs = 1, photon bending
+`-1.5 h^2 x / r^5`), a tilted thin accretion disk with Doppler beaming and gravitational
+redshift, and lensing of whatever is behind (stars, orbit lines) through the screen
+texture - the `Environment` background mode is Canvas up to layer -5, so those layers
+are in it. Up to `max_steps` (180) steps per pixel: expensive when it fills the
+screen. Its own orbit line is hidden (it would be lensed into streaks). Physics, SOI,
+autopilot and the catalog (`PlanetLore.BLACK_HOLE`) treat it as a planet; flying into
+the horizon is an impact. Camera2D limits are +-50 M and `ZOOM_MIN` is 0.00002 so it
+can be reached.
+
+## Flight model
+
+- **No RCS.** Main engine only: A/D (or arrows) turn, RMB aims at the cursor, W burns,
+  S cuts, X locks the throttle (W/S then trim it, a beep per two bar segments from
+  `sounds/throttle_beep_1..9.wav`), Z/C hold prograde/retrograde, Shift = 20% precision.
+- **Flight assist** (V, on by default, `[FA]` in the HUD): W pushes along the nose like
+  the locked throttle (no speed cap) plus vectored sideways thrust that cancels drift
+  relative to the SOI body, so velocity follows the nose; S brakes to a stop. Knobs in
+  `ship.gd`: `MAIN_ENGINE_BOOST` (12 = 3 for handling x 4 for world scale),
+  `TURN_RATE_SCALE`, `ASSIST_MAX_ACCEL`, `ASSIST_RESPONSE`, `throttle_ramp_time`.
+- Manual thrust/turn input (W/A/S/D, arrows, RMB) disengages the autopilot with
+  `sounds/autopilot_off.wav`; X disengages it silently (`disengage_autopilot(false)`).
+- The speed gauge shows speed relative to the current SOI body (the sun out in deep
+  space), not relative to the sun.
+- **Trajectory line**: predictions carry per-point sim times and are redrawn every frame
+  from the ship (`refresh_trajectory_line`); when the whole prediction stays inside the
+  starting SOI it is stored and drawn relative to that planet (a clean ellipse). Points
+  are added every `PREDICTION_DRAW_INTERVAL` steps or sooner on turns
+  (`PREDICTION_DRAW_TURN`).
 
 ## Autopilot
 
@@ -348,6 +492,19 @@ Two families:
   TRANSFER_BURN -> TRANSFER_COAST -> ARRIVAL_COAST -> ARRIVAL_BURN`, then hands off to
   the local family. `ESCAPE_BURN / INTERPLANETARY_CRUISE / CAPTURE_BURN` are the older
   non-route path.
+
+- Engaging on an escape path (unbound, even from the sun) goes to `CAPTURE_BURN` first,
+  which brakes into orbit and hands over to the local plan.
+- F in free flight (outside every planet SOI) defaults the target to the **nearest
+  planet**, not the sun (Tab still reaches the sun). `engage_autopilot()` clamps the
+  target altitude to the body's range, so it never aims outside the SOI.
+- `INTERPLANETARY_CRUISE` from free flight flies a **Lambert intercept**
+  (`OrbitMath.lambert`, `plan_intercept()`): it samples `INTERCEPT_SAMPLES` flight times
+  in both directions, scores burn-now + arrival-speed + `INTERCEPT_TIME_COST` per second
+  (so it heads more or less straight in), then burns continuously onto the transfer and
+  re-solves it in flight. Inside `INTERPLANETARY_HOMING_SOI_FACTOR` x SOI the homing
+  branch takes over, then `CAPTURE_BURN`. Falls back to `_cruise_match_target_radius()`
+  when no transfer is found.
 
 Use `is_interplanetary_autopilot_phase()` / `is_route_phase()` rather than testing phases
 by hand. Route planning and trajectory prediction both run on `WorkerThreadPool` with a
@@ -368,7 +525,20 @@ must be a plain snapshot, never a live node.
 
 ## Verifying changes
 
-There is no test suite. Changes are checked by running the scene in Godot 4.7
-(`run/main_scene = res://solar_system.tscn`). Controls: `F` arm/disarm autopilot,
-`Tab` cycle target, mouse wheel zoom (or altitude while arming), middle-drag pan,
-`1`-`7` time warp, `.` toggle camera follow, `N` reroll the world seed (new planets).
+There is no test suite. Changes are checked by running the game in Godot 4.7
+(`run/main_scene` is the main menu; New Game shows the loading screen, then
+`solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
+zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
+follow, `N` reroll the world seed, `B` ship builder, `I` planet catalog, plus the flight
+keys above.
+
+## Ship builder engines
+
+`ModuleCatalog.engines()` builds 5 families (Chemical, Nuclear Thermal, Ion, Plasma,
+Fusion) x 3 sizes S/M/L = square footprints 1x1/2x2/3x3, from star ratings
+(`_STAR_*` tables, `_ENGINE_SIZES` multipliers). Sprites are
+`textures/modules/engine_<type>_<1|2|3>.png` (nozzle pointing left, the aft side where
+the orange `ENGINE_MOUNT` tiles are); an optional `..._plan.png` (`plan_texture`) is
+drawn over the footprint while a module is held. The inventory shows one engine family
+per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates
+engine art with the module. There is no RCS / corrective engine any more.

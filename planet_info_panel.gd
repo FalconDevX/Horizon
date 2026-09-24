@@ -276,6 +276,8 @@ func _gui_input(event: InputEvent) -> void:
 # ---- numbers ----------------------------------------------------------------
 
 func _lore(body: Node2D) -> Dictionary:
+	if body.get("is_black_hole"):
+		return PlanetLore.BLACK_HOLE
 	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
 
 

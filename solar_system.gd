@@ -30,7 +30,7 @@ enum AutopilotPhase {
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
 ## planets. N rerolls it in game.
-@export var world_seed: int = 0
+@export var world_seed: int = 20260924
 
 ## How much of each kind's designed range a planet may use (see the _roll_*()
 ## functions in planet_terrain.gd): 0 is every kind's textbook look, 1 the full
@@ -205,7 +205,7 @@ var mu_planets: PackedFloat64Array = []
 const TARGET_ORBIT_COLOR := Color(0.55, 1.0, 0.62, 0.8)
 const TARGET_ORBIT_FLASH_COLOR := Color(0.8, 1.0, 0.85, 1.0)
 const TARGET_ORBIT_FLASH_FADE := 4.0
-const ZOOM_MIN := 0.00005
+const ZOOM_MIN := 0.00002
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
 ## On-screen radius, in pixels, above which a body switches to its fine sphere.
@@ -531,6 +531,10 @@ func _ready() -> void:
 		line.antialiased = true
 		var orbit_color: Color = planet.get("color")
 		orbit_color.a = 0.85
+		# A black hole's own orbit line would be lensed into a ring and
+		# streaks right through it; leave it out.
+		if planet.get("is_black_hole"):
+			orbit_color.a = 0.0
 		line.default_color = orbit_color
 		orbit_lines_container.add_child(line)
 		orbit_lines.append(line)
