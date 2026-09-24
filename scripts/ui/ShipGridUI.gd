@@ -468,26 +468,30 @@ func _draw() -> void:
 		return
 
 	var grid := ship_hull.get_grid_size()
-	for y in grid.y:
-		for x in grid.x:
-			var cell := Vector2i(x, y)
-			var rect := _cell_rect(cell)
-			var floor := ship_hull.get_floor_type(cell)
-			var fill := empty_tint
-			match floor:
-				HullData.FloorType.DECK:
-					fill = deck_tint
-				HullData.FloorType.ENGINE_MOUNT:
-					fill = engine_mount_tint
-				HullData.FloorType.CONNECTOR:
-					fill = connector_tint
-				_:
-					fill = empty_tint
-					if ship_hull.is_weapon_mount_cell(cell):
-						fill = mount_tint
-			if ship_hull.get_equipment_at(cell) != null:
-				fill = occupied_tint
-			draw_rect(rect, fill, true)
+	# The whole field in one rect, then only the cells that differ from it
+	# (hulls, connectors, truss, equipment) - asking every cell of the big grid
+	# what it is made each redraw (zoom, placing a module) hitch.
+	draw_rect(Rect2(Vector2.ZERO, _cell_rect(grid - Vector2i.ONE).end), empty_tint, true)
+	var truss: Dictionary = ship_hull.get_weapon_mount_cells()
+	var cells: Dictionary = truss.duplicate()
+	for used: Vector2i in ship_hull.get_used_cells():
+		cells[used] = true
+	for cell: Vector2i in cells.keys():
+		var fill := empty_tint
+		match ship_hull.get_floor_type(cell):
+			HullData.FloorType.DECK:
+				fill = deck_tint
+			HullData.FloorType.ENGINE_MOUNT:
+				fill = engine_mount_tint
+			HullData.FloorType.CONNECTOR:
+				fill = connector_tint
+			_:
+				if truss.has(cell):
+					fill = mount_tint
+		if ship_hull.get_equipment_at(cell) != null:
+			fill = occupied_tint
+		if fill != empty_tint:
+			draw_rect(_cell_rect(cell), fill, true)
 	_draw_grid_lines(grid)
 
 

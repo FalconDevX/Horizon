@@ -179,6 +179,31 @@ func is_engine_mount_cell(cell: Vector2i) -> bool:
 	return get_floor_type(cell) == HullData.FloorType.ENGINE_MOUNT
 
 
+## Every cell that is not empty space, for drawing: structure (hulls,
+## connectors) plus equipment.
+func get_used_cells() -> Array:
+	var cells: Dictionary = _structure.duplicate()
+	cells.merge(_equipment)
+	return cells.keys()
+
+
+## All weapon-truss cells at once (same rule as is_weapon_mount_cell), built by
+## spreading out from the hull cells - far cheaper than asking cell by cell
+## over the whole build grid.
+func get_weapon_mount_cells() -> Dictionary:
+	var result: Dictionary = {}
+	for hull_cell: Vector2i in _collect_hull_cells().keys():
+		for dy in range(-WEAPON_MOUNT_DEPTH, WEAPON_MOUNT_DEPTH + 1):
+			for dx in range(-WEAPON_MOUNT_DEPTH, WEAPON_MOUNT_DEPTH + 1):
+				var dist := absi(dx) + absi(dy)
+				if dist < 1 or dist > WEAPON_MOUNT_DEPTH:
+					continue
+				var n := hull_cell + Vector2i(dx, dy)
+				if is_cell_in_bounds(n) and get_structure_at(n) == null:
+					result[n] = true
+	return result
+
+
 ## Empty cell on the weapon truss: within WEAPON_MOUNT_DEPTH (Manhattan) of a hull cell.
 func is_weapon_mount_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
 	if not is_cell_in_bounds(cell):

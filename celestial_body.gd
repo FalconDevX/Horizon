@@ -742,6 +742,18 @@ func build_black_hole() -> void:
 	update_surface_scale()
 
 
+## Black holes bend the star image itself (not the map lines drawn over it):
+## hand them the Background texture and its current dimming.
+func set_starfield(texture: Texture2D, dim: float) -> void:
+	if not is_black_hole or _glow_3d == null:
+		return
+	var material := _glow_3d.material_override as ShaderMaterial
+	if material == null:
+		return
+	material.set_shader_parameter("starfield", texture)
+	material.set_shader_parameter("starfield_dim", dim)
+
+
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
 	var seed_offset: float = _seed_offset()

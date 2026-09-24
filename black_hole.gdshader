@@ -14,11 +14,16 @@ render_mode unshaded, blend_mix, cull_disabled, depth_draw_never, shadows_disabl
 //    why the far side of the disk shows up arched over and under the shadow.
 //    Its light gets relativistic Doppler beaming (the side coming toward the
 //    camera is brighter and bluer) and gravitational redshift.
-//  - Rays that escape look at the background (stars, orbit lines - whatever
-//    the 3D view has behind it, via the screen texture) along their bent
-//    direction, which gives the lensed, ring-shaped starfield.
+//  - Rays that escape look up the starfield along their bent direction, which
+//    gives the lensed, ring-shaped sky. Only the star image itself is bent
+//    (`starfield`, the same texture and screen fit as the Background layer):
+//    orbit lines, SOI rings and other map overlays are not physical and stay
+//    straight - near the hole the quad covers them, and further out the
+//    lensing and the quad fade out together so they reappear untouched.
 
-uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform sampler2D starfield : source_color, filter_linear_mipmap;
+// The Background layer's dimming (BackgroundMask alpha, 1 - star brightness).
+uniform float starfield_dim = 0.5;
 global uniform float planet_time;
 
 // Quad half-size in Rs (matches BLACK_HOLE_EXTENT in celestial_body.gd).
@@ -196,15 +201,20 @@ void fragment() {
 		vec3 d = normalize(vel);
 		if (d.y < -0.05) {
 			// Where the bent ray meets the far background, back in world space.
-			vec2 lensed = v_local + d.xz / -d.y * lens_distance;
+			// The bend is eased to nothing toward the quad's edge, so the star
+			// image there matches the untouched sky it fades into.
+			float lens_fade = 1.0 - smoothstep(extent * 0.4, extent * 0.85, length(v_local));
+			vec2 lensed = v_local + d.xz / -d.y * lens_distance * lens_fade;
 			float rs_world = length(MODEL_MATRIX[0].xyz) / (2.0 * extent);
 			vec3 world = NODE_POSITION_WORLD + vec3(lensed.x, 0.0, lensed.y) * rs_world;
 			vec4 clip = PROJECTION_MATRIX * VIEW_MATRIX * vec4(world, 1.0);
 			vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
 			uv.y = 1.0 - uv.y;
-			if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
-				background = textureLod(screen_tex, uv, 0.0).rgb;
-			}
+			// Same fit as the Background TextureRect: keep aspect, cover.
+			vec2 sky_size = vec2(textureSize(starfield, 0));
+			float cover = max(VIEWPORT_SIZE.x / sky_size.x, VIEWPORT_SIZE.y / sky_size.y);
+			vec2 sky_uv = (uv - 0.5) * VIEWPORT_SIZE / (sky_size * cover) + 0.5;
+			background = texture(starfield, sky_uv).rgb * (1.0 - starfield_dim);
 		}
 		// Light near the shadow is strongly magnified but also dimmed as the
 		// ray grazes the photon sphere; keep the rim from blowing out.
@@ -215,9 +225,8 @@ void fragment() {
 	light = light / (1.0 + 0.3 * light);
 	vec3 color = light + through * background;
 
-	// Blend into the untouched view toward the quad's edge, where lensing is
-	// negligible anyway.
-	float edge_fade = 1.0 - smoothstep(extent * 0.72, extent * 0.98, length(v_local));
+	// Blend into the untouched view (with its map lines) toward the edge.
+	float edge_fade = 1.0 - smoothstep(extent * 0.55, extent * 0.95, length(v_local));
 	ALBEDO = color;
 	ALPHA = edge_fade;
 }

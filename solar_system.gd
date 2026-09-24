@@ -85,6 +85,7 @@ var autopilot_off_sound: AudioStreamPlayer
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
 @onready var background_mask: ColorRect = $Background/BackgroundMask
+@onready var background_image: TextureRect = $Background/BackgroundImage
 
 var settings_mgr: SettingsManager
 var music_mgr: MusicManager
@@ -546,6 +547,8 @@ func _ready() -> void:
 	autopilot_off_sound.stream = AUTOPILOT_OFF_SOUND
 	autopilot_off_sound.bus = &"SFX"
 	add_child(autopilot_off_sound)
+
+	_push_starfield_to_black_holes()
 
 	asteroid_belts = AsteroidBelts.new()
 	asteroid_belts.name = "AsteroidBelts"
@@ -3214,11 +3217,21 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 		"starfield_brightness":
 			if background_mask != null:
 				background_mask.color.a = clampf(1.0 - float(value), 0.0, 1.0)
+			_push_starfield_to_black_holes()
 		"ship_rotation_speed":
 			if ship != null:
 				ship.rotation_speed = float(value)
 		"camera_smoothing":
 			pass
+
+
+## Black holes lens the star image directly (see celestial_body.set_starfield).
+func _push_starfield_to_black_holes() -> void:
+	if background_image == null:
+		return
+	var dim: float = background_mask.color.a if background_mask != null else 0.0
+	for planet in planets:
+		planet.call("set_starfield", background_image.texture, dim)
 
 
 func _apply_all_settings() -> void:
@@ -3231,6 +3244,7 @@ func _apply_all_settings() -> void:
 	trajectory_prediction.visible = settings_mgr.show_trajectory
 	if background_mask != null:
 		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
+	_push_starfield_to_black_holes()
 	if ship != null:
 		ship.rotation_speed = settings_mgr.ship_rotation_speed
 
@@ -3534,6 +3548,8 @@ func _physics_process(delta: float) -> void:
 		steps += 1
 
 	if steps > 0:
+		for body: PhysicsBody in physics_planets:
+			body.push_to_node()
 		for i in range(planets.size()):
 			update_orbit_line(planets[i], orbit_lines[i], i)
 
@@ -3559,9 +3575,13 @@ func simulation_step(dt: float) -> void:
 	# While test-flying a sandbox enemy (E menu), the player ship stops reading
 	# WASD/mouse-aim so both craft don't respond to the same keys at once.
 	if _test_enemy == null:
-		# Prograde / retrograde hold follows the orbit around the current SOI body.
-		var hold_body: Node2D = get_current_orbit_body()
-		var hold_body_velocity: Vector2 = Vector2.ZERO if hold_body == sun else hold_body.get("velocity")
+		# Prograde / retrograde hold follows the orbit around the current SOI body
+		# (from the SOI cache and the precise state - this runs every step).
+		var hold_index: int = _ship_soi_index_precise()
+		var hold_body_velocity: Vector2 = Vector2.ZERO
+		if hold_index >= 0:
+			var hold_body: PhysicsBody = physics_planets[hold_index]
+			hold_body_velocity = Vector2(hold_body.vx, hold_body.vy)
 		ship.hold_reference_velocity = ship.velocity - hold_body_velocity
 
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
@@ -3576,31 +3596,49 @@ func simulation_step(dt: float) -> void:
 		else:
 			ship.update_throttle(dt, time_scale <= 1.0)
 
-	var count: int = physics_planets.size()
-
-	var a0 := PackedVector2Array()
-	a0.resize(count)
-	for i in range(count):
-		a0[i] = get_planet_acceleration_precise(physics_planets[i])
+	# Ship acceleration at the start of the step, planets where they are now.
 	var ship_a0: Vector2 = get_ship_acceleration_precise()
 
-	for i in range(count):
-		physics_planets[i].advance_position(a0[i], dt)
+	# Planets feel only the sun: a whole velocity-Verlet step each, inline -
+	# this loop runs for every planet on every step, hundreds of times a frame
+	# under time warp, so no per-planet calls or array allocations here.
+	var sun_x: float = sun.position.x
+	var sun_y: float = sun.position.y
+	var half_dt: float = 0.5 * dt
+	var half_dt2: float = 0.5 * dt * dt
+	for body: PhysicsBody in physics_planets:
+		var dx: float = sun_x - body.x
+		var dy: float = sun_y - body.y
+		var d2: float = dx * dx + dy * dy
+		var k0: float = mu_sun / (d2 * sqrt(d2)) if d2 >= 1.0 else 0.0
+		var ax0: float = dx * k0
+		var ay0: float = dy * k0
+		body.x += body.vx * dt + ax0 * half_dt2
+		body.y += body.vy * dt + ay0 * half_dt2
+		dx = sun_x - body.x
+		dy = sun_y - body.y
+		d2 = dx * dx + dy * dy
+		var k1: float = mu_sun / (d2 * sqrt(d2)) if d2 >= 1.0 else 0.0
+		body.vx += (ax0 + dx * k1) * half_dt
+		body.vy += (ay0 + dy * k1) * half_dt
+
 	physics_ship.advance_position(ship_a0, dt)
-
-	var a1 := PackedVector2Array()
-	a1.resize(count)
-	for i in range(count):
-		a1[i] = get_planet_acceleration_precise(physics_planets[i])
 	var ship_a1: Vector2 = get_ship_acceleration_precise()
-
-	for i in range(count):
-		physics_planets[i].advance_velocity(a0[i], a1[i], dt)
 	physics_ship.advance_velocity(ship_a0, ship_a1, dt)
 
-	for i in range(count):
-		physics_planets[i].push_to_node()
+	# The ship's node every step (input, autopilot and HUD read it); the
+	# planets' nodes once per physics tick in _physics_process - anything that
+	# needs them exactly mid-tick reads the PhysicsBody state instead.
 	physics_ship.push_to_node()
+
+
+## Index of the planet whose SOI holds the ship (first match, like the ship's
+## gravity), from the per-tick SOI cache and the precise state; -1 for the sun.
+func _ship_soi_index_precise() -> int:
+	for i in range(physics_planets.size()):
+		if is_inside_soi_precise(physics_planets[i], soi_radii_cache[i]):
+			return i
+	return -1
 
 
 func get_gravity_precise(body: PhysicsBody, source_x: float, source_y: float, mu: float) -> Vector2:
@@ -3632,16 +3670,19 @@ func get_ship_acceleration_precise() -> Vector2:
 		physics_ship, sun.position.x, sun.position.y, mu_sun
 	)
 
-	for i in range(planets.size()):
-		if is_inside_soi_precise(physics_planets[i], soi_radii_cache[i]):
+	# First planet whose SOI holds the ship (patched conics). Inline distance
+	# test - this runs twice per sim step, hundreds of steps a frame on warp.
+	var ship_x: float = physics_ship.x
+	var ship_y: float = physics_ship.y
+	for i in range(physics_planets.size()):
+		var body: PhysicsBody = physics_planets[i]
+		var dx: float = ship_x - body.x
+		var dy: float = ship_y - body.y
+		var soi: float = soi_radii_cache[i]
+		if dx * dx + dy * dy <= soi * soi:
 			acceleration = (
-				get_gravity_precise(
-					physics_ship,
-					physics_planets[i].x,
-					physics_planets[i].y,
-					mu_planets[i]
-				)
-				+ get_planet_acceleration_precise(physics_planets[i])
+				get_gravity_precise(physics_ship, body.x, body.y, mu_planets[i])
+				+ get_planet_acceleration_precise(body)
 			)
 			break
 

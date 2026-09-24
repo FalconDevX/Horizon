@@ -140,7 +140,7 @@ base_cell_size = 32.0
 [node name="ShipHull" type="Node2D" parent="Margin/RootHBox/LeftColumn/GridScroll/BuildAreaHost/ShipGridUI"]
 unique_name_in_owner = true
 script = ExtResource("2_hull")
-build_grid_size = Vector2i(40, 40)
+build_grid_size = Vector2i(80, 80)
 cell_size = Vector2(32, 32)
 
 [node name="BayResizeHandle" type="ColorRect" parent="Margin/RootHBox/LeftColumn"]
