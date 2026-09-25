@@ -6,6 +6,7 @@ extends RefCounted
 ##   "meta"     - what the load list shows: name, system, day, saved_unix
 ##   "galaxy"   - GalaxyMap.to_dict() (visits, course, systems left behind)
 ##   "progress" - PlayerProgress.to_dict() (cargo hold, unlocked tech)
+##   "journal"  - Journal.to_dict() (worlds seen, finds, known resources)
 ##   everything else is the flight scene's own (solar_system.gd
 ##   build_save_data() / _apply_pending_save()).
 ##
@@ -99,6 +100,7 @@ static func start_new_game() -> void:
 	current_slot = ""
 	GalaxyMap.reset()
 	PlayerProgress.reset()
+	Journal.clear()
 
 
 ## Load: restores the static state now and leaves the rest for the flight
@@ -111,6 +113,8 @@ static func begin_load(slot: String) -> bool:
 	PlayerProgress.reset()
 	GalaxyMap.from_dict(data.get("galaxy", {}))
 	PlayerProgress.from_dict(data.get("progress", {}))
+	Journal.clear()
+	Journal.from_dict(data.get("journal", {}))
 	pending = data
 	current_slot = slot
 	return true
@@ -123,4 +127,5 @@ static func save_session(scene_data: Dictionary) -> String:
 		current_slot = new_slot()
 	scene_data["galaxy"] = GalaxyMap.to_dict()
 	scene_data["progress"] = PlayerProgress.to_dict()
+	scene_data["journal"] = Journal.to_dict()
 	return current_slot if write(current_slot, scene_data) else ""
