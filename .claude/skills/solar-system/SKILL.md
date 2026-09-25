@@ -721,8 +721,8 @@ From the Horizon Miro board ("Moduły statku", "Receptury modułów", "Planety �
   tabs, resource bar, scrolling `TechTreeView`) in its own window, `TechTreeWindow`, which
   `solar_system.gd` creates next to the planet catalog. **T** opens and closes it, apart from
   the **J** log and the **I** cargo hold.
-- New structure categories: `FLOOR` (deck tiles that edge-attach to a hull or floor, +1 slot/cell)
-  and `TRUSS` (built on the weapon-mount ring; the ring also grows from floor and truss,
+- Structure category `TRUSS` (FLOOR deck tiles were removed): built on the weapon-mount
+  ring (3 cells deep, `WEAPON_MOUNT_DEPTH`); the ring also grows from truss,
   `ModuleData.is_frame()`; guns may stand on truss, `ShipHull.is_truss_beam_cell`;
   truss does not block line of sight).
 - Module art is cut from `Downloads/horizon_png` into N×128 px PNGs, loaded by

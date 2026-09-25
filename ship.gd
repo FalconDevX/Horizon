@@ -15,6 +15,45 @@ signal ship_clicked
 @export var energy_capacity: float = 0.0
 @export var shield_strength: float = 0.0
 
+## Energy the ship's parts draw, split by when they draw it (ShipStats):
+## engines while thrusting, shields while recharging, weapons per shot; the
+## rest (radars, utilities, cockpit) all the time.
+var energy_engines: float = 0.0
+var energy_shields: float = 0.0
+var energy_weapons: float = 0.0
+## Hull points repaired per second by repair modules (while powered).
+var repair_rate: float = 0.0
+var max_hull_hp: float = 0.0
+
+## Live resources, 0..their maxima from the modules (apply_module_stats).
+## Only a ship built in the yard has them: the stock ship with no modules
+## (`resources_enabled` false) flies with no limits, as it always did.
+var resources_enabled := false
+var fuel: float = 0.0
+var energy: float = 0.0
+var shield: float = 0.0
+var hull_hp: float = 0.0
+## Whether the ship has power: stored energy, or (with no batteries) as much
+## generated as is drawn. Unpowered, radars go dark, weapons cannot fire and
+## shields and repairs stop - the engines still run, so the ship is never stuck.
+var powered := true
+## Seconds since the last hit; shields start recharging after SHIELD_REGEN_DELAY.
+var _since_hit: float = 999.0
+## instance_id -> seconds left before that weapon can fire again.
+var _weapon_cooldowns: Dictionary = {}
+
+## Fuel burned per second at full throttle, per unit of the engines' rated
+## consumption (an S chemical engine empties an S tank in about a minute and a half).
+const FUEL_PER_SECOND := 0.2
+## Shields recharge this share of their maximum per second, this long after a hit.
+const SHIELD_REGEN_FRACTION := 0.08
+const SHIELD_REGEN_DELAY := 3.0
+## Energy one shot costs, per unit of that weapon's rated energy use.
+const SHOT_ENERGY := 0.5
+## Share of the tanks refilled (and batteries recharged) per second on a
+## planet's surface.
+const GROUND_REFILL_FRACTION := 0.15
+
 ## Fallback when the shipyard has no modules yet (keeps the default orbital ship flyable).
 const DEFAULT_SHIP_MASS := 10.0
 const DEFAULT_THRUST_FORCE := 144.0
@@ -160,6 +199,13 @@ func _ready() -> void:
 ## Empty builds restore scene defaults so the orbital ship stays usable.
 func apply_module_stats(stats: Dictionary) -> void:
 	var module_count: int = int(stats.get("module_count", 0))
+	# The share of each resource left over, so a changed layout keeps it
+	# (a brand-new ship starts full).
+	var was_enabled: bool = resources_enabled
+	var fuel_share: float = fuel / fuel_capacity if fuel_capacity > 0.0 else 1.0
+	var energy_share: float = energy / energy_capacity if energy_capacity > 0.0 else 1.0
+	var shield_share: float = shield / shield_strength if shield_strength > 0.0 else 1.0
+	var hull_share: float = hull_hp / max_hull_hp if max_hull_hp > 0.0 else 1.0
 	if module_count <= 0:
 		ship_mass = DEFAULT_SHIP_MASS
 		thrust_force = DEFAULT_THRUST_FORCE
@@ -169,6 +215,13 @@ func apply_module_stats(stats: Dictionary) -> void:
 		energy_generation = 0.0
 		energy_capacity = 0.0
 		shield_strength = 0.0
+		energy_engines = 0.0
+		energy_shields = 0.0
+		energy_weapons = 0.0
+		repair_rate = 0.0
+		max_hull_hp = 0.0
+		resources_enabled = false
+		powered = true
 		apply_fov_devices([])
 		return
 
@@ -180,7 +233,92 @@ func apply_module_stats(stats: Dictionary) -> void:
 	energy_generation = maxf(float(stats.get("energy_generation", 0.0)), 0.0)
 	energy_capacity = maxf(float(stats.get("energy_capacity", 0.0)), 0.0)
 	shield_strength = maxf(float(stats.get("shield_strength", 0.0)), 0.0)
+	energy_engines = maxf(float(stats.get("energy_engines", 0.0)), 0.0)
+	energy_shields = maxf(float(stats.get("energy_shields", 0.0)), 0.0)
+	energy_weapons = maxf(float(stats.get("energy_weapons", 0.0)), 0.0)
+	repair_rate = maxf(float(stats.get("repair_rate", 0.0)), 0.0)
+	max_hull_hp = maxf(float(stats.get("health", 0.0)), 1.0)
+	if not was_enabled:
+		fuel_share = 1.0
+		energy_share = 1.0
+		shield_share = 1.0
+		hull_share = 1.0
+	resources_enabled = true
+	fuel = fuel_capacity * fuel_share
+	energy = energy_capacity * energy_share
+	shield = shield_strength * shield_share
+	hull_hp = max_hull_hp * hull_share
 
+
+## Everything back to full (a respawn, or a fresh start).
+func refill() -> void:
+	fuel = fuel_capacity
+	energy = energy_capacity
+	shield = shield_strength
+	hull_hp = max_hull_hp
+	_since_hit = 999.0
+	_weapon_cooldowns.clear()
+
+
+## Whether the engines can burn: always for the stock ship, else while there is fuel.
+func has_fuel() -> bool:
+	return not resources_enabled or fuel > 0.0 or PlayerProgress.god_mode
+
+
+## One step of the ship's systems: fuel burned by the engines, energy made
+## and drawn, shields recharging, repairs, weapons reloading. `engine_output`
+## is the main engine's share of full power right now; `landed` refills.
+func update_resources(dt: float, engine_output: float, landed: bool) -> void:
+	for id: int in _weapon_cooldowns.keys():
+		_weapon_cooldowns[id] = float(_weapon_cooldowns[id]) - dt
+		if float(_weapon_cooldowns[id]) <= 0.0:
+			_weapon_cooldowns.erase(id)
+	if not resources_enabled:
+		powered = true
+		return
+	if PlayerProgress.god_mode:
+		refill()
+		powered = true
+		return
+	_since_hit += dt
+
+	fuel = maxf(fuel - fuel_consumption * FUEL_PER_SECOND * engine_output * dt, 0.0)
+
+	var recharging: bool = shield < shield_strength and _since_hit >= SHIELD_REGEN_DELAY
+	var idle: float = maxf(energy_consumption - energy_engines - energy_shields - energy_weapons, 0.0)
+	var draw: float = idle + energy_engines * engine_output + (energy_shields if recharging else 0.0)
+	var net: float = energy_generation - draw
+	if energy_capacity > 0.0:
+		energy = clampf(energy + net * dt, 0.0, energy_capacity)
+		powered = energy > 0.0 or net >= 0.0
+	else:
+		powered = net >= 0.0
+
+	if landed:
+		fuel = minf(fuel + fuel_capacity * GROUND_REFILL_FRACTION * dt, fuel_capacity)
+		energy = minf(energy + energy_capacity * GROUND_REFILL_FRACTION * dt, energy_capacity)
+		powered = true
+
+	if powered and recharging:
+		shield = minf(shield + shield_strength * SHIELD_REGEN_FRACTION * dt, shield_strength)
+	if powered and repair_rate > 0.0:
+		hull_hp = minf(hull_hp + repair_rate * dt, max_hull_hp)
+
+
+## A hit: shields soak it up first, the hull takes the rest. Returns true if
+## that destroyed the ship (solar_system.gd respawns it).
+func take_damage(amount: float) -> bool:
+	if not resources_enabled or amount <= 0.0 or PlayerProgress.god_mode:
+		return false
+	_since_hit = 0.0
+	var soaked: float = minf(shield, amount)
+	shield -= soaked
+	hull_hp = maxf(hull_hp - (amount - soaked), 0.0)
+	return hull_hp <= 0.0
+
+
+func is_destroyed() -> bool:
+	return resources_enabled and hull_hp <= 0.0
 
 func apply_fov_devices(devices: Array) -> void:
 	fov_devices.clear()
@@ -236,6 +374,16 @@ func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
 func try_fire_at(world_pos: Vector2, target_radius: float = 0.0) -> bool:
 	if weapon_locks.is_empty():
 		return false
+	return not fire_weapons_at(world_pos, target_radius).is_empty()
+
+
+## Fires every loaded weapon whose cone holds `world_pos`, if there is the
+## power for it; each shot costs energy and starts that weapon's reload.
+## Returns the devices that fired (their `damage` is what the target takes).
+func fire_weapons_at(world_pos: Vector2, target_radius: float = 0.0) -> Array[Dictionary]:
+	var shots: Array[Dictionary] = []
+	if resources_enabled and not powered and not PlayerProgress.god_mode:
+		return shots
 	var best_range := INF
 	var fired := false
 	var sniper_fired := false
@@ -244,6 +392,16 @@ func try_fire_at(world_pos: Vector2, target_radius: float = 0.0) -> bool:
 			continue
 		if not is_body_in_device_fov(device, world_pos):
 			continue
+		var id: int = int(device.get("instance_id", -1))
+		if _weapon_cooldowns.has(id):
+			continue
+		var cost: float = float(device.get("energy", 0.0)) * SHOT_ENERGY
+		if resources_enabled and energy_capacity > 0.0 and not PlayerProgress.god_mode:
+			if energy < cost:
+				continue
+			energy -= cost
+		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
+		shots.append(device)
 		if device.get("id", &"") == SNIPER_ID:
 			# Each sniper fires its own beam from its muzzle.
 			var muzzle: Vector2 = device_world_origin(device)
@@ -263,7 +421,7 @@ func try_fire_at(world_pos: Vector2, target_radius: float = 0.0) -> bool:
 		_sniper_player.play()
 	if fired or sniper_fired:
 		queue_redraw()
-	return fired or sniper_fired
+	return shots
 
 
 func _on_click_area_input_event(
@@ -414,7 +572,7 @@ func toggle_flight_assist() -> void:
 
 
 func get_thrust_acceleration() -> Vector2:
-	if throttle <= 0.0:
+	if throttle <= 0.0 or not has_fuel():
 		return Vector2.ZERO
 
 	var direction := Vector2.RIGHT.rotated(rotation)
@@ -438,7 +596,7 @@ func clear_autopilot_thrust() -> void:
 ## burn direction (update_autopilot_rotation) and fires as much of the burn as
 ## the nose is lined up with.
 func get_autopilot_acceleration(max_force: float) -> Vector2:
-	if autopilot_thrust == Vector2.ZERO:
+	if autopilot_thrust == Vector2.ZERO or not has_fuel():
 		autopilot_main_engine_output = 0.0
 		return Vector2.ZERO
 
@@ -485,6 +643,16 @@ func _update_main_engine_sound(delta: float) -> void:
 const SHIP_TEXTURE := preload("res://textures/ship_blueprint.png")
 const SHIP_VISUAL_LENGTH := 22.0
 
+## The ship as built in the yard (ShipRender.compose): its picture, where it
+## goes in local space, and the main engines' aft points. Empty for the stock
+## ship, which keeps SHIP_TEXTURE.
+var built_visual: Dictionary = {}
+
+
+func set_built_visual(visual: Dictionary) -> void:
+	built_visual = visual
+	queue_redraw()
+
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 
 const ENGINE_OUTER_HALF_WIDTH := 3.0
@@ -506,7 +674,13 @@ func _draw() -> void:
 
 	var engine_pos: Vector2
 
-	if true_scale:
+	var engine_points: Array[Vector2] = []
+	if true_scale and not built_visual.is_empty():
+		# Nose to +x like the ship itself, so no turn: the modules sit where
+		# the weapon and radar cones start from.
+		draw_texture_rect(built_visual["texture"], built_visual["rect"], false)
+		engine_points = built_visual["engines"]
+	elif true_scale:
 		var texture_size: Vector2 = SHIP_TEXTURE.get_size()
 		var draw_size := Vector2(
 			SHIP_VISUAL_LENGTH * texture_size.x / texture_size.y,
@@ -524,7 +698,11 @@ func _draw() -> void:
 
 	# Too small a flame folds into polygons Godot cannot triangulate.
 	if throttle > 0.02:
-		_draw_engine_flame(engine_pos)
+		if engine_points.is_empty():
+			_draw_engine_flame(engine_pos)
+		else:
+			for point: Vector2 in engine_points:
+				_draw_engine_flame(point)
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		draw_line(Vector2.ZERO, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.35), 1.0)

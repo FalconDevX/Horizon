@@ -1,7 +1,7 @@
 class_name LaserBolt
 extends Node2D
 ## Glowing laser bolt fired by enemies - travels forward and fades out.
-## Hits enemies that explode_on_hit (kamikaze); other hit targets come later.
+## Hits enemies that explode_on_hit (kamikaze), and the player's ship.
 
 @export var velocity: Vector2 = Vector2.ZERO
 @export var lifetime: float = 2.0
@@ -43,6 +43,12 @@ func _try_hit_segment(from: Vector2, to: Vector2) -> bool:
 				continue
 			if _segment_hits_circle(from, to, enemy.position, enemy.collision_radius):
 				enemy.take_hit(damage)
+				queue_free()
+				return true
+		elif child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
+			var ship := child as Node2D
+			if _segment_hits_circle(from, to, ship.position, float(ship.get("collision_radius"))):
+				ship.call("take_damage", damage)
 				queue_free()
 				return true
 	return false

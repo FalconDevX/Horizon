@@ -48,6 +48,12 @@ func _hit_along_beam() -> void:
 				global_position, tip, enemy.global_position, enemy.collision_radius
 			):
 				enemy.take_hit(damage)
+		elif child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
+			var ship := child as Node2D
+			if LaserBolt._segment_hits_circle(
+				global_position, tip, ship.global_position, float(ship.get("collision_radius"))
+			):
+				ship.call("take_damage", damage)
 
 
 func _draw() -> void:

@@ -95,6 +95,12 @@ var _builder_controller: ShipBuilderController
 ## Module tech tree window (T), created in _ready next to the planet catalog.
 var tech_tree_window: TechTreeWindow
 var galaxy_map_window: GalaxyMapWindow
+## Enemies the radars see (right, under the autopilot) and the mounted guns
+## (bottom, beside the resource bars); the enemy picked there is the target.
+var enemy_contacts_panel: Control
+var weapons_panel: Control
+var targeted_enemy: Enemy = null
+
 ## HUD button that fires the hyperdrive (lit once a course is set and the ship
 ## is past the last asteroid belt).
 var warp_button: WarpButton
@@ -942,6 +948,25 @@ func _ready() -> void:
 	galaxy_map_window.name = "GalaxyMapWindow"
 	galaxy_map_window.course_set.connect(_on_course_set)
 	planet_info_panel.get_parent().add_child(galaxy_map_window)
+	enemy_contacts_panel = preload("res://enemy_contacts_panel.gd").new()
+	enemy_contacts_panel.name = "EnemyContactsPanel"
+	enemy_contacts_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	enemy_contacts_panel.offset_left = -312.0
+	enemy_contacts_panel.offset_right = -12.0
+	enemy_contacts_panel.offset_top = 330.0
+	enemy_contacts_panel.offset_bottom = 560.0
+	enemy_contacts_panel.target_picked.connect(_set_target_enemy)
+	$HUD.add_child(enemy_contacts_panel)
+	$HUD.move_child(enemy_contacts_panel, $HUD/AutopilotPanel.get_index() + 1)
+	weapons_panel = preload("res://weapons_panel.gd").new()
+	weapons_panel.name = "WeaponsPanel"
+	weapons_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	weapons_panel.offset_left = -648.0
+	weapons_panel.offset_right = -438.0
+	weapons_panel.offset_top = -324.0
+	weapons_panel.offset_bottom = -28.0
+	$HUD.add_child(weapons_panel)
+	$HUD.move_child(weapons_panel, $HUD/ResourceBarsPanel.get_index() + 1)
 	warp_button = WarpButton.new()
 	warp_button.name = "WarpButton"
 	warp_button.size = Vector2(266.0, 44.0)
@@ -1034,6 +1059,7 @@ func build_save_data() -> Dictionary:
 		"camera_zoom": camera_zoom,
 		"system_state": _capture_system_state(),
 		"hull": hull_modules,
+		"ship_resources": [ship.fuel, ship.energy, ship.shield, ship.hull_hp],
 	}
 
 
@@ -1095,6 +1121,12 @@ func _apply_pending_save() -> void:
 		planets[i].call("drop_collected_deposits")
 
 	_restore_hull(data.get("hull", []))
+	var resources: Array = data.get("ship_resources", [])
+	if resources.size() >= 4 and ship.resources_enabled:
+		ship.fuel = minf(float(resources[0]), ship.fuel_capacity)
+		ship.energy = minf(float(resources[1]), ship.energy_capacity)
+		ship.shield = minf(float(resources[2]), ship.shield_strength)
+		ship.hull_hp = clampf(float(resources[3]), 1.0, ship.max_hull_hp)
 
 	camera_zoom = clampf(float(data.get("camera_zoom", camera_zoom)), ZOOM_MIN, ZOOM_MAX)
 	camera.zoom = Vector2(camera_zoom, camera_zoom)
@@ -1167,6 +1199,7 @@ func _process(delta: float) -> void:
 	update_hud()
 	_update_landing_prompt()
 	_update_warp_button()
+	_update_combat_panels()
 	if hyperspace_jump != null:
 		_advance_warp_run_up()
 
@@ -2732,9 +2765,6 @@ const COLOR_BAD := Color(0.95, 0.45, 0.3)
 const COLOR_ORBIT_INFO := Color(0.4, 0.9, 1)
 const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
 
-const PLACEHOLDER_FUEL_PCT := 0.82
-const PLACEHOLDER_ENERGY_PCT := 0.95
-const PLACEHOLDER_SHIELD_PCT := 1.0
 
 
 func update_hud() -> void:
@@ -2758,7 +2788,14 @@ func update_hud() -> void:
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship_blueprint_panel.set_state(main_engine_display)
 	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
-	resource_bars_panel.set_state(PLACEHOLDER_FUEL_PCT, PLACEHOLDER_ENERGY_PCT, PLACEHOLDER_SHIELD_PCT)
+	if ship.resources_enabled:
+		resource_bars_panel.set_values(
+			ship.fuel, ship.fuel_capacity, ship.energy, ship.energy_capacity,
+			ship.shield, ship.shield_strength, ship.hull_hp, ship.max_hull_hp, ship.powered
+		)
+	else:
+		# The stock ship (nothing built yet) has no limits: shown full.
+		resource_bars_panel.set_unlimited()
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
 	if ship.flight_assist and not ship.throttle_locked:
@@ -3615,8 +3652,32 @@ func open_ship_builder() -> void:
 
 
 func close_ship_builder() -> void:
+	# A built ship needs a cockpit and at least one main engine to fly; with
+	# nothing built the stock ship flies as before.
+	var problem: String = _builder_launch_problem()
+	if problem != "":
+		if _builder_controller != null:
+			_builder_controller.show_warning(problem)
+		return
 	ship_builder_panel.visible = false
 	_sync_ship_from_builder()
+
+
+func _builder_launch_problem() -> String:
+	if _builder_controller == null or _builder_controller.get_hull() == null:
+		return ""
+	var modules: Array[PlacedModule] = _builder_controller.get_hull().get_all_modules()
+	if modules.is_empty():
+		return ""
+	var cockpit: bool = modules.any(func(m: PlacedModule) -> bool: return m.data.category == ModuleData.Category.COCKPIT)
+	var engine: bool = modules.any(func(m: PlacedModule) -> bool: return m.data.is_main_engine())
+	if not cockpit and not engine:
+		return "The ship needs a cockpit and an engine before it can leave the yard."
+	if not cockpit:
+		return "The ship needs a cockpit before it can leave the yard."
+	if not engine:
+		return "The ship needs an engine before it can leave the yard."
+	return ""
 
 
 func toggle_enemy_menu() -> void:
@@ -3649,6 +3710,7 @@ func _on_enemy_selected(enemy_id: String) -> void:
 		return
 
 	var enemy := scene.instantiate() as Enemy
+	enemy.title = str(entry.get("title", enemy.title))
 	ship.get_parent().add_child(enemy)
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
@@ -3685,12 +3747,17 @@ func _sync_ship_from_builder() -> void:
 		return
 	ship.apply_module_stats(_builder_controller.get_stats_dictionary())
 	ship.apply_fov_devices(_builder_controller.get_fov_devices())
+	# What was built is what flies: its picture in space and in the HUD.
+	var visual: Dictionary = ShipRender.compose(_builder_controller.get_hull()) if _builder_controller.get_hull() != null else {}
+	ship.set_built_visual(visual)
+	ship_blueprint_panel.set_built_texture(visual.get("texture"))
 
 
 func update_fov_gameplay() -> void:
 	if ship == null:
 		return
-	if ship.fov_devices.is_empty():
+	# Without power the radars and target locks go dark.
+	if ship.fov_devices.is_empty() or not ship.powered:
 		ship.clear_fov_contacts()
 		for body in celestial_bodies:
 			if body.get("fov_contact") != null:
@@ -3734,7 +3801,31 @@ func update_fov_gameplay() -> void:
 
 
 func _try_fire_fov_weapon() -> void:
-	if ship == null or ship.weapon_locks.is_empty():
+	if ship == null or landed_body != null:
+		return
+	# Enemies first: the picked target if a gun covers it, else the nearest
+	# enemy inside a weapon cone; each shot's damage goes to it.
+	var target: Enemy = null
+	var target_dist := INF
+	if targeted_enemy != null and is_instance_valid(targeted_enemy) and targeted_enemy.is_alive():
+		if _enemy_in_weapon_cone(targeted_enemy):
+			target = targeted_enemy
+			target_dist = -1.0
+	for child in get_children():
+		if child is Enemy and child != _test_enemy and (child as Enemy).is_alive():
+			var dist: float = ship.global_position.distance_to(child.global_position)
+			if dist < target_dist and ship.fov_devices.any(
+				func(device: Dictionary) -> bool:
+					return str(device.get("kind", "")) == "weapon" and ship.is_body_in_device_fov(device, child.global_position)
+			):
+				target = child
+				target_dist = dist
+	if target != null:
+		for shot: Dictionary in ship.fire_weapons_at(target.global_position, target.collision_radius):
+			if is_instance_valid(target) and target.is_alive():
+				target.take_hit(float(shot.get("damage", 0.0)))
+		return
+	if ship.weapon_locks.is_empty():
 		return
 	var best_body: Node2D = null
 	var best_dist := INF
@@ -4262,6 +4353,96 @@ func _drive_on_ground(dt: float) -> void:
 	ship.throttle = clampf(speed / maxf(top_speed, 1e-6), 0.0, 1.0)
 
 
+func _enemy_in_weapon_cone(enemy: Node2D) -> bool:
+	return ship.fov_devices.any(
+		func(device: Dictionary) -> bool:
+			return str(device.get("kind", "")) == "weapon" and ship.is_body_in_device_fov(device, enemy.global_position)
+	)
+
+
+## Enemies inside any radar cone, nearest first, and why the list may be
+## empty: no radar, or no power for it. The enemy the player flies is left out.
+func detected_enemies() -> Dictionary:
+	var radars: Array = ship.fov_devices.filter(func(device: Dictionary) -> bool: return str(device.get("kind", "")) == "radar")
+	if radars.is_empty():
+		return {"contacts": [], "status": "No radar fitted"}
+	if not ship.powered:
+		return {"contacts": [], "status": "Radar offline: no power"}
+	var contacts: Array = []
+	for child in get_children():
+		if not (child is Enemy) or child == _test_enemy or not (child as Enemy).is_alive():
+			continue
+		var enemy := child as Enemy
+		if radars.any(func(device: Dictionary) -> bool: return ship.is_body_in_device_fov(device, enemy.global_position)):
+			contacts.append({
+				"enemy": enemy, "title": enemy.title,
+				"distance": ship.global_position.distance_to(enemy.global_position),
+			})
+	contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])
+	return {"contacts": contacts, "status": ""}
+
+
+func _set_target_enemy(enemy: Node2D) -> void:
+	if targeted_enemy != null and is_instance_valid(targeted_enemy):
+		targeted_enemy.targeted = false
+	targeted_enemy = enemy as Enemy
+	if targeted_enemy != null:
+		targeted_enemy.targeted = true
+
+
+## Contacts and weapons panels, every frame.
+func _update_combat_panels() -> void:
+	if targeted_enemy != null and (not is_instance_valid(targeted_enemy) or not targeted_enemy.is_alive()):
+		targeted_enemy = null
+	var detected: Dictionary = detected_enemies()
+	var contacts: Array = detected["contacts"]
+	# A target that drops off the radar stays picked but is not shown in the list.
+	enemy_contacts_panel.set_state(contacts, detected["status"], targeted_enemy)
+	# "LOCK" per gun: the target, or else the nearest contact, in its cone.
+	var aim: Enemy = targeted_enemy
+	if aim == null and not contacts.is_empty():
+		aim = contacts[0]["enemy"]
+	var weapons: Array = []
+	for device: Dictionary in ship.fov_devices:
+		if str(device.get("kind", "")) != "weapon":
+			continue
+		var reload_time: float = maxf(float(device.get("reload_time", 0.0)), 0.05)
+		var left: float = float(ship._weapon_cooldowns.get(int(device.get("instance_id", -1)), 0.0))
+		weapons.append({
+			"title": device.get("title", "Weapon"),
+			"reload": left / reload_time,
+			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
+		})
+	weapons_panel.set_state(weapons, ship.powered)
+
+
+## The hull reached 0: the ship is rebuilt, full, in orbit round the home
+## planet of this system - the hold and everything learned are kept.
+func _respawn_destroyed_ship() -> void:
+	if landed_body != null:
+		take_off()
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+	set_time_scale(1.0)
+	var home: Node2D = planets[HOME_PLANET_INDEX]
+	var index: int = HOME_PLANET_INDEX
+	var body: PhysicsBody = physics_planets[index]
+	var distance: float = 4000.0
+	var along := Vector2(0.0, 1.0)
+	set_ship_state(
+		Vector2(body.x, body.y) + Vector2(distance, 0.0),
+		Vector2(body.vx, body.vy) + along * sqrt(mu_planets[index] / distance)
+	)
+	ship.reset_physics_interpolation()
+	ship.refill()
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera.position = ship.position
+	_restart_trajectory_prediction()
+	music_toast.show_message("SHIP DESTROYED     Rebuilt in orbit of %s" % String(home.get("body_name")).to_upper())
+
+
 ## Holds the ship on the planet's centre, moving with it.
 ## Reads the planet's PhysicsBody, not its node: the nodes are only pushed once
 ## per physics tick, and this runs every sim step.
@@ -4448,6 +4629,16 @@ func simulation_step(dt: float) -> void:
 			ship.disengage_manual_main_engine()
 		else:
 			ship.update_throttle(dt, time_scale <= 1.0)
+
+	# Fuel, energy, shields and repairs, from what the engines are doing now.
+	var engine_output: float = 0.0
+	if landed_body == null and ship.has_fuel():
+		var manual: float = ship.throttle if (time_scale <= 1.0 or ship.throttle_locked) else 0.0
+		engine_output = maxf(manual, ship.autopilot_main_engine_output)
+	ship.update_resources(dt, engine_output, landed_body != null)
+	if ship.is_destroyed():
+		_respawn_destroyed_ship()
+		return
 
 	var landed: bool = landed_body != null
 

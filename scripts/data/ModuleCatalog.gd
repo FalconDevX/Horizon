@@ -9,7 +9,6 @@ static func all_buildable_modules() -> Array[ModuleData]:
 	var list: Array[ModuleData] = []
 	list.append_array(hull_modules())
 	list.append_array(connectors())
-	list.append_array(floors())
 	list.append_array(trusses())
 	list.append(cockpit())
 	list.append_array(engines())
@@ -46,18 +45,6 @@ static func connectors() -> Array[ModuleData]:
 	return list
 
 
-## Floor tiles (1-3 cells long): deck that attaches straight to a hull or to
-## other floor, extending the ship. Each tile cell adds one equipment slot.
-static func floors() -> Array[ModuleData]:
-	var list: Array[ModuleData] = []
-	for n in [1, 2, 3]:
-		var m := _base("Floor %d" % n, StringName("floor_%d" % n), ModuleData.Category.FLOOR, 1.5 * n, 12.0 * n, 0.0, _shape_line(n))
-		m.capacity = n
-		_use_art(m, "floor_%d" % n)
-		list.append(m)
-	return list
-
-
 ## Truss beams (1-3 cells long): a frame for guns. Built on the weapon-mount
 ## ring or off another beam, and guns can stand on them.
 static func trusses() -> Array[ModuleData]:
@@ -70,7 +57,10 @@ static func trusses() -> Array[ModuleData]:
 
 
 static func cockpit() -> ModuleData:
-	return _base("Cockpit", &"cockpit", ModuleData.Category.UTILITY, 6.0, 30.0, 1.0, _shape_2x1())
+	# Stands in open space like a hull and joins one through a connector.
+	var m := _base("Cockpit", &"cockpit", ModuleData.Category.COCKPIT, 6.0, 30.0, 1.0, _shape_rect(3, 2))
+	_use_art(m, "cockpit")
+	return m
 
 
 static func _with_art(m: ModuleData) -> ModuleData:
@@ -160,9 +150,9 @@ static func _engine_family(
 static func weapons() -> Array[ModuleData]:
 	return [
 		# angle / range tuned per role; range is world SU (builder scales preview).
-		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1()),
-		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1()),
-		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, 12.0, 2800.0, _shape_1x1()),
+		_with_art(_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1())),
+		_with_art(_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1())),
+		_with_art(_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, 12.0, 2800.0, _shape_1x1())),
 		_with_art(_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1())),
 		# Long yellow beam (ship.gd SNIPER_ID): the longest reach by far, in a
 		# narrow cone, slow to reload.
@@ -195,12 +185,12 @@ static func utilities() -> Array[ModuleData]:
 
 	var solar := _base("Solar Panels", &"util_solar", ModuleData.Category.UTILITY, 3.0, 8.0, 0.0, _shape_2x1())
 	solar.energy_generation = 10.0
-
-	var scanner := _base("Surface Scanner", &"util_scanner", ModuleData.Category.UTILITY, 2.0, 10.0, 3.0, _shape_1x1())
+	_use_art(solar, "util_solar")
 
 	var fabricator := _base("Fabricator", &"util_fabricator", ModuleData.Category.UTILITY, 14.0, 30.0, 12.0, _shape_2x2())
+	_use_art(fabricator, "util_fabricator")
 
-	return [repair, generator, solar, scanner, fabricator]
+	return [repair, generator, solar, fabricator]
 
 
 ## Three sizes × two variants (standard / armored), same layout as fuel tanks.
@@ -252,6 +242,7 @@ static func _shield(
 	var m := _base(title, id, ModuleData.Category.SHIELD, mass, health, energy, shape)
 	m.shield_strength = strength
 	m.texture = make_shape_texture(shape, ModuleData.Category.SHIELD)
+	_use_art(m, String(id))
 	return m
 
 
@@ -280,6 +271,8 @@ static func _fuel_tank(
 	var m := _base(title, id, ModuleData.Category.FUEL_TANK, mass, health, 0.0, shape)
 	m.fuel_capacity = fuel
 	m.texture = make_fuel_tank_texture(shape, armored)
+	# Drawn art (textures/modules/fuel_*.png) replaces the placeholder.
+	_use_art(m, String(id))
 	return m
 
 
@@ -575,6 +568,7 @@ static func _radar(
 	var m := _base(title, id, ModuleData.Category.RADAR, mass, health, energy, shape)
 	m.fov_angle_deg = fov_angle_deg
 	m.fov_range = fov_range
+	_use_art(m, String(id))
 	return m
 
 
@@ -613,6 +607,14 @@ static func _shape_1x1() -> Array[Vector2i]:
 
 static func _shape_2x1() -> Array[Vector2i]:
 	return [Vector2i(0, 0), Vector2i(1, 0)]
+
+
+static func _shape_rect(width: int, height: int) -> Array[Vector2i]:
+	var shape: Array[Vector2i] = []
+	for y in height:
+		for x in width:
+			shape.append(Vector2i(x, y))
+	return shape
 
 
 static func _shape_2x2() -> Array[Vector2i]:
@@ -655,10 +657,10 @@ static func _category_color(category: ModuleData.Category) -> Color:
 			return Color(0.45, 0.55, 0.75)
 		ModuleData.Category.CONNECTOR:
 			return Color(0.9, 0.75, 0.2)
-		ModuleData.Category.FLOOR:
-			return Color(0.55, 0.6, 0.68)
 		ModuleData.Category.TRUSS:
 			return Color(0.62, 0.62, 0.6)
+		ModuleData.Category.COCKPIT:
+			return Color(0.85, 0.88, 0.92)
 		_:
 			return Color(0.4, 0.45, 0.5)
 

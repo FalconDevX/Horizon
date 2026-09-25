@@ -12,6 +12,11 @@ var fuel_capacity: float = 0.0
 var energy_consumption: float = 0.0
 var energy_generation: float = 0.0
 var energy_capacity: float = 0.0
+## Parts of energy_consumption drawn only at times (ship.gd update_resources):
+## engines while thrusting, shields while recharging, weapons per shot.
+var energy_engines: float = 0.0
+var energy_shields: float = 0.0
+var energy_weapons: float = 0.0
 var shield_strength: float = 0.0
 var damage: float = 0.0
 var repair_rate: float = 0.0
@@ -36,6 +41,9 @@ func to_dictionary() -> Dictionary:
 		"energy_consumption": energy_consumption,
 		"energy_generation": energy_generation,
 		"energy_capacity": energy_capacity,
+		"energy_engines": energy_engines,
+		"energy_shields": energy_shields,
+		"energy_weapons": energy_weapons,
 		"shield_strength": shield_strength,
 		"damage": damage,
 		"repair_rate": repair_rate,
@@ -62,6 +70,9 @@ func duplicate_stats() -> ShipStats:
 	copy.energy_consumption = energy_consumption
 	copy.energy_generation = energy_generation
 	copy.energy_capacity = energy_capacity
+	copy.energy_engines = energy_engines
+	copy.energy_shields = energy_shields
+	copy.energy_weapons = energy_weapons
 	copy.shield_strength = shield_strength
 	copy.damage = damage
 	copy.repair_rate = repair_rate

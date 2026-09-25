@@ -31,7 +31,7 @@ signal closed
 
 const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
-	ModuleData.Category.FLOOR,
+	ModuleData.Category.COCKPIT,
 	ModuleData.Category.TRUSS,
 	ModuleData.Category.CONNECTOR,
 	ModuleData.Category.ENGINE,
@@ -45,7 +45,7 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 
 const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.HULL: "Hulls",
-	ModuleData.Category.FLOOR: "Floors",
+	ModuleData.Category.COCKPIT: "Cockpit",
 	ModuleData.Category.TRUSS: "Trusses",
 	ModuleData.Category.CONNECTOR: "Connectors",
 	ModuleData.Category.ENGINE: "Engines",
@@ -442,7 +442,22 @@ func _held_is_null_hint() -> bool:
 	return not _grid_ui.has_held_module()
 
 
+## A message in the hint line, in amber, until the next hint replaces it
+## (after a few seconds, or on the next pick-up).
+func show_warning(text: String) -> void:
+	if _hint == null:
+		return
+	_hint.text = "⚠ " + text
+	_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_AMBER)
+	get_tree().create_timer(4.0).timeout.connect(func() -> void:
+		if is_instance_valid(_hint) and _hint.text == "⚠ " + text:
+			_update_hint(null, 0)
+	)
+
+
 func _update_hint(module: ModuleData, rotation: int) -> void:
+	if _hint != null:
+		_hint.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_MUTED)
 	if _hint == null:
 		return
 	var link := ""
@@ -458,6 +473,8 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "shipyard (no contact with another hull)"
 			ModuleData.Category.CONNECTOR:
 				floor_hint = "empty cell between hulls"
+			ModuleData.Category.COCKPIT:
+				floor_hint = "open space, joined to a hull by a connector"
 			ModuleData.Category.WEAPON:
 				floor_hint = "truss next to deck"
 			ModuleData.Category.RADAR:

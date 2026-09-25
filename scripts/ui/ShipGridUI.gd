@@ -689,8 +689,11 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 		tex = ModuleCatalog.make_hull_texture(data.hull_data, rotation, int(cell_size.x), true)
 	elif rotation == 0 and data.texture != null:
 		tex = data.texture
-	elif data.category == ModuleData.Category.ENGINE and data.texture != null:
-		# Engine art is a picture, not a generated tile - turn the picture.
+	elif data.texture != null and (
+		data.category == ModuleData.Category.ENGINE or not data.texture.resource_path.is_empty()
+	):
+		# Drawn art (engines, and anything loaded from textures/modules) is a
+		# picture, not a generated tile - turn the picture.
 		tex = _rotated_texture(data.texture, rotation)
 	else:
 		tex = ModuleCatalog.make_shape_texture(

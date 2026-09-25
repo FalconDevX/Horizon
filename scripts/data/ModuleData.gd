@@ -12,8 +12,8 @@ enum Category {
 	SHIELD,
 	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
 	RADAR,
-	FLOOR, ## deck tiles that attach straight to a hull, extending it
 	TRUSS, ## mounting frame: guns sit on it, and it reaches further out
+	COCKPIT, ## the bridge: stands in open space like a hull, linked to one by a connector
 }
 
 @export var title: String = "Module"
@@ -72,15 +72,21 @@ func is_structure() -> bool:
 	return (
 		category == Category.HULL
 		or category == Category.CONNECTOR
-		or category == Category.FLOOR
 		or category == Category.TRUSS
+		or category == Category.COCKPIT
 	)
 
 
-## Hulls, floor tiles and truss beams: what the weapon-mount ring is measured
-## from (ShipHull.WEAPON_MOUNT_DEPTH).
+## Hulls and truss beams: what the weapon-mount ring is measured from
+## (ShipHull.WEAPON_MOUNT_DEPTH).
+## Hulls and the cockpit: the big pieces that stand apart and are joined by
+## connectors (ShipHull keeps them from touching edge to edge).
+func is_hull_like() -> bool:
+	return category == Category.HULL or category == Category.COCKPIT
+
+
 func is_frame() -> bool:
-	return category == Category.HULL or category == Category.FLOOR or category == Category.TRUSS
+	return category == Category.HULL or category == Category.TRUSS
 
 
 func is_equipment() -> bool:
@@ -262,5 +268,7 @@ func category_name() -> String:
 			return "Connector"
 		Category.RADAR:
 			return "Radar"
+		Category.COCKPIT:
+			return "Cockpit"
 		_:
 			return "Unknown"

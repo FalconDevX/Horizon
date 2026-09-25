@@ -17,6 +17,8 @@ const CONTACT_GRACE := 0.75
 const EXPLOSION_DURATION := 0.45
 const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 
+## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
+@export var title: String = "Enemy"
 @export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
@@ -44,6 +46,11 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 ## Blow up on ship contact or when a bolt/beam hits (kamikaze).
 @export var explodes_on_hit: bool = false
 @export var collision_radius: float = 12.0
+## Hits it takes from the player's weapons before it blows up (a kamikaze
+## goes off at the first hit whatever this says).
+@export var max_health: float = 60.0
+## What ramming the player's ship does to it (kamikaze contact).
+@export var contact_damage: float = 45.0
 ## Barrel tips in the artwork, as fractions of the nose-up image - one bolt
 ## leaves each per shot.
 @export var muzzles: PackedVector2Array = PackedVector2Array([Vector2(0.32, 0.24), Vector2(0.68, 0.24)])
@@ -86,6 +93,12 @@ var _ability_timer := 0.0
 var _laser_player: AudioStreamPlayer = null
 var _alive_time := 0.0
 var _exploding := false
+var _damage_taken: float = 0.0
+## Picked as the target in the player's contacts panel: drawn with brackets.
+var targeted := false:
+	set(value):
+		targeted = value
+		queue_redraw()
 var _explode_age := 0.0
 var _explosion_duration: float = EXPLOSION_DURATION
 var _blast_radius: float = 0.0
@@ -286,8 +299,8 @@ func _apply_blast_damage(radius: float, amount: float) -> void:
 		elif child.name == "Ship" and child is Node2D:
 			var ship := child as Node2D
 			if ship.global_position.distance_squared_to(global_position) <= radius * radius:
-				var taken: float = float(ship.get_meta("sandbox_damage_taken", 0.0))
-				ship.set_meta("sandbox_damage_taken", taken + amount)
+				if ship.has_method("take_damage"):
+					ship.call("take_damage", amount)
 
 
 ## One shot, one sound, however many muzzles fire. Quick shots overlap.
@@ -302,10 +315,22 @@ func _play_laser_sound() -> void:
 	_laser_player.play()
 
 
-## Called by LaserBolt / SniperBeam / DamageZone. Kamikaze detonates; others ignore for now.
-func take_hit(_amount: float) -> void:
+## Called by LaserBolt / SniperBeam / DamageZone and the player's weapons
+## (solar_system.gd _try_fire_fov_weapon). A kamikaze detonates at once; the
+## rest go when the hits add up to max_health.
+func take_hit(amount: float) -> void:
+	if _exploding:
+		return
 	if explodes_on_hit:
 		explode()
+		return
+	_damage_taken += amount
+	if _damage_taken >= max_health:
+		explode()
+
+
+func is_alive() -> bool:
+	return not _exploding
 
 
 func is_hittable() -> bool:
@@ -333,6 +358,8 @@ func _check_ship_contact() -> void:
 		ship_radius = 8.0
 	var reach: float = collision_radius + ship_radius
 	if global_position.distance_squared_to(player_ship.global_position) <= reach * reach:
+		if player_ship.has_method("take_damage"):
+			player_ship.call("take_damage", contact_damage)
 		explode()
 
 
@@ -354,6 +381,8 @@ func _draw() -> void:
 	if _exploding:
 		_draw_explosion()
 		return
+	if targeted:
+		_draw_target_brackets()
 	if black_hole_mode:
 		_draw_black_hole_field()
 	if ship_texture == null:
@@ -366,6 +395,20 @@ func _draw() -> void:
 	if _throttle > 0.05:
 		for exit in engine_exits:
 			_draw_engine_flame(_image_to_local(exit, draw_size))
+
+
+## Red corner brackets round a targeted enemy, a fixed size on screen.
+func _draw_target_brackets() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var r: float = maxf(visual_length * 0.8, 14.0 * px)
+	var l: float = r * 0.45
+	var color := Color(1.0, 0.3, 0.25, 0.95)
+	draw_set_transform(Vector2.ZERO, -rotation, Vector2.ONE)
+	for corner: Vector2 in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var c: Vector2 = corner * r
+		draw_line(c, c - Vector2(corner.x * l, 0.0), color, 1.5 * px)
+		draw_line(c, c - Vector2(0.0, corner.y * l), color, 1.5 * px)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _draw_black_hole_field() -> void:

@@ -44,8 +44,8 @@ func _in_radius(world_pos: Vector2) -> bool:
 
 
 func _damage_ship(ship: Node2D, amount: float) -> void:
-	var taken: float = float(ship.get_meta("sandbox_damage_taken", 0.0))
-	ship.set_meta("sandbox_damage_taken", taken + amount)
+	if ship.has_method("take_damage"):
+		ship.call("take_damage", amount)
 
 
 func _draw() -> void:
