@@ -21,17 +21,6 @@ const DETAIL_GAP := 24.0
 const DETAIL_MIN_TOTAL := 520.0
 const ICON_PIXELS := 192
 const ICON_SPIN := 0.5
-## Where the icon models stand relative to the sun, which the deposit shader
-## lights them from (its `sun_position` global): up and to the left of them.
-const ICON_OFFSET := Vector3(80000.0, -60000.0, 20000.0)
-
-## The sun, in 3D, for the icons' lighting - set by whoever hosts the view.
-var sun_position := Vector3.ZERO:
-	set(value):
-		sun_position = value
-		for id: StringName in _icons:
-			_place_icon(_icons[id])
-
 var _inventory: Inventory = null
 var _selected: StringName = &""
 var _hovered: int = -1
@@ -70,10 +59,9 @@ func step(columns: int, rows: int) -> void:
 
 ## Name, colour and a line about it, for any item id.
 static func item_info(id: StringName) -> Dictionary:
-	var type: Dictionary = ResourceDeposits.TYPES.get(id, {})
 	return {
-		"name": type.get("name", String(id).capitalize()),
-		"color": type.get("color", Color.WHITE),
+		"name": ResourceIcons.display_name(id),
+		"color": ResourceIcons.color(id),
 		"kind": "Resource",
 	}
 
@@ -107,48 +95,12 @@ func _refresh() -> void:
 
 # ---- icons ----------------------------------------------------------------
 
-## A tiny scene of its own for the item: its showcase model, lit like the
-## catalog's, seen a little from above. Drawn from the viewport's texture.
+## A tiny scene of its own for the item (ResourceIcons.make_stage), kept
+## rendering so the model can spin. Drawn from the viewport's texture.
 func _make_icon(id: StringName) -> Dictionary:
-	var viewport := SubViewport.new()
-	viewport.own_world_3d = true
-	viewport.transparent_bg = true
-	viewport.msaa_3d = Viewport.MSAA_4X
-	viewport.size = Vector2i(ICON_PIXELS, ICON_PIXELS)
-	add_child(viewport)
-
-	var root := Node3D.new()
-	viewport.add_child(root)
-	var environment := Environment.new()
-	environment.background_mode = Environment.BG_CLEAR_COLOR
-	environment.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	var world_environment := WorldEnvironment.new()
-	world_environment.environment = environment
-	root.add_child(world_environment)
-
-	var model: MeshInstance3D = ResourceDeposits.make_showcase(id)
-	var bounds: AABB = model.mesh.get_aabb()
-	model.position = -bounds.get_center()
-	var pivot := Node3D.new()
-	pivot.add_child(model)
-	root.add_child(pivot)
-
-	var camera := Camera3D.new()
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = maxf(bounds.size.y, maxf(bounds.size.x, bounds.size.z)) * 1.35
-	camera.near = 1.0
-	camera.far = 200.0
-	root.add_child(camera)
-
-	var icon := {"viewport": viewport, "pivot": pivot, "camera": camera}
-	_place_icon(icon)
-	return icon
-
-
-func _place_icon(icon: Dictionary) -> void:
-	var origin: Vector3 = sun_position + ICON_OFFSET
-	(icon["pivot"] as Node3D).position = origin
-	(icon["camera"] as Camera3D).look_at_from_position(origin + Vector3(0.0, 1.6, 4.0) * 10.0, origin, Vector3.UP)
+	var stage: Dictionary = ResourceIcons.make_stage(id, ICON_PIXELS)
+	add_child(stage["viewport"])
+	return stage
 
 
 ## The icons render only while the view is on screen.

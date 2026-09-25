@@ -27,7 +27,7 @@ func _ready() -> void:
 	move_to_front.call_deferred()
 
 
-## `system` is solar_system.gd - read for the sun, which lights the models.
+## `system` is solar_system.gd.
 func setup(system: Node, inventory: Inventory) -> void:
 	_system = system
 	_inventory = inventory
@@ -43,8 +43,6 @@ func toggle() -> void:
 
 
 func open() -> void:
-	var sun: Vector2 = (_system.get("sun") as Node2D).global_position
-	view.sun_position = Vector3(sun.x, 0.0, sun.y)
 	visible = true
 	_layout()
 

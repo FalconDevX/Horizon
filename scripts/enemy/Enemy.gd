@@ -23,6 +23,12 @@ const LASER_BOLT_SCENE := preload("res://scenes/enemies/LaserBolt.tscn")
 @export var laser_damage: float = 10.0
 @export var laser_width: float = 2.2
 @export var laser_length: float = 14.0
+## Pitch the laser sound plays at (lower = heavier).
+@export var laser_pitch: float = 1.0
+## Fire one long SniperBeam reaching `laser_range` in an instant, instead of
+## travelling bolts.
+@export var beam_mode: bool = false
+@export var beam_color: Color = Color(1.0, 0.78, 0.12)
 @export var player_controlled: bool = true
 ## Barrel tips in the artwork, as fractions of the nose-up image - one bolt
 ## leaves each per shot.
@@ -82,6 +88,15 @@ func fire_laser() -> void:
 	var draw_size := _get_draw_size()
 	for frac in muzzles:
 		var muzzle_local: Vector2 = _image_to_local(frac, draw_size)
+		if beam_mode:
+			var beam := SniperBeam.new()
+			beam.direction = dir
+			beam.reach = laser_range
+			beam.damage = laser_damage
+			beam.glow_color = beam_color
+			get_parent().add_child(beam)
+			beam.global_position = global_position + muzzle_local.rotated(rotation)
+			continue
 		var bolt := LASER_BOLT_SCENE.instantiate() as LaserBolt
 		bolt.lifetime = laser_range / laser_speed
 		bolt.damage = laser_damage
@@ -99,6 +114,7 @@ func _play_laser_sound() -> void:
 		_laser_player.stream = laser_sound
 		_laser_player.bus = &"SFX"
 		_laser_player.max_polyphony = 4
+		_laser_player.pitch_scale = laser_pitch
 		add_child(_laser_player)
 	_laser_player.play()
 

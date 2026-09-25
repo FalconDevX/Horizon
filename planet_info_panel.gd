@@ -46,6 +46,8 @@ var _bodies: Array[Node2D] = []
 var _selected: int = 0
 var _hovered: int = -1
 var _hover_close: bool = false
+var _hover_help: bool = false
+var _help: HelpPopup
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
@@ -72,6 +74,14 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
 	_build_viewport()
+	_help = HelpPopup.new(PackedStringArray([
+		"Drag the planet: turn it",
+		"Mouse wheel over the planet: zoom",
+		"Up and Down arrows: previous and next entry",
+		"Tab, Left or Right: planets / resources",
+		"J or Esc: close the log",
+	]))
+	add_child(_help)
 	resized.connect(_layout)
 	# Over the rest of the HUD, which is added after this node in the scene.
 	move_to_front.call_deferred()
@@ -91,6 +101,7 @@ func toggle() -> void:
 		hide_panel()
 	else:
 		open_on(null)
+
 
 
 ## Opens the catalog, on `body` if it is in it.
@@ -128,6 +139,7 @@ func _row_count() -> int:
 
 func hide_panel() -> void:
 	visible = false
+	_help.close()
 	_clear_preview()
 
 
@@ -376,16 +388,29 @@ func _gui_input(event: InputEvent) -> void:
 		var hovered: int = _row_at(motion.position)
 		var hover_close: bool = _close_rect().has_point(motion.position)
 		var hovered_tab: int = _tab_at(motion.position)
-		if hovered != _hovered or hover_close != _hover_close or hovered_tab != _hovered_tab:
+		var hover_help: bool = HelpPopup.button_rect(_close_rect()).has_point(motion.position)
+		if (
+			hovered != _hovered or hover_close != _hover_close or hovered_tab != _hovered_tab
+			or hover_help != _hover_help
+		):
 			_hovered = hovered
 			_hover_close = hover_close
 			_hovered_tab = hovered_tab
+			_hover_help = hover_help
 			queue_redraw()
 
 	elif event is InputEventMouseButton:
 		var button := event as InputEventMouseButton
 		if button.button_index == MOUSE_BUTTON_LEFT:
 			if button.pressed:
+				var close: Rect2 = _close_rect()
+				if HelpPopup.button_rect(close).has_point(button.position):
+					_help.toggle_at(Vector2(close.end.x, close.end.y + 10.0))
+					queue_redraw()
+					accept_event()
+					return
+				_help.close()
+				queue_redraw()
 				if _close_rect().has_point(button.position) or not _panel_rect().has_point(button.position):
 					hide_panel()
 				elif _tab_at(button.position) >= 0:
@@ -412,6 +437,10 @@ func _gui_input(event: InputEvent) -> void:
 # ---- numbers ----------------------------------------------------------------
 
 func _lore(body: Node2D) -> Dictionary:
+	if body.get("is_wormhole"):
+		var lore: Dictionary = PlanetLore.WORMHOLE.duplicate()
+		lore["class"] = "%s %s" % [body.get("wormhole_size"), lore["class"]]
+		return lore
 	if body.get("is_black_hole"):
 		return PlanetLore.BLACK_HOLE
 	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
@@ -494,11 +523,11 @@ func _draw() -> void:
 			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _tab else HudPanelStyle.COLOR_TEXT_MUTED
 		)
 	draw_string(
-		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0),
-		"VESPERIS SYSTEM   ·   Tab to switch   ·   J or Esc to close",
+		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "VESPERIS SYSTEM",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
+	HelpPopup.draw_button(self, HelpPopup.button_rect(close), _hover_help, _help.visible)
 	draw_string(
 		font, close.position + Vector2(5.0, 18.0), "X", HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
 		HudPanelStyle.COLOR_TEXT_PRIMARY if _hover_close else HudPanelStyle.COLOR_TEXT_MUTED
@@ -551,13 +580,9 @@ func _draw_list(font: Font) -> void:
 		)
 
 
-func _draw_view_frame(font: Font) -> void:
+func _draw_view_frame(_font: Font) -> void:
 	var view: Rect2 = _view_rect()
 	draw_rect(view, Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 0.4), false, 1.0)
-	draw_string(
-		font, view.position + Vector2(10.0, view.size.y - 12.0), "DRAG TO ROTATE   ·   SCROLL TO ZOOM",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_FAINT
-	)
 
 
 func _draw_text(font: Font) -> void:

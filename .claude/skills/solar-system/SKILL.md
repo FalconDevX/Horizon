@@ -533,7 +533,14 @@ plate, fed by `_update_landing_prompt()` every frame.
   prediction ends in (planet-relative velocity), not always the sun - against the sun,
   low planet orbits read ESCAPE on every prograde half.
 
-## Black hole
+## Black hole / wormhole
+
+Erebus has `is_anomaly`: `_roll_anomaly()` rolls from `generation_seed` (again on a world
+reroll) a black hole with `BLACK_HOLE_CHANCE` = 10%, otherwise a wormhole sized from `WORMHOLE_SIZES`
+(Small to Giant, 0.05-0.8 of the authored radius and mass; `set_world_seed` refreshes
+`mu_planets`). Both keep `is_black_hole` = true and use the same shader. With `wormhole` set, the
+shader skips the disk, the captured rays show a tinted fisheye of another patch of sky
+(`far_tint` / `far_offset`) and the throat gets a glowing lip. Its catalog text is `PlanetLore.WORMHOLE`.
 
 `is_black_hole` on a `celestial_body.gd` body (Erebus): `radius` is the event horizon.
 `build_black_hole()` hides the sphere and turns the glow plane into a quad
@@ -616,8 +623,8 @@ There is no test suite. Changes are checked by running the game in Godot 4.7
 (`run/main_scene` is the main menu; New Game shows the loading screen, then
 `solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
 zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
-follow, `N` reroll the world seed, `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `E` collect while landed
-(enemy menu in space), `ENTER` land / take off, plus the flight keys above.
+follow, `N` reroll the world seed, `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `T` tech tree, `M` galaxy map,
+`E` collect while landed (enemy menu in space), `ENTER` land / take off, plus the flight keys above.
 
 ## Inventory
 
@@ -626,21 +633,39 @@ touching the data or the drawing:
 
 - `inventory.gd` - `class_name Inventory` (RefCounted): item id -> count in
   pickup order, plus id -> {source: count}; `add(id, n, source)`, `remove`,
-  `count`, `ids`, `sources`, `total`; emits `changed`. `solar_system.gd` owns one
-  (`inventory`). Ids are `ResourceDeposits.TYPES` keys for now.
+  `count`, `ids`, `sources`, `total`; emits `changed`. `PlayerProgress.inventory`
+  is the one hold (static, so it survives scene reloads); `solar_system.gd`'s
+  `inventory` points at it and the tech tree spends from it. Ids are
+  `ResourceDeposits.TYPES` keys.
 - `inventory_view.gd` - `class_name InventoryView` (Control), the component:
   `bind(inventory)`, then give it any rect. Slots stretch to fill the width,
   as many rows as fit (clips, no scrolling yet); the details column (`DETAIL_WIDTH`,
   at most 42%) drops away under `DETAIL_MIN_TOTAL`. Each item held gets its own
-  small SubViewport with the showcase model spinning (rendered only while
-  visible), lit through the deposit shader's `sun_position` global - the host
-  sets `sun_position` and icons stand at `sun_position + ICON_OFFSET`.
+  small SubViewport (`ResourceIcons.make_stage`) with the showcase model
+  spinning, rendered only while visible.
   `step(dx, dy)` for keys, `item_selected` signal, `item_info(id)` is the one
   place that names an item.
 - `inventory_screen.gd` - the disposable full-screen frame ("CARGO HOLD") around
   a view; `solar_system.gd` routes keys while open (arrows step, I/Esc close,
   J switches to the log). New `class_name`s need a rescan (`--import`, or the
   editor) before a headless run sees them.
+- `resource_icons.gd` - `class_name ResourceIcons`: `icon(id)` a still cached
+  Texture2D of a type's model for plain UI (tech tree), `make_stage(id, px)` a
+  scene to animate, `display_name` / `color`. Icons are lit by the deposit
+  shader's `fixed_light` uniform (zero = the sun as in space), so they look the
+  same in any scene.
+
+## Resources and the tech tree
+
+Master's raw-material list (`ResourceCatalog`, 14 materials in 3 tiers with PNG
+icons and a per-planet yield table) was removed: the game's resources are the
+`ResourceDeposits` types gathered on planets. `PlayerProgress` holds the
+`Inventory` (no starting stock - tier-1 nodes are free) and `TechTree` recipes
+name deposit types; the board's materials were mapped onto them (listed in
+`TechTree.gd`'s header). `TechTree.TIER_NAMES` / `TIER_COLORS` are the tree's own
+tiers. `set_world_seed` (galaxy-map travel, `N`) takes off if landed and resets
+`charted_bodies` / `found_resources`; `known_resources` (types ever found)
+survives.
 
 ## Ship builder engines
 
@@ -652,3 +677,40 @@ the orange `ENGINE_MOUNT` tiles are); an optional `..._plan.png` (`plan_texture`
 drawn over the footprint while a module is held. The inventory shows one engine family
 per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates
 engine art with the module. There is no RCS / corrective engine any more.
+
+## Resources, tech tree, builder inventory
+
+From the Horizon Miro board ("Moduły statku", "Receptury modułów", "Planety → surowce").
+
+- Resources are the `ResourceDeposits` types (see "Resources and the tech tree"
+  above); master's `ResourceCatalog` is gone.
+- `scripts/data/TechTree.gd`: `NODES` (branch, tier, recipe, requires, modules). Tier 1
+  is open from the start. Higher tiers need `requires` (my own links, not from the board) and pay
+  `UNLOCK_COST[tier]` of each recipe resource. A catalog module in no node is always
+  available.
+- `scripts/data/PlayerProgress.gd`: the static cargo hold (`inventory`, filled by
+  collecting with E on planets) and the unlocked set.
+- The builder inventory (B) lists every module by category as before (FLOOR, TRUSS
+  included). Locked ones are greyed out and not clickable (`ShipBuilderController._hook_slot`), and
+  the list refreshes when the yard opens. The tree itself is `scripts/ui/TechTreePanel.gd` (branch
+  tabs, resource bar, scrolling `TechTreeView`) in its own window, `TechTreeWindow`, which
+  `solar_system.gd` creates next to the planet catalog. **T** opens and closes it, apart from
+  the **J** log and the **I** cargo hold.
+- New structure categories: `FLOOR` (deck tiles that edge-attach to a hull or floor, +1 slot/cell)
+  and `TRUSS` (built on the weapon-mount ring; the ring also grows from floor and truss,
+  `ModuleData.is_frame()`; guns may stand on truss, `ShipHull.is_truss_beam_cell`;
+  truss does not block line of sight).
+- Module art is cut from `Downloads/horizon_png` into N×128 px PNGs, loaded by
+  `ModuleCatalog._use_art(m, name)` when the file exists.
+
+## Galaxy map
+
+A star system is its `world_seed`. `scripts/data/GalaxyMap.gd` (static, no save yet)
+records every seed the player has been in (`visit()` from `_ready()` and
+`set_world_seed()`, so `N` adds one) and derives from the seed alone a spot on a
+4-arm spiral (`position_for()`) and a name (`system_name()`). `scripts/ui/GalaxyMapWindow.gd`,
+opened with **M**, draws the galaxy (`galaxy_map.gdshader`: barred spiral on the same
+arm curve as `arm_angle()`, dust lanes, H II knots, point stars that resolve as you zoom;
+its noise uses an integer PCG hash - a float hash breaks into squares on the GPU), the visited systems joined in visit order and the
+current one pulsing; selecting another visited system offers WARP, which emits
+`travel_requested` → `set_world_seed()`. The ship keeps its position on a warp.

@@ -31,6 +31,8 @@ signal closed
 
 const CATEGORY_ORDER: Array[ModuleData.Category] = [
 	ModuleData.Category.HULL,
+	ModuleData.Category.FLOOR,
+	ModuleData.Category.TRUSS,
 	ModuleData.Category.CONNECTOR,
 	ModuleData.Category.ENGINE,
 	ModuleData.Category.FUEL_TANK,
@@ -43,6 +45,8 @@ const CATEGORY_ORDER: Array[ModuleData.Category] = [
 
 const CATEGORY_LABELS: Dictionary = {
 	ModuleData.Category.HULL: "Hulls",
+	ModuleData.Category.FLOOR: "Floors",
+	ModuleData.Category.TRUSS: "Trusses",
 	ModuleData.Category.CONNECTOR: "Connectors",
 	ModuleData.Category.ENGINE: "Engines",
 	ModuleData.Category.FUEL_TANK: "Fuel Tanks",
@@ -82,7 +86,10 @@ func get_fov_devices() -> Array[Dictionary]:
 
 func _ready() -> void:
 	_style_chrome()
+	PlayerProgress.ensure_initialized()
 	_populate_inventory()
+	# Unlocks happen in the tech tree (T): pick them up when the yard opens.
+	visibility_changed.connect(_on_visibility_changed)
 	_grid_ui.bind_hull(_ship_hull)
 	_stats_panel.bind_hull(_ship_hull)
 	_grid_ui.hold_changed.connect(_on_hold_changed)
@@ -357,7 +364,7 @@ func _show_category(category: ModuleData.Category) -> void:
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_module_grid.add_child(slot)
 		slot.setup(module)
-		slot.module_selected.connect(_on_inventory_module_selected)
+		_hook_slot(slot, module)
 
 
 ## One row per engine family, top to bottom: the family name on the left and
@@ -394,7 +401,23 @@ func _show_engine_rows(modules: Array) -> void:
 			slot.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 			slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			slot.setup(module)
-			slot.module_selected.connect(_on_inventory_module_selected)
+			_hook_slot(slot, module)
+
+
+## Unlocked modules can be picked up; locked ones stay listed, greyed out,
+## until their tech-tree node is unlocked.
+func _hook_slot(slot: ModuleInventorySlot, module: ModuleData) -> void:
+	if PlayerProgress.is_module_unlocked(module.id):
+		slot.module_selected.connect(_on_inventory_module_selected)
+		return
+	slot.modulate = Color(0.55, 0.55, 0.6, 0.45)
+	var node: Dictionary = TechTree.node_for_module(module.id)
+	slot.tooltip_text = "%s - locked. Unlock \"%s\" in the tech tree (T)." % [module.title, node.get("title", "?")]
+
+
+func _on_visibility_changed() -> void:
+	if visible and _shown_category >= 0:
+		_show_category(_shown_category as ModuleData.Category)
 
 
 func _on_inventory_module_selected(module: ModuleData) -> void:

@@ -92,6 +92,9 @@ var music_mgr: MusicManager
 var _settings_opened_from_pause: bool = false
 var _is_first_track_notification := true
 var _builder_controller: ShipBuilderController
+## Module tech tree window (T), created in _ready next to the planet catalog.
+var tech_tree_window: TechTreeWindow
+var galaxy_map_window: GalaxyMapWindow
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -226,6 +229,9 @@ var charted_bodies: Dictionary = {}
 ## it through mark_resource_found(). Scenery (tumbleweeds, geysers,
 ## dead stalks) is in plain sight, so it counts as found on any charted planet.
 var found_resources: Dictionary = {}
+## Resource types the player has found anywhere, in any system - unlike
+## found_resources this survives travel (set_world_seed).
+var known_resources: Dictionary = {}
 
 ## The planet the ship is landed on, or null out in space. While landed the
 ## ship is pinned to the planet's centre - where the camera sits - and flies
@@ -242,8 +248,9 @@ var landing_prompt: Control
 ## "E - collect" under the landing prompt, while the ship is over a deposit.
 var collect_prompt: Control
 ## What the ship carries (collect_under_ship fills it); shown by
-## inventory_screen, toggled with I.
-var inventory := Inventory.new()
+## inventory_screen, toggled with I. PlayerProgress owns it, so it outlives
+## scene reloads and the tech tree spends from it.
+var inventory: Inventory = PlayerProgress.inventory
 var inventory_screen: Control
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
@@ -413,6 +420,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 
+	# The tech tree window likewise.
+	if tech_tree_window != null and tech_tree_window.visible:
+		if event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_ESCAPE or event.keycode == KEY_T
+		):
+			tech_tree_window.hide_window()
+			get_viewport().set_input_as_handled()
+		return
+
+	# And the galaxy map.
+	if galaxy_map_window != null and galaxy_map_window.visible:
+		if event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_ESCAPE or event.keycode == KEY_M
+		):
+			galaxy_map_window.hide_window()
+			get_viewport().set_input_as_handled()
+		return
+
 	# Taking the controls: any manual thrust or turn hands the ship back to the
 	# player. Not consumed, so the key still does its normal job.
 	if autopilot_active and _test_enemy == null and _is_manual_flight_input(event):
@@ -422,16 +447,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		event is InputEventKey
 		and event.pressed
 		and not event.echo
-		and (event.keycode == KEY_I or event.keycode == KEY_J)
+		and event.keycode in [KEY_I, KEY_J, KEY_T, KEY_M]
 		and (ship_builder_panel == null or not ship_builder_panel.visible)
 		and (pause_menu == null or not pause_menu.visible)
 		and (settings_menu == null or not settings_menu.visible)
 	):
-		# I - the cargo hold, J - the planetary log.
-		if event.keycode == KEY_I:
-			inventory_screen.open()
-		else:
-			planet_info_panel.toggle()
+		# I - the cargo hold, J - the planetary log, T - the tech tree, M - the
+		# galaxy map.
+		match event.keycode:
+			KEY_I:
+				inventory_screen.open()
+			KEY_J:
+				planet_info_panel.toggle()
+			KEY_M:
+				galaxy_map_window.open()
+			_:
+				tech_tree_window.open()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -588,11 +619,22 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Regenerates every planet from a new world seed. The old world's cached
 ## bakes are dropped first - nothing will ask for them again.
 func set_world_seed(value: int) -> void:
+	# Other worlds (galaxy-map travel, or N): the ship lifts off first, and
+	# what it charted and found on these bodies no longer describes them. The
+	# resource types it knows stay known.
+	if landed_body != null:
+		take_off()
+	charted_bodies = {sun: true, planets[HOME_PLANET_INDEX]: true}
+	found_resources.clear()
 	world_seed = value
+	GalaxyMap.visit(world_seed)
 	PlanetTerrain.clear_cache()
 
-	for planet in planets:
-		planet.call("rebuild_surface")
+	for i in planets.size():
+		planets[i].call("rebuild_surface")
+		# An anomaly re-rolls its size (and mass) with the world.
+		if i < mu_planets.size():
+			mu_planets[i] = G * float(planets[i].get("mass"))
 
 	print("World seed: %d" % world_seed)
 
@@ -713,6 +755,14 @@ func _ready() -> void:
 	$HUD.add_child(collect_prompt)
 	charted_bodies[sun] = true
 	charted_bodies[planets[HOME_PLANET_INDEX]] = true
+	tech_tree_window = TechTreeWindow.new()
+	tech_tree_window.name = "TechTreeWindow"
+	planet_info_panel.get_parent().add_child(tech_tree_window)
+	GalaxyMap.visit(world_seed)
+	galaxy_map_window = GalaxyMapWindow.new()
+	galaxy_map_window.name = "GalaxyMapWindow"
+	galaxy_map_window.travel_requested.connect(set_world_seed)
+	planet_info_panel.get_parent().add_child(galaxy_map_window)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -3344,7 +3394,7 @@ func _try_fire_fov_weapon() -> void:
 			best_dist = dist
 			best_body = body
 	if best_body != null:
-		ship.try_fire_at(best_body.position)
+		ship.try_fire_at(best_body.position, float(best_body.get("visual_radius")))
 
 
 func _on_setting_changed(key: String, value: Variant) -> void:
@@ -3862,7 +3912,7 @@ func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
 
 ## Whether the player has found a resource of this type anywhere.
 func is_resource_known(type_name: StringName) -> bool:
-	return not bodies_where_found(type_name).is_empty()
+	return known_resources.has(type_name) or not bodies_where_found(type_name).is_empty()
 
 
 ## The bodies the player has found this type on, in catalog order.
@@ -3880,6 +3930,7 @@ func mark_resource_found(body: Node2D, type_name: StringName) -> void:
 	if not found_resources.has(body):
 		found_resources[body] = {}
 	found_resources[body][type_name] = true
+	known_resources[type_name] = true
 
 
 func _has_deposit(body: Node2D, type_name: StringName) -> bool:

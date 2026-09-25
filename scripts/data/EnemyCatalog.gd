@@ -16,4 +16,10 @@ static func all_enemies() -> Array[Dictionary]:
 			"texture": preload("res://textures/enemies/enemy_tank.png"),
 			"scene": preload("res://scenes/enemies/EnemyTank.tscn"),
 		},
+		{
+			"id": "sniper",
+			"title": "Sniper",
+			"texture": preload("res://textures/enemies/enemy_sniper.png"),
+			"scene": preload("res://scenes/enemies/EnemySniper.tscn"),
+		},
 	]

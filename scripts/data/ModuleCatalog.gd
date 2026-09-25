@@ -8,7 +8,10 @@ const CELL_PX := 48
 static func all_buildable_modules() -> Array[ModuleData]:
 	var list: Array[ModuleData] = []
 	list.append_array(hull_modules())
-	list.append(connector())
+	list.append_array(connectors())
+	list.append_array(floors())
+	list.append_array(trusses())
+	list.append(cockpit())
 	list.append_array(engines())
 	list.append_array(weapons())
 	list.append_array(radars())
@@ -27,10 +30,59 @@ static func hull_modules() -> Array[ModuleData]:
 	]
 
 
-static func connector() -> ModuleData:
-	var m := _base("Connector", &"connector", ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
-	m.texture = make_shape_texture(m.grid_shape, ModuleData.Category.CONNECTOR)
+## The four connector pieces from the board. They behave the same (a 1x1
+## bridge between hulls); the shape is the look.
+static func connectors() -> Array[ModuleData]:
+	var list: Array[ModuleData] = []
+	for piece: Array in [
+		["Connector: Straight", &"connector_straight"],
+		["Connector: Elbow", &"connector_elbow"],
+		["Connector: T", &"connector_t"],
+		["Connector: Cross", &"connector_cross"],
+	]:
+		var m := _base(piece[0], piece[1], ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
+		_use_art(m, String(piece[1]))
+		list.append(m)
+	return list
+
+
+## Floor tiles (1-3 cells long): deck that attaches straight to a hull or to
+## other floor, extending the ship. Each tile cell adds one equipment slot.
+static func floors() -> Array[ModuleData]:
+	var list: Array[ModuleData] = []
+	for n in [1, 2, 3]:
+		var m := _base("Floor %d" % n, StringName("floor_%d" % n), ModuleData.Category.FLOOR, 1.5 * n, 12.0 * n, 0.0, _shape_line(n))
+		m.capacity = n
+		_use_art(m, "floor_%d" % n)
+		list.append(m)
+	return list
+
+
+## Truss beams (1-3 cells long): a frame for guns. Built on the weapon-mount
+## ring or off another beam, and guns can stand on them.
+static func trusses() -> Array[ModuleData]:
+	var list: Array[ModuleData] = []
+	for n in [1, 2, 3]:
+		var m := _base("Truss %d" % n, StringName("truss_%d" % n), ModuleData.Category.TRUSS, 0.8 * n, 8.0 * n, 0.0, _shape_line(n))
+		_use_art(m, "truss_%d" % n)
+		list.append(m)
+	return list
+
+
+static func cockpit() -> ModuleData:
+	return _base("Cockpit", &"cockpit", ModuleData.Category.UTILITY, 6.0, 30.0, 1.0, _shape_2x1())
+
+
+static func _with_art(m: ModuleData) -> ModuleData:
+	_use_art(m, String(m.id))
 	return m
+
+
+## Sprite for a module from textures/modules/<name>.png, if there is one.
+static func _use_art(m: ModuleData, name: String) -> void:
+	var path := "res://textures/modules/%s.png" % name
+	if ResourceLoader.exists(path):
+		m.texture = load(path)
 
 
 ## Star rating (1-5) -> in-game values for a size-S (1x1) engine:
@@ -109,7 +161,15 @@ static func weapons() -> Array[ModuleData]:
 		_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1()),
 		_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1()),
 		_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, 12.0, 2800.0, _shape_1x1()),
-		_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1()),
+		_with_art(_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1())),
+		# Long yellow beam (ship.gd SNIPER_ID): the longest reach by far, in a
+		# narrow cone, slow to reload.
+		_with_art(_weapon("Sniper Laser", &"weapon_sniper", 70.0, 4.0, 0.99, 14.0, 20.0, 6.0, 12000.0, _shape_line(4))),
+		# From the board's star ratings (DMG / reload / accuracy): see _stars_weapon.
+		_stars_weapon("Revolver Cannon", &"weapon_revolver", 4, 4, 4, 9.0, 4.0, 30.0, 2000.0, _shape_2x1()),
+		_stars_weapon("Coilgun: Shotgun", &"weapon_coilgun", 5, 4, 1, 10.0, 10.0, 50.0, 1200.0, _shape_2x1()),
+		_stars_weapon("Rocket Launcher", &"weapon_rockets", 5, 1, 5, 12.0, 2.0, 25.0, 3000.0, _shape_2x1()),
+		_stars_weapon("Drone Bay", &"weapon_drones", 2, 3, 3, 6.0, 8.0, 90.0, 2500.0, _shape_1x1()),
 	]
 
 
@@ -125,11 +185,20 @@ static func radars() -> Array[ModuleData]:
 static func utilities() -> Array[ModuleData]:
 	var repair := _base("Repair Module", &"util_repair", ModuleData.Category.UTILITY, 5.0, 15.0, 2.0, _shape_1x1())
 	repair.repair_rate = 4.0
+	_use_art(repair, "util_repair")
 
-	var generator := _base("Generator", &"util_generator", ModuleData.Category.UTILITY, 8.0, 20.0, 0.0, _shape_2x1())
+	var generator := _base("Generator", &"util_generator", ModuleData.Category.UTILITY, 8.0, 20.0, 0.0, _shape_2x2())
 	generator.energy_generation = 25.0
+	_use_art(generator, "util_generator")
 
-	return [repair, generator]
+	var solar := _base("Solar Panels", &"util_solar", ModuleData.Category.UTILITY, 3.0, 8.0, 0.0, _shape_2x1())
+	solar.energy_generation = 10.0
+
+	var scanner := _base("Surface Scanner", &"util_scanner", ModuleData.Category.UTILITY, 2.0, 10.0, 3.0, _shape_1x1())
+
+	var fabricator := _base("Fabricator", &"util_fabricator", ModuleData.Category.UTILITY, 14.0, 30.0, 12.0, _shape_2x2())
+
+	return [repair, generator, solar, scanner, fabricator]
 
 
 ## Three sizes × two variants (standard / armored), same layout as fuel tanks.
@@ -471,6 +540,32 @@ static func _weapon(
 	return m
 
 
+## Weapon from the board's 1-5 star ratings. Damage and accuracy rise with
+## stars; reload stars mean a faster weapon, so fewer seconds between shots.
+static func _stars_weapon(
+	title: String,
+	id: StringName,
+	damage_stars: int,
+	reload_stars: int,
+	accuracy_stars: int,
+	mass: float,
+	energy: float,
+	fov_angle_deg: float,
+	fov_range: float,
+	shape: Array[Vector2i]
+) -> ModuleData:
+	const DAMAGE: Array[float] = [10.0, 22.0, 35.0, 55.0, 80.0]
+	const RELOAD: Array[float] = [4.0, 3.0, 2.0, 1.2, 0.4]
+	const ACCURACY: Array[float] = [0.6, 0.72, 0.82, 0.9, 0.97]
+	var m := _weapon(
+		title, id,
+		DAMAGE[damage_stars - 1], RELOAD[reload_stars - 1], ACCURACY[accuracy_stars - 1],
+		mass, energy, fov_angle_deg, fov_range, shape
+	)
+	_use_art(m, String(id))
+	return m
+
+
 static func _radar(
 	title: String,
 	id: StringName,
@@ -506,6 +601,14 @@ static func _base(
 	m.grid_shape = shape
 	m.texture = make_shape_texture(shape, category)
 	return m
+
+
+## A straight run of `n` cells.
+static func _shape_line(n: int) -> Array[Vector2i]:
+	var shape: Array[Vector2i] = []
+	for x in n:
+		shape.append(Vector2i(x, 0))
+	return shape
 
 
 static func _shape_1x1() -> Array[Vector2i]:
@@ -556,6 +659,10 @@ static func _category_color(category: ModuleData.Category) -> Color:
 			return Color(0.45, 0.55, 0.75)
 		ModuleData.Category.CONNECTOR:
 			return Color(0.9, 0.75, 0.2)
+		ModuleData.Category.FLOOR:
+			return Color(0.55, 0.6, 0.68)
+		ModuleData.Category.TRUSS:
+			return Color(0.62, 0.62, 0.6)
 		_:
 			return Color(0.4, 0.45, 0.5)
 

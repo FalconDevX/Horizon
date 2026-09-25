@@ -43,17 +43,35 @@ uniform float lens_distance = 26.0;
 uniform float disk_spin_speed = 0.35;
 uniform int max_steps = 180;
 
+// Wormhole mode (celestial_body.gd is_wormhole): same lensing, no disk. Rays
+// that fall into the throat come out somewhere else: they show another patch
+// of sky, tinted `far_tint`, with a faint nebula, and the throat's edge glows.
+uniform bool wormhole = false;
+uniform vec3 far_tint : source_color = vec3(0.6, 0.8, 1.0);
+uniform vec2 far_offset = vec2(0.3, 0.7);
+// Radius of the shadow (the photon capture edge), 3*sqrt(3)/2 Rs.
+const float SHADOW_R = 2.598;
+
 varying vec2 v_local;
 
+// Integer hash (PCG) of a lattice corner. A float hash like the old
+// fract(p * k) one is chaotic, so the GPU rounding the same corner slightly
+// differently from two neighbouring cells (fused multiply-adds) gave it two
+// values and the noise broke into visible squares. Integers hash exactly.
+uint pcg(uint v) {
+	uint s = v * 747796405u + 2891336453u;
+	uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+	return (w >> 22u) ^ w;
+}
+
 float hash21(vec2 p) {
-	p = fract(p * vec2(123.34, 456.21));
-	p += dot(p, p + 45.32);
-	return fract(p.x * p.y);
+	ivec2 c = ivec2(floor(p + 0.5));
+	return float(pcg(uint(c.x) ^ pcg(uint(c.y)))) / 4294967295.0;
 }
 
 float vnoise(vec2 p) {
 	vec2 i = floor(p);
-	vec2 f = fract(p);
+	vec2 f = p - i;
 	f = f * f * (3.0 - 2.0 * f);
 	return mix(
 		mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
@@ -75,6 +93,20 @@ float vnoise_wrap(vec2 p, float period) {
 		mix(hash21(vec2(x0, i.y + 1.0)), hash21(vec2(x1, i.y + 1.0)), f.x),
 		f.y
 	);
+}
+
+// Each octave is turned as well as scaled, so the value-noise grid doesn't
+// line up from octave to octave and show as square blobs.
+float fbm(vec2 p) {
+	const mat2 octave_turn = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+	float v = 0.0;
+	float a = 0.5;
+	for (int i = 0; i < 5; i++) {
+		v += a * vnoise(p);
+		p = octave_turn * p * 2.03 + vec2(17.1, 9.4);
+		a *= 0.5;
+	}
+	return v;
 }
 
 // fbm over (angle turns, radius); each octave doubles the angular period.
@@ -178,7 +210,7 @@ void fragment() {
 		// Crossing the disk plane between the two points?
 		float s0 = dot(pos, n);
 		float s1 = dot(next_pos, n);
-		if (s0 * s1 < 0.0) {
+		if (!wormhole && s0 * s1 < 0.0) {
 			vec3 hit = mix(pos, next_pos, s0 / (s0 - s1));
 			vec4 e = disk_emission(hit, -normalize(vel), n);
 			light += through * e.rgb * e.a;
@@ -196,7 +228,35 @@ void fragment() {
 		}
 	}
 
+	vec2 sky_size = vec2(textureSize(starfield, 0));
 	vec3 background = vec3(0.0);
+	float rr = length(v_local);
+	// One pixel's width in Rs, for anti-aliasing the throat's edge.
+	float px = max(fwidth(rr), 0.01);
+	// Whether a ray falls into the throat is set by its impact parameter alone
+	// (the ray starts straight down, so that is rr). Deciding it here instead
+	// of from the traced `captured` gives a clean round edge, anti-aliased over
+	// a pixel, where the stepped trace leaves it ragged and stair-stepped.
+	float inside = wormhole ? 1.0 - smoothstep(SHADOW_R - px, SHADOW_R + px, rr) : 0.0;
+	vec3 far_side = vec3(0.0);
+	if (inside > 0.0) {
+		// The other side: a fisheye of a far patch of sky, squeezed toward
+		// the throat's edge and turning slowly.
+		vec2 q = v_local / SHADOW_R;
+		float k = min(length(q), 1.0);
+		float turn = planet_time * 0.02;
+		mat2 rot = mat2(vec2(cos(turn), sin(turn)), vec2(-sin(turn), cos(turn)));
+		vec2 fq = rot * (q * (1.0 + 2.2 * k * k));
+		vec2 far_uv = far_offset + fq * 0.16;
+		// Wrap by hand (the sampler clamps), but take the mip level from the
+		// unwrapped coordinates so the wrap doesn't draw a seam.
+		vec3 stars = textureGrad(starfield, fract(far_uv), dFdx(far_uv), dFdy(far_uv)).rgb;
+		float cloud = fbm(fq * 2.2 + far_offset * 17.0 + vec2(turn * 3.0, 0.0));
+		vec3 nebula = far_tint * smoothstep(0.35, 0.9, cloud) * 0.45;
+		far_side = stars * mix(vec3(1.0), far_tint, 0.5) * 1.8 + nebula;
+		// Darker toward the edge, where the view grazes the throat.
+		far_side *= 1.0 - 0.6 * smoothstep(0.6, 1.0, k);
+	}
 	if (!captured && through > 0.02) {
 		vec3 d = normalize(vel);
 		if (d.y < -0.05) {
@@ -211,7 +271,6 @@ void fragment() {
 			vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
 			uv.y = 1.0 - uv.y;
 			// Same fit as the Background TextureRect: keep aspect, cover.
-			vec2 sky_size = vec2(textureSize(starfield, 0));
 			float cover = max(VIEWPORT_SIZE.x / sky_size.x, VIEWPORT_SIZE.y / sky_size.y);
 			vec2 sky_uv = (uv - 0.5) * VIEWPORT_SIZE / (sky_size * cover) + 0.5;
 			background = texture(starfield, sky_uv).rgb * (1.0 - starfield_dim);
@@ -222,6 +281,18 @@ void fragment() {
 
 	// Soft shoulder: bright parts roll off instead of clipping to flat white,
 	// but still pass 1.0 so the scene's glow blooms them.
+	if (wormhole) {
+		background = mix(background, far_side, inside);
+		// Glowing lip of the throat, streaked as it turns. The noise cells
+		// are long along the ring and wider than the lip across it, with a
+		// slight spiral, so they read as smooth streaks rather than blocks.
+		float ang = atan(v_local.y, v_local.x) / TAU;
+		float swirl = fract(ang - planet_time * 0.03 + rr * 0.04);
+		float streak = fbm_wrap(vec2(swirl * 48.0, rr * 0.7), 48.0);
+		float rim = exp(-pow((rr - SHADOW_R) / 0.28, 2.0)) * (0.6 + 0.8 * streak);
+		float halo = exp(-max(rr - SHADOW_R, 0.0) * 0.9) * (1.0 - inside) * 0.12;
+		light += mix(far_tint, vec3(1.0), 0.45) * (rim * 1.3 + halo);
+	}
 	light = light / (1.0 + 0.3 * light);
 	vec3 color = light + through * background;
 

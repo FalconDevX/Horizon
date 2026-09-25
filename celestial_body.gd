@@ -113,6 +113,28 @@ var fov_contact: int = 0:
 ## the autopilot treat it like any other body.
 @export var is_black_hole: bool = false
 
+## Rolls what the body is from the world seed: a black hole only now and then
+## (BLACK_HOLE_CHANCE), otherwise a wormhole of a rolled size. The authored
+## radius and mass are the black hole's; a wormhole scales both down. Both
+## render through black_hole.gdshader (is_black_hole is set either way).
+@export var is_anomaly: bool = false
+
+const BLACK_HOLE_CHANCE := 0.1
+## [name, weight, radius/mass scale range] of the black hole's.
+const WORMHOLE_SIZES := [
+	["Small", 0.35, Vector2(0.05, 0.09)],
+	["Medium", 0.35, Vector2(0.12, 0.2)],
+	["Large", 0.2, Vector2(0.28, 0.42)],
+	["Giant", 0.1, Vector2(0.55, 0.8)],
+]
+
+var is_wormhole: bool = false
+## Size class of a rolled wormhole ("Small".."Giant"), "" for a black hole.
+var wormhole_size: String = ""
+var _anomaly_base := Vector2.ZERO ## authored radius, mass
+var _wormhole_tint := Color.WHITE
+var _wormhole_offset := Vector2.ZERO
+
 @export var surface_blob_count: int = 0
 
 ## Leave at 0 to roll the count from the seed - more colours is rarer, and is
@@ -300,6 +322,8 @@ var _deposit_time := 0.0
 func _ready() -> void:
 	_scene_spin_axis = surface_spin_axis
 	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
+	if is_anomaly:
+		_roll_anomaly()
 
 	if not Engine.is_editor_hint():
 		_build_visual_3d()
@@ -749,6 +773,36 @@ func make_preview() -> Node3D:
 	return root
 
 
+## Black hole or wormhole, and how big: see is_anomaly. Radius and mass change
+## with it, so solar_system.gd re-reads mass after a world reroll.
+func _roll_anomaly() -> void:
+	if _anomaly_base == Vector2.ZERO:
+		_anomaly_base = Vector2(radius, mass)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([generation_seed, "anomaly"])
+	is_black_hole = true
+	is_wormhole = rng.randf() >= BLACK_HOLE_CHANCE
+	var scale := 1.0
+	wormhole_size = ""
+	if is_wormhole:
+		var pick: float = rng.randf()
+		var size: Array = WORMHOLE_SIZES[-1]
+		for entry: Array in WORMHOLE_SIZES:
+			pick -= float(entry[1])
+			if pick < 0.0:
+				size = entry
+				break
+		wormhole_size = size[0]
+		var span: Vector2 = size[2]
+		scale = rng.randf_range(span.x, span.y)
+		_wormhole_tint = Color.from_hsv(rng.randf(), rng.randf_range(0.35, 0.7), 1.0)
+		_wormhole_offset = Vector2(rng.randf(), rng.randf())
+	radius = _anomaly_base.x * scale
+	visual_radius = radius
+	mass = _anomaly_base.y * scale
+	atmosphere = "None - open throat" if is_wormhole else "None - event horizon"
+
+
 ## Hides the ball and turns the glow plane into the ray-traced black hole.
 func build_black_hole() -> void:
 	surface_spin_speed = 0.0
@@ -761,6 +815,14 @@ func build_black_hole() -> void:
 	var material := ShaderMaterial.new()
 	material.shader = BLACK_HOLE_SHADER
 	material.set_shader_parameter("extent", BLACK_HOLE_EXTENT)
+	material.set_shader_parameter("wormhole", is_wormhole)
+	material.set_shader_parameter("far_tint", _wormhole_tint)
+	material.set_shader_parameter("far_offset", _wormhole_offset)
+	# A rebuild swaps the material: the starfield has to be handed over again.
+	var old := _glow_3d.material_override as ShaderMaterial
+	if old != null and old.shader == BLACK_HOLE_SHADER:
+		material.set_shader_parameter("starfield", old.get_shader_parameter("starfield"))
+		material.set_shader_parameter("starfield_dim", old.get_shader_parameter("starfield_dim"))
 	_glow_3d.material_override = material
 	update_surface_scale()
 
@@ -1031,6 +1093,12 @@ func is_liquid_at(planet_direction: Vector3) -> bool:
 ## A terrain planet keeps showing its old surface until the new bake lands.
 func rebuild_surface() -> void:
 	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
+
+	if is_anomaly:
+		_roll_anomaly()
+		if _sphere_3d != null:
+			build_black_hole()
+		return
 
 	if _terrain_task >= 0:
 		_stale_terrain_tasks.append(_terrain_task)

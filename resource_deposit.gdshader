@@ -23,6 +23,9 @@ uniform vec3 spot_color_a : source_color = vec3(0.3, 0.5, 1.0);
 uniform vec3 spot_color_b : source_color = vec3(1.0, 0.5, 0.7);
 
 global uniform vec3 sun_position;
+// World-space direction towards a fixed light, for icons shown away from any
+// sun (ResourceIcons); zero lights from `sun_position` as in space.
+uniform vec3 fixed_light = vec3(0.0);
 // Game time: stops on pause, like every other planet animation.
 global uniform float planet_time;
 
@@ -77,7 +80,9 @@ void fragment() {
 		albedo = mix(albedo, mix(spot_color_a, spot_color_b, s.y), s.x * spots);
 	}
 
-	vec3 to_sun = normalize(sun_position - NODE_POSITION_WORLD);
+	vec3 to_sun = dot(fixed_light, fixed_light) > 0.0
+		? normalize(fixed_light)
+		: normalize(sun_position - NODE_POSITION_WORLD);
 	vec3 L = normalize(to_sun + vec3(0.0, light_lift, 0.0));
 	vec3 V = normalize(INV_VIEW_MATRIX[2].xyz);
 	vec3 nw = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);

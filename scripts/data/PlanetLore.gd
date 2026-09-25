@@ -28,6 +28,17 @@ const BLACK_HOLE := {
 	],
 }
 
+## "class" gets the rolled size put in front by planet_info_panel.gd.
+const WORMHOLE := {
+	"class": "wormhole",
+	"description": "A tunnel through space held open by something no one has explained. It bends light round itself like a black hole, but its dark disc is not a shadow: it is a window, and what shows through it is sky from somewhere else entirely - stars in the wrong places, a glow of distant gas.",
+	"facts": [
+		"No two worlds have the same one: most systems get a wormhole, and only rarely a true black hole instead.",
+		"The glowing lip is light caught circling the throat before it slips through or escapes.",
+		"Whatever is on the other side, nobody who flew in has reported back yet.",
+	],
+}
+
 const KINDS := {
 	# Filled in by describe(): lava or cryo, depending on the roll.
 	PlanetTerrain.Kind.VOLCANIC: {"class": "Volcanic world", "description": "", "facts": []},

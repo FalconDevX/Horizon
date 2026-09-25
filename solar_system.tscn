@@ -525,6 +525,7 @@ body_name = "Erebus"
 atmosphere = "None - event horizon"
 show_soi = true
 is_black_hole = true
+is_anomaly = true
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
 position = Vector2(74000, 0)
