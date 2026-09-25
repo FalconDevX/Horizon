@@ -8,6 +8,9 @@ extends RefCounted
 ## game restarts. The hold starts empty: tier-1 nodes are free, the rest are
 ## paid for with what the player collects.
 
+## Testing switch: start with every tech-tree node (so every module) unlocked.
+const UNLOCK_ALL := true
+
 static var inventory := Inventory.new()
 static var _unlocked: Dictionary = {}
 static var _initialized := false
@@ -18,7 +21,7 @@ static func ensure_initialized() -> void:
 		return
 	_initialized = true
 	for node: Dictionary in TechTree.NODES:
-		if int(node["tier"]) <= 1:
+		if UNLOCK_ALL or int(node["tier"]) <= 1:
 			_unlocked[node["id"]] = true
 
 
@@ -40,6 +43,8 @@ static func is_unlocked(node_id: StringName) -> bool:
 
 ## Modules no node covers are always available.
 static func is_module_unlocked(module_id: StringName) -> bool:
+	if UNLOCK_ALL:
+		return true
 	var node: Dictionary = TechTree.node_for_module(module_id)
 	return node.is_empty() or is_unlocked(node["id"])
 
