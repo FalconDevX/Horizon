@@ -3300,8 +3300,15 @@ func _on_enemy_selected(enemy_id: String) -> void:
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
 	_test_enemy = enemy
+	enemy.tree_exiting.connect(_on_test_enemy_exiting.bind(enemy))
 
 	enemy_menu_panel.visible = false
+
+
+func _on_test_enemy_exiting(enemy: Enemy) -> void:
+	if _test_enemy == enemy:
+		_test_enemy = null
+
 
 
 func _bind_ship_builder_to_ship() -> void:

@@ -1,0 +1,21 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_minelayer.png" id="2_tex"]
+
+[node name="EnemyMinelayer" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_tex")
+visual_length = 40.0
+move_speed = 120.0
+turn_speed = 2.0
+can_fire = false
+lay_mines = true
+mine_radius = 150.0
+mine_dps = 32.0
+mine_lifetime = 16.0
+mine_cooldown = 1.0
+collision_radius = 14.0
+muzzles = PackedVector2Array()
+engine_exits = PackedVector2Array(0.42, 0.95, 0.58, 0.95)
+engine_half_width = 2.4
