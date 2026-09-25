@@ -5,6 +5,7 @@ extends Node2D
 ## speeds are 4x. Distance constants below were scaled with it.
 const G: float = 192000.0
 const AUTOPILOT_OFF_SOUND := preload("res://sounds/autopilot_off.wav")
+const PlanetGuardsScript := preload("res://scripts/enemy/PlanetGuards.gd")
 
 enum AutopilotPhase {
 	OFF,
@@ -155,6 +156,10 @@ var camera_follow_body: Node2D = null
 ## across.
 const BODY_PICK_SCREEN_RADIUS := 14.0
 var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
+## Hostile craft orbiting planets (PlanetGuards); cleared on world travel.
+var _planet_guards: Array[Enemy] = []
+## True after a seed change until every surface has baked and guards respawn.
+var _planet_guards_pending: bool = false
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
 var trajectory_candidate_status := ""
@@ -663,6 +668,8 @@ func set_world_seed(value: int) -> void:
 		if i < mu_planets.size():
 			mu_planets[i] = G * float(planets[i].get("mass"))
 	_chart_known_bodies()
+	_clear_planet_guards()
+	_planet_guards_pending = true
 
 	print("World seed: %d" % world_seed)
 
@@ -912,7 +919,10 @@ func _ready() -> void:
 	loading_screen.status_text = "Generating planets"
 	loading_screen.target_progress = LoadingScreen.SCENE_SHARE
 	loading_screen.track_bodies(celestial_bodies)
-	loading_screen.finished.connect(func() -> void: loading_screen = null)
+	loading_screen.finished.connect(func() -> void:
+		loading_screen = null
+		_spawn_planet_guards()
+	)
 
 	var home: Node2D = planets[HOME_PLANET_INDEX]
 	var home_mass: float = home.get("mass")
@@ -1189,6 +1199,9 @@ func _process(delta: float) -> void:
 	RenderingServer.global_shader_parameter_set("planet_time", planet_visual_time)
 	if _clock_date_label != null:
 		_update_clock()
+	if _planet_guards_pending and loading_screen == null and _all_surfaces_ready():
+		_planet_guards_pending = false
+		_spawn_planet_guards()
 	update_screen_space_visuals()
 	update_soi_visuals()
 	update_autopilot_hover_selection()
@@ -1265,6 +1278,14 @@ func update_screen_space_visuals() -> void:
 	var ship_true_scale: bool = camera_zoom >= SHIP_TRUE_SCALE_ZOOM_THRESHOLD
 	ship.scale = Vector2.ONE if ship_true_scale else screen_scale
 	ship.true_scale = ship_true_scale
+
+	# Same screen-space marker treatment as the player ship, so hostiles stay
+	# readable when the camera is pulled back.
+	for child in get_children():
+		if child is Enemy:
+			var enemy := child as Enemy
+			enemy.scale = Vector2.ONE if ship_true_scale else screen_scale
+			enemy.true_scale = ship_true_scale
 
 
 func start_autopilot_selection() -> void:
@@ -3695,14 +3716,41 @@ func toggle_enemy_menu() -> void:
 		enemy_menu_panel.visible = true
 
 
+## Hostile craft in circular orbits around every non-anomaly planet except
+## the one the ship is at (home on first load, arrival world after a jump).
+## T3 deposit worlds get the elite roster; the rest get basic craft.
+func _spawn_planet_guards() -> void:
+	_clear_planet_guards()
+	_planet_guards = PlanetGuardsScript.spawn_system(
+		self, planets, G, _planet_nearest_ship()
+	)
+
+
+## The planet the player is currently beside - no guards spawn there.
+func _planet_nearest_ship() -> Node2D:
+	var best: Node2D = null
+	var best_d2: float = INF
+	for planet: Node2D in planets:
+		if planet.get("is_anomaly") or planet.get("is_black_hole"):
+			continue
+		var d2: float = ship.position.distance_squared_to(planet.position)
+		if d2 < best_d2:
+			best_d2 = d2
+			best = planet
+	return best
+
+
+func _clear_planet_guards() -> void:
+	for enemy: Enemy in _planet_guards:
+		if is_instance_valid(enemy):
+			enemy.queue_free()
+	_planet_guards.clear()
+
+
 ## Spawns the chosen sandbox enemy at the player ship's position and hands
 ## WASD/Space control to it (see simulation_step's _test_enemy guard).
 func _on_enemy_selected(enemy_id: String) -> void:
-	var entry: Dictionary = {}
-	for candidate: Dictionary in EnemyCatalog.all_enemies():
-		if str(candidate.get("id", "")) == enemy_id:
-			entry = candidate
-			break
+	var entry: Dictionary = EnemyCatalog.entry_for(enemy_id)
 	if entry.is_empty():
 		return
 
@@ -3710,7 +3758,7 @@ func _on_enemy_selected(enemy_id: String) -> void:
 		_test_enemy.queue_free()
 		_test_enemy = null
 
-	var scene: PackedScene = entry.get("scene")
+	var scene: PackedScene = entry.get("scene") as PackedScene
 	if scene == null:
 		return
 
