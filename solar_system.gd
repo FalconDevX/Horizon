@@ -95,6 +95,16 @@ var _builder_controller: ShipBuilderController
 ## Module tech tree window (T), created in _ready next to the planet catalog.
 var tech_tree_window: TechTreeWindow
 var galaxy_map_window: GalaxyMapWindow
+## HUD button that fires the hyperdrive (lit once a course is set and the ship
+## is past the last asteroid belt).
+var warp_button: WarpButton
+## The jump under way, or null. While it runs the sim and input are held.
+var hyperspace_jump: HyperspaceJump = null
+## Where the ship's run-up into hyperspace starts, and which way it goes.
+var _warp_run_start: Vector2 = Vector2.ZERO
+var _warp_run_dir: Vector2 = Vector2.RIGHT
+## How far (in screen pixels) the ship shoots ahead during the run-up.
+const WARP_RUN_PX := 2600.0
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -107,8 +117,9 @@ const HOME_PLANET_INDEX := 1
 ## they are.
 const CHART_RADII := 12.0
 ## Close enough to land on a planet: within this many of its radii of its
-## centre (or inside its SOI, if that is smaller).
-const LANDING_RANGE_RADII := 4.0
+## centre (or inside its SOI, if that is smaller). 1 = only while the ship is
+## over the planet's disc.
+const LANDING_RANGE_RADII := 1.0
 ## How much of a landed planet the view spans, top to bottom, in its radii,
 ## and the most the wheel may zoom out to while landed. Zooming in is only held
 ## by ZOOM_MAX, so the ship can be seen at true scale over the surface.
@@ -365,7 +376,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
 		return
-	if loading_screen != null or planet_info_panel.visible or inventory_screen.visible:
+	if loading_screen != null or hyperspace_jump != null or planet_info_panel.visible or inventory_screen.visible:
 		return
 	for menu: Control in [settings_menu, pause_menu, ship_builder_panel]:
 		if menu != null and menu.visible:
@@ -380,7 +391,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if loading_screen != null:
+	if loading_screen != null or hyperspace_jump != null:
 		return
 	# The cargo hold and the planet catalog sit over everything and keep the
 	# keyboard to themselves.
@@ -622,15 +633,22 @@ func set_world_seed(value: int) -> void:
 	# Other worlds (galaxy-map travel, or N): the ship lifts off first, and
 	# what it charted and found on these bodies no longer describes them. The
 	# resource types it knows stay known.
+	# The system left behind is saved (GalaxyMap.save_state), and one visited
+	# before gets back what was charted, found and collected there.
 	if landed_body != null:
 		take_off()
-	charted_bodies = {sun: true, planets[HOME_PLANET_INDEX]: true}
-	found_resources.clear()
+	if value != world_seed:
+		GalaxyMap.save_state(world_seed, _capture_system_state())
 	world_seed = value
 	GalaxyMap.visit(world_seed)
 	PlanetTerrain.clear_cache()
+	var saved: Dictionary = GalaxyMap.saved_state(world_seed)
+	_restore_system_state(saved)
+	_update_system_title()
 
 	for i in planets.size():
+		var collected: Dictionary = saved.get("collected", {}).get(i, {})
+		planets[i].set("collected_deposit_seeds", collected.duplicate())
 		planets[i].call("rebuild_surface")
 		# An anomaly re-rolls its size (and mass) with the world.
 		if i < mu_planets.size():
@@ -641,6 +659,177 @@ func set_world_seed(value: int) -> void:
 
 func reroll_world() -> void:
 	set_world_seed(randi())
+
+
+## What the player did in this system, by body index (celestial_bodies for
+## charts and finds, planets for collected deposits), so it can be put back
+## when the ship returns.
+func _capture_system_state() -> Dictionary:
+	var charted: Array[int] = []
+	for body: Node2D in charted_bodies:
+		charted.append(celestial_bodies.find(body))
+	var found: Dictionary = {}
+	for body: Node2D in found_resources:
+		found[celestial_bodies.find(body)] = (found_resources[body] as Dictionary).duplicate()
+	var collected: Dictionary = {}
+	for i in planets.size():
+		var seeds: Dictionary = planets[i].get("collected_deposit_seeds")
+		if not seeds.is_empty():
+			collected[i] = seeds.duplicate()
+	return {"charted": charted, "found": found, "collected": collected}
+
+
+## Charts and finds from a saved state; an empty one is a new system, where
+## only the sun and the home planet are known.
+func _restore_system_state(state: Dictionary) -> void:
+	charted_bodies = {sun: true, planets[HOME_PLANET_INDEX]: true}
+	found_resources.clear()
+	for index: int in state.get("charted", []):
+		if index >= 0 and index < celestial_bodies.size():
+			charted_bodies[celestial_bodies[index]] = true
+	var found: Dictionary = state.get("found", {})
+	for index: int in found:
+		if index >= 0 and index < celestial_bodies.size():
+			found_resources[celestial_bodies[index]] = (found[index] as Dictionary).duplicate()
+
+
+## The HUD panel's header names the system the ship is in.
+func _update_system_title() -> void:
+	var label: Label = $HUD/PanelContainer/VBoxContainer/TitleRow/TitleLabel
+	label.text = "%s SYSTEM" % GalaxyMap.system_name(world_seed).to_upper()
+
+
+## Galaxy map picked a course: say where to go to use it.
+func _on_course_set(system_seed: int) -> void:
+	music_toast.show_message(
+		"COURSE SET: %s. Fly past the outer belt and press WARP" % GalaxyMap.system_name(system_seed).to_upper()
+	)
+
+
+## How far from the sun the hyperdrive may fire: past the outer edge of the
+## last asteroid belt.
+func _warp_clearance() -> float:
+	var edge: float = 0.0
+	for belt: Dictionary in AsteroidBelts.BELTS:
+		edge = maxf(edge, float(belt["outer"]))
+	return edge
+
+
+func _update_warp_button() -> void:
+	var panel: Control = $HUD/PanelContainer
+	warp_button.position = Vector2(panel.position.x, panel.position.y + panel.size.y + 10.0)
+	warp_button.visible = hyperspace_jump == null
+	if not GalaxyMap.has_target():
+		warp_button.set_state(false, "WARP", "No course set. Open the map (M)")
+		return
+	var title: String = "WARP TO %s" % GalaxyMap.system_name(GalaxyMap.target_seed()).to_upper()
+	if landed_body != null:
+		warp_button.set_state(false, title, "Take off first")
+		return
+	var to_go: float = _warp_clearance() - ship.global_position.distance_to(sun.global_position)
+	if to_go > 0.0:
+		warp_button.set_state(false, title, "Clear the outer belt: %s to go" % _short_distance(to_go))
+		return
+	warp_button.set_state(true, title, "Hyperdrive ready")
+
+
+func _short_distance(value: float) -> String:
+	if value >= 1000000.0:
+		return "%.2fM" % (value / 1000000.0)
+	if value >= 1000.0:
+		return "%dk" % int(value / 1000.0)
+	return "%d" % int(value)
+
+
+## Fires the hyperdrive at the course set on the galaxy map: the ship runs
+## ahead along its nose while the stars stretch, the new system is built
+## behind the tunnel, and the ship drops out next to one of its planets.
+func start_hyperspace_jump() -> void:
+	if hyperspace_jump != null or not GalaxyMap.has_target() or landed_body != null:
+		return
+	if ship.global_position.distance_to(sun.global_position) < _warp_clearance():
+		return
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+	set_time_scale(1.0)
+	camera_follow_ship = true
+	camera_follow_body = null
+	_warp_run_start = ship.position
+	_warp_run_dir = Vector2.RIGHT.rotated(ship.rotation)
+
+	var target: int = GalaxyMap.target_seed()
+	hyperspace_jump = HyperspaceJump.new()
+	hyperspace_jump.destination_name = GalaxyMap.system_name(target)
+	hyperspace_jump.ready_check = _all_surfaces_ready
+	hyperspace_jump.midpoint.connect(_arrive_in_system.bind(target))
+	hyperspace_jump.finished.connect(func() -> void:
+		hyperspace_jump = null
+		music_toast.show_message("ARRIVED: %s" % GalaxyMap.system_name(world_seed).to_upper())
+	)
+	add_child(hyperspace_jump)
+
+
+## The run-up: the ship shoots ahead faster and faster (the sim is held, so
+## this only moves the node; the arrival places it properly).
+func _advance_warp_run_up() -> void:
+	var s: float = hyperspace_jump.spool_progress()
+	if s >= 1.0:
+		return
+	ship.position = _warp_run_start + _warp_run_dir * (WARP_RUN_PX * s * s * s / camera_zoom)
+	ship.reset_physics_interpolation()
+
+
+func _all_surfaces_ready() -> bool:
+	for body: Node2D in celestial_bodies:
+		if not body.call("is_surface_ready"):
+			return false
+	return true
+
+
+## Behind the tunnel: build system `system_seed`, spread its planets round
+## their orbits, and put the ship in a circular orbit round one of them.
+func _arrive_in_system(system_seed: int) -> void:
+	set_world_seed(system_seed)
+
+	var sun_mass: float = sun.get("mass")
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for i in planets.size():
+		var planet: Node2D = planets[i]
+		var distance: float = (planet.position - sun.position).length()
+		planet.position = sun.position + Vector2(distance, 0.0).rotated(rng.randf() * TAU)
+		planet.velocity = get_circular_orbit_velocity(planet.position, sun.position, sun_mass)
+		physics_planets[i].pull_from_node()
+		planet.call("snap_visual_position")
+		soi_radii_cache[i] = get_soi_radius(planet)
+
+	var candidates: Array[int] = []
+	for i in planets.size():
+		if not planets[i].get("is_anomaly") and not planets[i].get("is_black_hole"):
+			candidates.append(i)
+	var index: int = candidates[rng.randi_range(0, candidates.size() - 1)]
+	var planet: Node2D = planets[index]
+	var radius: float = planet.get("radius")
+	var orbit: float = clampf(radius * 5.0, radius * TAKE_OFF_MIN_RADII, maxf(soi_radii_cache[index] * 0.5, radius * TAKE_OFF_MIN_RADII))
+	var outward: Vector2 = Vector2.from_angle(rng.randf() * TAU)
+	var along: Vector2 = outward.orthogonal()
+	set_ship_state(
+		planet.position + outward * orbit,
+		(planet.velocity as Vector2) + along * sqrt(mu_planets[index] / orbit)
+	)
+	ship.rotation = along.angle()
+	ship.reset_physics_interpolation()
+	simulation_accumulator = 0.0
+
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera_zoom = clampf(get_viewport().get_visible_rect().size.y / (orbit * 5.0), ZOOM_MIN, ZOOM_MAX)
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera.position = ship.position
+	for i in planets.size():
+		update_orbit_line(planets[i], orbit_lines[i], i)
+	_restart_trajectory_prediction()
 
 
 func _ready() -> void:
@@ -759,10 +948,18 @@ func _ready() -> void:
 	tech_tree_window.name = "TechTreeWindow"
 	planet_info_panel.get_parent().add_child(tech_tree_window)
 	GalaxyMap.visit(world_seed)
+	_update_system_title()
 	galaxy_map_window = GalaxyMapWindow.new()
 	galaxy_map_window.name = "GalaxyMapWindow"
-	galaxy_map_window.travel_requested.connect(set_world_seed)
+	galaxy_map_window.course_set.connect(_on_course_set)
 	planet_info_panel.get_parent().add_child(galaxy_map_window)
+	warp_button = WarpButton.new()
+	warp_button.name = "WarpButton"
+	warp_button.size = Vector2(266.0, 44.0)
+	warp_button.warp_pressed.connect(start_hyperspace_jump)
+	$HUD.add_child(warp_button)
+	# Under every window and menu in the HUD, just above the left panel.
+	$HUD.move_child(warp_button, $HUD/PanelContainer.get_index() + 1)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -824,6 +1021,9 @@ func _process(delta: float) -> void:
 	update_fov_gameplay()
 	update_hud()
 	_update_landing_prompt()
+	_update_warp_button()
+	if hyperspace_jump != null:
+		_advance_warp_run_up()
 
 	if camera_follow_body != null:
 		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
@@ -3411,9 +3611,6 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 			if background_mask != null:
 				background_mask.color.a = clampf(1.0 - float(value), 0.0, 1.0)
 			_push_starfield_to_black_holes()
-		"ship_rotation_speed":
-			if ship != null:
-				ship.rotation_speed = float(value)
 		"camera_smoothing":
 			pass
 
@@ -3438,8 +3635,6 @@ func _apply_all_settings() -> void:
 	if background_mask != null:
 		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
 	_push_starfield_to_black_holes()
-	if ship != null:
-		ship.rotation_speed = settings_mgr.ship_rotation_speed
 
 
 func _on_time_scale_selected(value: float) -> void:
@@ -3769,7 +3964,7 @@ func _update_landing_prompt() -> void:
 	else:
 		landing_prompt.show_prompt(
 			"LAND ON %s" % String(landing_candidate.get("body_name")).to_upper(),
-			"Fly over its surface   ·   ENTER again to take off"
+			"You are over its surface"
 		)
 
 
@@ -3955,7 +4150,7 @@ func _chart_nearby_bodies() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if loading_screen != null:
+	if loading_screen != null or hyperspace_jump != null:
 		return
 	simulation_accumulator += delta * time_scale
 	sim_time += delta * time_scale

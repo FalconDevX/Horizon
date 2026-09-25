@@ -523,7 +523,7 @@ func _draw() -> void:
 			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _tab else HudPanelStyle.COLOR_TEXT_MUTED
 		)
 	draw_string(
-		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "VESPERIS SYSTEM",
+		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()

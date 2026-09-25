@@ -25,7 +25,7 @@ const MIN_SHIP_MASS := 1.0
 ## scale (solar_system.gd G) - speeds and distances are both 4x, so
 ## accelerations must be too.
 const MAIN_ENGINE_BOOST := 24.0
-## Turning speed relative to the Turn Rate setting.
+## Turning speed relative to rotation_speed.
 const TURN_RATE_SCALE := 1.2
 
 ## Holding Shift scales manual thrust and turning down to this, for fine
@@ -311,7 +311,7 @@ func toggle_attitude_hold(mode: AttitudeHold) -> void:
 	attitude_hold = AttitudeHold.NONE if attitude_hold == mode else mode
 
 
-## Radians per second the ship turns at, from the Turn Rate setting.
+## Radians per second the ship turns at.
 func get_turn_rate() -> float:
 	return rotation_speed * TURN_RATE_SCALE
 

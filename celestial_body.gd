@@ -255,8 +255,11 @@ var velocity: Vector2 = Vector2.ZERO
 var surface_rotation := Quaternion.IDENTITY
 
 ## True while the ship is landed here: the surface stops its own spin and only
-## moves as the ship flies over it.
-var surface_driven := false
+## moves as the ship flies over it, and the clouds are cleared out of the way.
+var surface_driven := false:
+	set(value):
+		surface_driven = value
+		_apply_landed_clouds()
 
 ## What everything is actually generated from: the world seed mixed with
 ## surface_seed. Set before any build.
@@ -295,6 +298,9 @@ var _rings_3d: MeshInstance3D = null
 var terrain_params: Dictionary = {}
 var terrain_data: Dictionary = {}
 var terrain_material: ShaderMaterial = null
+## The roll's cloud cover, kept so landing can clear the sky and take-off
+## bring it back.
+var _cloud_coverage := 0.0
 var _terrain_task: int = -1
 var _terrain_holder: Dictionary = {}
 var _terrain_key: String = ""
@@ -312,6 +318,10 @@ var _scene_spin_axis := Vector3.UP
 ## Resource deposits standing on the surface (ResourceDeposits.place), each
 ## with its node under `"node"`. Placed once the heightmap lands.
 var resource_deposits: Array = []
+## Seeds of deposits already collected in this world (seed -> true). Placement
+## skips them, so a system the player comes back to stays picked clean; the
+## game sets it before rebuild_surface() on a jump.
+var collected_deposit_seeds: Dictionary = {}
 ## Parent of the deposits' nodes, a child of the sphere so they turn with it.
 var _deposits_3d: Node3D = null
 var _deposit_ground: ResourceDeposits.Ground = null
@@ -616,6 +626,15 @@ func build_surface() -> void:
 	update_surface_scale()
 
 
+## No clouds while the ship is landed: the shell is hidden and the terrain
+## stops casting their shadows, so the ground stays clear to fly over.
+func _apply_landed_clouds() -> void:
+	if _clouds_3d != null:
+		_clouds_3d.visible = not surface_driven
+	if terrain_material != null:
+		terrain_material.set_shader_parameter("cloud_coverage", 0.0 if surface_driven else _cloud_coverage)
+
+
 ## The cloud deck: the same mesh as the planet, pushed out past its peaks by
 ## the shader, drawn see-through on top (planet_clouds.gdshader).
 func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
@@ -913,11 +932,13 @@ func build_terrain() -> void:
 		generation_seed, surface_spin_axis, p["clouds"]
 	)
 	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
+	_cloud_coverage = p["clouds"]
 	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
 	terrain_material.set_shader_parameter("cloud_speed", p["cloud_speed"])
 	terrain_material.set_shader_parameter("cyclones", cyclones)
 	if p["clouds"] > 0.0:
 		_build_clouds(p, cyclones)
+	_apply_landed_clouds()
 	if p["clouds"] > 0.0 or PlanetTerrain.is_gas(kind):
 		_build_atmosphere(p)
 	# Rings are the scene's to give (has_rings) or the roll's (a ringed moon).
@@ -1050,6 +1071,10 @@ func _place_deposits() -> void:
 	resource_deposits = ResourceDeposits.place(
 		terrain_kind as PlanetTerrain.Kind, _deposit_ground, generation_seed
 	)
+	if not collected_deposit_seeds.is_empty():
+		resource_deposits = resource_deposits.filter(
+			func(deposit: Dictionary) -> bool: return not collected_deposit_seeds.has(deposit["seed"])
+		)
 	if resource_deposits.is_empty():
 		return
 
@@ -1342,6 +1367,7 @@ func deposit_under_view(reach: float) -> int:
 func collect_deposit(index: int) -> Dictionary:
 	var deposit: Dictionary = resource_deposits[index]
 	resource_deposits.remove_at(index)
+	collected_deposit_seeds[deposit["seed"]] = true
 	var node: Node = deposit.get("node")
 	if node != null:
 		node.queue_free()
