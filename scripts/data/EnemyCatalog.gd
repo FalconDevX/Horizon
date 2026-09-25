@@ -1,6 +1,12 @@
 class_name EnemyCatalog
 extends RefCounted
-## Roster for the sandbox (E) enemy menu.
+## Roster for the sandbox (E) enemy menu, and which craft guard planets.
+
+## Ids that orbit ordinary worlds (no T3 deposits).
+const BASIC_IDS: Array[String] = ["basic", "tank", "sniper", "kamikaze"]
+## Ids that orbit worlds with at least one T3 deposit.
+const ELITE_IDS: Array[String] = ["cruiser", "mothership", "minelayer", "black_hole"]
+
 
 static func all_enemies() -> Array[Dictionary]:
 	return [
@@ -53,3 +59,14 @@ static func all_enemies() -> Array[Dictionary]:
 			"scene": preload("res://scenes/enemies/EnemyBlackHole.tscn"),
 		},
 	]
+
+
+static func entry_for(enemy_id: String) -> Dictionary:
+	for candidate: Dictionary in all_enemies():
+		if str(candidate.get("id", "")) == enemy_id:
+			return candidate
+	return {}
+
+
+static func scene_for(enemy_id: String) -> PackedScene:
+	return entry_for(enemy_id).get("scene") as PackedScene
