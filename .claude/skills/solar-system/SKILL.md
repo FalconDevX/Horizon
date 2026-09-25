@@ -158,7 +158,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   view space. It is the entire surface state: position plus heading. Advance it by
   composing rotations (`delta * rotation`), never by adding a tangent — a tangent step
   leaves the sphere and compounds. Currently `_process` auto-spins about `Vector3.UP`;
-  a landed ship will drive it later.
+  while landed (`surface_driven`) the ship drives it instead - see Landing.
 - **View-space axes are constants:** `Vector3.RIGHT` = forward, `Vector3.BACK` = turn.
   Turning leaves position untouched because the ship sits on the turn axis.
 - **Per-planet values** (`surface_seed`, `surface_blob_count`, `surface_color_count`) are
@@ -480,6 +480,35 @@ still shows the blob preview.
   `LoadingScreen.current` and waits on `is_surface_ready()` of every body. While it is
   up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
   A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
+
+## Landing
+
+`ENTER` lands on / takes off from a planet; `landing_prompt.gd` (a HUD Control
+added to `$HUD` in `_ready`) is the top-centre "ENTER - LAND ON X" / "TAKE OFF"
+plate, fed by `_update_landing_prompt()` every frame.
+
+- **Candidate**: `_find_landing_candidate()` - nearest planet within
+  `min(radius * LANDING_RANGE_RADII, SOI)`. ENTER is read in `_input` (not
+  `_unhandled_input`, a focused button would eat it) and ignored while the catalog,
+  settings, pause menu or builder is open.
+- **Landed** (`landed_body != null`): the ship is not integrated - `_pin_ship_to()`
+  holds it on the planet centre every sim step, so SOI, camera and HUD keep working.
+  `ship.get_manual_acceleration()` (W / RMB aim / A D, same as in space) feeds
+  `ground_velocity`, and `CelestialBody.roll_surface(ground_velocity * dt)` rolls
+  the planet the opposite way under the ship (rotation about `step x BACK`, angle
+  `|step| / draw radius`). `surface_driven` stops the auto-spin;
+  `point_under_view()` is the planet-space point under the ship.
+- **Locks while landed**: time warp forced and clamped to 1x (`set_time_scale`),
+  `$BehindWorld`, time-warp panel and Pe/Ap gauges hidden, zoom clamped to
+  `LANDED_VIEW_MAX_RADII` planet radii when zooming out (zooming in only by `ZOOM_MAX`, so the true-scale ship sprite shows past zoom 4), no pan / body picking / autopilot (F). HUD speed
+  shows ground speed, orbit row "Landed <name>".
+- **Take-off**: circular orbit round the planet, prograde in the direction the ship
+  came in, at the landing distance clamped to `[TAKE_OFF_MIN_RADII * R, 0.8 * SOI]`;
+  camera and overlays restored. Both land and take-off call
+  `_restart_trajectory_prediction()`, and no prediction runs while landed.
+- The predictor's ORBIT/ESCAPE test is made against the planet whose SOI the
+  prediction ends in (planet-relative velocity), not always the sun - against the sun,
+  low planet orbits read ESCAPE on every prograde half.
 
 ## Autopilot
 

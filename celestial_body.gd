@@ -217,8 +217,13 @@ var velocity: Vector2 = Vector2.ZERO
 
 ## Orientation of the surface, mapping planet space into view space. This is
 ## the whole surface state: a point on the sphere plus a heading, in one value.
-## Later this stops auto-spinning and gets driven by the landed ship instead.
+## It spins on its own, or - while the ship is landed (surface_driven) - is
+## rolled under the ship by roll_surface().
 var surface_rotation := Quaternion.IDENTITY
+
+## True while the ship is landed here: the surface stops its own spin and only
+## moves as the ship flies over it.
+var surface_driven := false
 
 ## What everything is actually generated from: the world seed mixed with
 ## surface_seed. Set before any build.
@@ -334,9 +339,10 @@ func _process(delta: float) -> void:
 	# Spins with game time: still on pause, faster under warp (capped, or a
 	# fast spinner strobes).
 	var spin_rate: float = minf(float(_world_setting(&"time_scale", 1.0)), MAX_SPIN_WARP)
-	surface_rotation = (
-		Quaternion(surface_spin_axis, get_spin_rate() * delta * spin_rate) * surface_rotation
-	).normalized()
+	if not surface_driven:
+		surface_rotation = (
+			Quaternion(surface_spin_axis, get_spin_rate() * delta * spin_rate) * surface_rotation
+		).normalized()
 
 	push_surface_rotation()
 
@@ -1174,6 +1180,27 @@ func sample_point_in_color(color_index: int, rng: RandomNumberGenerator) -> Vect
 		surface_warp_strength,
 		surface_warp_frequency
 	)
+
+
+## Rolls the surface under a ship at the middle of the disc that moved `step`
+## (screen-space world units): the ground slides the opposite way, as if the
+## ship flew over it. The planet turns about the axis in the view plane
+## square to the step, by the step over the radius.
+func roll_surface(step: Vector2) -> void:
+	# Screen y points down, view y up.
+	var along := Vector3(step.x, -step.y, 0.0)
+	var distance: float = along.length()
+	if distance < 1e-9:
+		return
+	var axis: Vector3 = (along / distance).cross(Vector3.BACK)
+	surface_rotation = (Quaternion(axis, distance / get_draw_radius()) * surface_rotation).normalized()
+	push_surface_rotation()
+
+
+## The planet-space direction straight under the middle of the disc - where a
+## landed ship is.
+func point_under_view() -> Vector3:
+	return surface_rotation.inverse() * Vector3.BACK
 
 
 ## Whether a surface direction is on the hemisphere facing the camera. Far-side

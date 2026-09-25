@@ -102,6 +102,17 @@ const HOME_PLANET_INDEX := 1
 ## within this many of its radii for bodies whose SOI is barely bigger than
 ## they are.
 const CHART_RADII := 12.0
+## Close enough to land on a planet: within this many of its radii of its
+## centre (or inside its SOI, if that is smaller).
+const LANDING_RANGE_RADII := 4.0
+## How much of a landed planet the view spans, top to bottom, in its radii,
+## and the most the wheel may zoom out to while landed. Zooming in is only held
+## by ZOOM_MAX, so the ship can be seen at true scale over the surface.
+const LANDED_VIEW_RADII := 1.1
+const LANDED_VIEW_MAX_RADII := 3.0
+## Taking off drops the ship into a circular orbit at least this many radii
+## out, and inside the SOI.
+const TAKE_OFF_MIN_RADII := 1.3
 
 var camera_zoom := 1.0
 var is_dragging := false
@@ -214,6 +225,19 @@ var charted_bodies: Dictionary = {}
 ## gathering will call mark_resource_found(). Scenery (tumbleweeds, geysers,
 ## dead stalks) is in plain sight, so it counts as found on any charted planet.
 var found_resources: Dictionary = {}
+
+## The planet the ship is landed on, or null out in space. While landed the
+## ship is pinned to the planet's centre - where the camera sits - and flies
+## over the surface by rolling the planet under it (CelestialBody.roll_surface).
+var landed_body: Node2D = null
+## The planet close enough to land on right now (ENTER), for the prompt.
+var landing_candidate: Node2D = null
+## The ship's speed over the ground while landed, world units per second.
+var ground_velocity := Vector2.ZERO
+## What landing changed, to put back on take-off: where the ship was relative
+## to the planet, which way it was going round, and the camera.
+var _landing_state: Dictionary = {}
+var landing_prompt: Control
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
 
@@ -319,6 +343,28 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 		physics_ship.pull_from_node()
 
 
+## ENTER lands and takes off. Caught here, ahead of the GUI, or a HUD button
+## that happens to hold focus would take the key for itself - but only when no
+## menu or panel is open, so those keep ENTER for their own use.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
+		return
+	if loading_screen != null or planet_info_panel.visible:
+		return
+	for menu: Control in [settings_menu, pause_menu, ship_builder_panel]:
+		if menu != null and menu.visible:
+			return
+	if landed_body != null:
+		take_off()
+	elif landing_candidate != null:
+		land_on(landing_candidate)
+	else:
+		return
+	get_viewport().set_input_as_handled()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if loading_screen != null:
 		return
@@ -406,7 +452,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if event is InputEventKey and event.keycode == KEY_F:
+	if event is InputEventKey and event.keycode == KEY_F and landed_body == null:
 		if event.pressed and not event.echo:
 			if autopilot_active:
 				disengage_autopilot()
@@ -476,7 +522,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				camera_zoom /= zoom_step
 
 		camera_zoom = clamp(camera_zoom, ZOOM_MIN, ZOOM_MAX)
+		if landed_body != null:
+			camera_zoom = maxf(camera_zoom, _landed_zoom(LANDED_VIEW_MAX_RADII))
 		camera.zoom = Vector2(camera_zoom, camera_zoom)
+
+		# Landed, the camera stays on the ship: no panning or picking bodies.
+		if landed_body != null:
+			return
 
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
 			is_dragging = event.pressed
@@ -609,6 +661,8 @@ func _ready() -> void:
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	_build_clock()
 	planet_info_panel.setup(self)
+	landing_prompt = preload("res://landing_prompt.gd").new()
+	$HUD.add_child(landing_prompt)
 	charted_bodies[sun] = true
 	charted_bodies[planets[HOME_PLANET_INDEX]] = true
 	target_orbit.visible = false
@@ -671,6 +725,7 @@ func _process(delta: float) -> void:
 	update_interplanetary_route_visual()
 	update_fov_gameplay()
 	update_hud()
+	_update_landing_prompt()
 
 	if camera_follow_body != null:
 		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
@@ -2246,6 +2301,8 @@ func update_hud() -> void:
 	var speed_body: Node2D = get_current_orbit_body()
 	var speed_body_velocity: Vector2 = Vector2.ZERO if speed_body == sun else speed_body.get("velocity")
 	var speed: float = (ship.velocity - speed_body_velocity).length()
+	if landed_body != null:
+		speed = ground_velocity.length()
 	var distance: float = ship.position.distance_to(sun.position)
 
 	speed_gauge.speed = speed
@@ -2287,7 +2344,10 @@ func update_hud() -> void:
 	var orbit_node: Node2D = get_current_orbit_body()
 	var orbit_body: String = get_orbiting_body()
 
-	if orbit_body == "None":
+	if landed_body != null:
+		orbit_label.text = hud_row("Landed", landed_body.get("body_name"))
+		orbit_label.add_theme_color_override("font_color", COLOR_GOOD)
+	elif orbit_body == "None":
 		orbit_label.text = hud_row("Orbit", "None")
 		orbit_label.add_theme_color_override("font_color", COLOR_DIM)
 	else:
@@ -2307,7 +2367,10 @@ func update_hud() -> void:
 			fov_bits.append("scanning…")
 		soi_label.text = hud_row("SOI", get_current_soi()) + "\n" + hud_row("Sensors", " | ".join(fov_bits))
 
-	if trajectory_status == "IMPACT":
+	if landed_body != null:
+		trajectory_label.text = hud_row("Trajectory", "Surface flight")
+		trajectory_label.add_theme_color_override("font_color", COLOR_MONO)
+	elif trajectory_status == "IMPACT":
 		trajectory_label.text = hud_row("Trajectory", "IMPACT - " + trajectory_target)
 		trajectory_label.add_theme_color_override("font_color", COLOR_MONO)
 	else:
@@ -2562,6 +2625,10 @@ func update_trajectory_prediction_async(delta: float) -> void:
 		trajectory_task_id = -1
 		apply_trajectory_result(trajectory_task_holder.get("result", {}))
 
+	# Nothing to predict with the ship pinned inside a planet; take_off()
+	# starts a fresh prediction.
+	if landed_body != null:
+		return
 	prediction_update_accumulator += delta
 	if prediction_update_accumulator < PREDICTION_UPDATE_INTERVAL:
 		return
@@ -2795,8 +2862,21 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 			steps_since_point = 0
 
 	if not collision_detected:
+		# Judged against whatever holds the ship where the prediction ends: a
+		# planet whose SOI it is still in, else the sun. Against the sun alone,
+		# a low orbit round a planet reads as an escape on every prograde half,
+		# because the planet's own orbital speed is added on.
+		var holder_pos: Vector2 = sun_pos
+		var holder_vel := Vector2.ZERO
+		var holder_mass: float = sun_mass
+		for i in range(count):
+			if ship_pos.distance_to(positions[i]) <= soi_radii[i]:
+				holder_pos = positions[i]
+				holder_vel = velocities[i]
+				holder_mass = masses[i]
+				break
 		predicted_status = (
-			"ESCAPE" if _is_escape_trajectory(ship_pos, ship_vel, sun_pos, sun_mass)
+			"ESCAPE" if _is_escape_trajectory(ship_pos, ship_vel - holder_vel, holder_pos, holder_mass)
 			else "ORBIT"
 		)
 
@@ -2928,16 +3008,16 @@ static func _segment_circle_collision(
 static func _is_escape_trajectory(
 	position: Vector2,
 	velocity: Vector2,
-	sun_pos: Vector2,
-	sun_mass: float
+	center: Vector2,
+	center_mass: float
 ) -> bool:
-	var distance: float = position.distance_to(sun_pos)
+	var distance: float = position.distance_to(center)
 
 	if distance < 1.0:
 		return false
 
-	var escape_velocity: float = sqrt(2.0 * G * sun_mass / distance)
-	var radial_direction: Vector2 = (position - sun_pos).normalized()
+	var escape_velocity: float = sqrt(2.0 * G * center_mass / distance)
+	var radial_direction: Vector2 = (position - center).normalized()
 	var radial_velocity: float = velocity.dot(radial_direction)
 
 	return (
@@ -3258,6 +3338,9 @@ func _on_time_scale_selected(value: float) -> void:
 
 
 func set_time_scale(value: float) -> void:
+	# No warp on a planet's surface - only real time or paused.
+	if landed_body != null:
+		value = minf(value, 1.0)
 	if value > 0.0:
 		previous_time_scale = value
 	time_scale = value
@@ -3532,6 +3615,143 @@ func update_soi_visuals() -> void:
 		planet.soi_radius = get_soi_radius(planet)
 
 
+## The planet close enough to land on, nearest first, or null.
+func _find_landing_candidate() -> Node2D:
+	if autopilot_selecting or _test_enemy != null:
+		return null
+	var best: Node2D = null
+	var best_distance: float = INF
+	for i in range(planets.size()):
+		var planet: Node2D = planets[i]
+		var reach: float = float(planet.get("radius")) * LANDING_RANGE_RADII
+		if i < soi_radii_cache.size():
+			reach = minf(reach, soi_radii_cache[i])
+		var distance: float = ship.global_position.distance_to(planet.global_position)
+		if distance < reach and distance < best_distance:
+			best = planet
+			best_distance = distance
+	return best
+
+
+func _update_landing_prompt() -> void:
+	if landed_body != null:
+		landing_prompt.show_prompt(
+			"TAKE OFF", "Surface of %s   ·   W thrust   ·   RMB / A D steer" % landed_body.get("body_name")
+		)
+		return
+	landing_candidate = _find_landing_candidate()
+	if landing_candidate == null:
+		landing_prompt.hide_prompt()
+	else:
+		landing_prompt.show_prompt(
+			"LAND ON %s" % String(landing_candidate.get("body_name")).to_upper(),
+			"Fly over its surface   ·   ENTER again to take off"
+		)
+
+
+## Camera zoom that shows `view_radii` of the landed planet's radii, top to
+## bottom.
+func _landed_zoom(view_radii: float) -> float:
+	var radius: float = landed_body.get("radius")
+	return get_viewport().get_visible_rect().size.y / (radius * view_radii)
+
+
+## Lands on `body`: the ship leaves its orbit and flies over the surface, the
+## camera close in over it, time at 1x and the space overlays hidden.
+func land_on(body: Node2D) -> void:
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+
+	var body_xy: PackedFloat64Array = get_precise_xy(body)
+	var offset := Vector2(physics_ship.x - body_xy[0], physics_ship.y - body_xy[1])
+	var relative_velocity: Vector2 = ship.velocity - (body.get("velocity") as Vector2)
+	_landing_state = {
+		"offset": offset,
+		"prograde": 1.0 if offset.cross(relative_velocity) >= 0.0 else -1.0,
+		"zoom": camera_zoom,
+		"follow_ship": camera_follow_ship,
+		"follow_body": camera_follow_body,
+	}
+
+	landed_body = body
+	ground_velocity = Vector2.ZERO
+	set_time_scale(1.0)
+	body.set("surface_driven", true)
+	_pin_ship_to(body)
+
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera_zoom = _landed_zoom(LANDED_VIEW_RADII)
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera.position = ship.position
+	_set_space_overlays_visible(false)
+	_restart_trajectory_prediction()
+
+
+## Takes off from the landed planet into a circular orbit round it, where the
+## ship came down from (at least TAKE_OFF_MIN_RADII out, inside the SOI).
+func take_off() -> void:
+	var body: Node2D = landed_body
+	var index: int = planets.find(body)
+	var offset: Vector2 = _landing_state["offset"]
+	var radius: float = body.get("radius")
+	var distance: float = clampf(offset.length(), radius * TAKE_OFF_MIN_RADII, maxf(soi_radii_cache[index] * 0.8, radius * TAKE_OFF_MIN_RADII))
+	var outward: Vector2 = offset.normalized() if offset.length() > 1.0 else Vector2.RIGHT
+	var speed: float = sqrt(mu_planets[index] / distance)
+	var along: Vector2 = outward.rotated(PI * 0.5) * float(_landing_state["prograde"])
+
+	body.set("surface_driven", false)
+	landed_body = null
+	ground_velocity = Vector2.ZERO
+	var body_xy: PackedFloat64Array = get_precise_xy(body)
+	set_ship_state(
+		Vector2(body_xy[0], body_xy[1]) + outward * distance,
+		(body.get("velocity") as Vector2) + along * speed
+	)
+
+	camera_zoom = _landing_state["zoom"]
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera_follow_ship = _landing_state["follow_ship"]
+	camera_follow_body = _landing_state["follow_body"]
+	_set_space_overlays_visible(true)
+	_restart_trajectory_prediction()
+
+
+## Forgets the old prediction and its status and predicts again on the next
+## frame - after landing or taking off the ship is somewhere else entirely.
+func _restart_trajectory_prediction() -> void:
+	if trajectory_task_id != -1:
+		WorkerThreadPool.wait_for_task_completion(trajectory_task_id)
+		trajectory_task_id = -1
+	trajectory_status = "ORBIT"
+	trajectory_target = ""
+	trajectory_candidate_status = ""
+	trajectory_candidate_target = ""
+	trajectory_candidate_frames = 0
+	prediction_update_accumulator = PREDICTION_UPDATE_INTERVAL
+
+
+## Holds the ship on the planet's centre, moving with it.
+func _pin_ship_to(body: Node2D) -> void:
+	var body_xy: PackedFloat64Array = get_precise_xy(body)
+	var body_velocity: Vector2 = body.get("velocity")
+	physics_ship.x = body_xy[0]
+	physics_ship.y = body_xy[1]
+	physics_ship.vx = body_velocity.x
+	physics_ship.vy = body_velocity.y
+	physics_ship.push_to_node()
+
+
+## Orbit lines, trajectory, markers and the time warp controls - none of
+## which mean anything on a planet's surface.
+func _set_space_overlays_visible(shown: bool) -> void:
+	($BehindWorld as CanvasLayer).visible = shown
+	time_warp_panel.visible = shown
+	pe_gauge.visible = shown
+	ap_gauge.visible = shown
+
+
 ## Whether the ship has surveyed `body` (see charted_bodies).
 func is_charted(body: Node2D) -> bool:
 	return charted_bodies.has(body)
@@ -3637,6 +3857,9 @@ func simulation_step(dt: float) -> void:
 		var hold_body: Node2D = get_current_orbit_body()
 		var hold_body_velocity: Vector2 = Vector2.ZERO if hold_body == sun else hold_body.get("velocity")
 		ship.hold_reference_velocity = ship.velocity - hold_body_velocity
+		if landed_body != null:
+			# Flight assist and the holds work against the ground.
+			ship.hold_reference_velocity = ground_velocity
 
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			ship.update_rotation(dt)
@@ -3652,29 +3875,42 @@ func simulation_step(dt: float) -> void:
 
 	var count: int = physics_planets.size()
 
+	var landed: bool = landed_body != null
+
 	var a0 := PackedVector2Array()
 	a0.resize(count)
 	for i in range(count):
 		a0[i] = get_planet_acceleration_precise(physics_planets[i])
-	var ship_a0: Vector2 = get_ship_acceleration_precise()
+	var ship_a0: Vector2 = Vector2.ZERO if landed else get_ship_acceleration_precise()
 
 	for i in range(count):
 		physics_planets[i].advance_position(a0[i], dt)
-	physics_ship.advance_position(ship_a0, dt)
+	if not landed:
+		physics_ship.advance_position(ship_a0, dt)
 
 	var a1 := PackedVector2Array()
 	a1.resize(count)
 	for i in range(count):
 		a1[i] = get_planet_acceleration_precise(physics_planets[i])
-	var ship_a1: Vector2 = get_ship_acceleration_precise()
+	var ship_a1: Vector2 = Vector2.ZERO if landed else get_ship_acceleration_precise()
 
 	for i in range(count):
 		physics_planets[i].advance_velocity(a0[i], a1[i], dt)
-	physics_ship.advance_velocity(ship_a0, ship_a1, dt)
+	if not landed:
+		physics_ship.advance_velocity(ship_a0, ship_a1, dt)
 
 	for i in range(count):
 		physics_planets[i].push_to_node()
-	physics_ship.push_to_node()
+
+	if landed:
+		# Over the ground: the engines push the ship across the surface, and the
+		# surface rolls the other way under it, while the ship itself rides
+		# the planet's centre round the sun.
+		ground_velocity += ship.get_manual_acceleration() * dt
+		landed_body.roll_surface(ground_velocity * dt)
+		_pin_ship_to(landed_body)
+	else:
+		physics_ship.push_to_node()
 
 
 func get_gravity_precise(body: PhysicsBody, source_x: float, source_y: float, mu: float) -> Vector2:
