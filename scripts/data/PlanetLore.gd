@@ -249,6 +249,24 @@ static func variant_name(kind: int, name: String) -> String:
 	return VARIANT_LABELS.get(kind, {}).get(name, name.capitalize())
 
 
+## Every variant `kind` can roll, in the order the catalog lists them; [""]
+## for kinds that have none.
+static func variants_of(kind: int) -> Array:
+	return VARIANT_LABELS[kind].keys() if VARIANT_LABELS.has(kind) else [""]
+
+
+## The traits (flags) `kind` can roll beside its variant.
+static func traits_of(kind: int) -> Array:
+	return FLAG_NOTES.get(kind, {}).keys()
+
+
+## One line on a variant or trait of `kind`, for its journal card.
+static func variant_note(kind: int, name: String) -> String:
+	if FLAG_LABELS.has(name):
+		return FLAG_NOTES.get(kind, {}).get(name, "")
+	return VARIANT_NOTES.get(kind, {}).get(name, "The world as it most often rolls.")
+
+
 ## What this world rolled for the body: its variant and any flags, e.g.
 ## "Frozen · Julia sets". Empty for kinds without variants.
 static func variant_label(kind: int, params: Dictionary) -> String:

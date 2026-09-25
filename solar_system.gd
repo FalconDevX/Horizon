@@ -219,19 +219,13 @@ var physics_planets: Array[PhysicsBody] = []
 var physics_ship: PhysicsBody
 var soi_radii_cache: PackedFloat64Array = []
 
-## Bodies the ship has surveyed by flying near them; the catalog (I) shows
-## only these in full - the rest are dark and redacted. The sun and the home
-## planet are known from the start.
+## Bodies the ship has surveyed in this system by flying near them; the log
+## (J) shows only these in full - the rest are dark and redacted. The sun and
+## the home planet are known from the start. Charting a body records the
+## variant it is in the Journal, which - unlike this - outlives travel, along
+## with every find (mark_resource_found). Scenery (tumbleweeds, geysers, dead
+## stalks) is in plain sight, so it counts as found on any charted planet.
 var charted_bodies: Dictionary = {}
-## What the player has found where: body -> {resource type: true}. The
-## catalog names a resource only on the planets it was found on, and knows it
-## at all only once it has been found somewhere. collect_under_ship() adds to
-## it through mark_resource_found(). Scenery (tumbleweeds, geysers,
-## dead stalks) is in plain sight, so it counts as found on any charted planet.
-var found_resources: Dictionary = {}
-## Resource types the player has found anywhere, in any system - unlike
-## found_resources this survives travel (set_world_seed).
-var known_resources: Dictionary = {}
 
 ## The planet the ship is landed on, or null out in space. While landed the
 ## ship is pinned to the planet's centre - where the camera sits - and flies
@@ -620,12 +614,11 @@ func _unhandled_input(event: InputEvent) -> void:
 ## bakes are dropped first - nothing will ask for them again.
 func set_world_seed(value: int) -> void:
 	# Other worlds (galaxy-map travel, or N): the ship lifts off first, and
-	# what it charted and found on these bodies no longer describes them. The
-	# resource types it knows stay known.
+	# what it charted here no longer describes these bodies - they are charted
+	# again. The Journal keeps every variant seen and everything found.
 	if landed_body != null:
 		take_off()
-	charted_bodies = {sun: true, planets[HOME_PLANET_INDEX]: true}
-	found_resources.clear()
+	charted_bodies.clear()
 	world_seed = value
 	GalaxyMap.visit(world_seed)
 	PlanetTerrain.clear_cache()
@@ -635,6 +628,7 @@ func set_world_seed(value: int) -> void:
 		# An anomaly re-rolls its size (and mass) with the world.
 		if i < mu_planets.size():
 			mu_planets[i] = G * float(planets[i].get("mass"))
+	_chart_known_bodies()
 
 	print("World seed: %d" % world_seed)
 
@@ -753,8 +747,7 @@ func _ready() -> void:
 	$HUD.add_child(landing_prompt)
 	collect_prompt = preload("res://landing_prompt.gd").new("E", 1)
 	$HUD.add_child(collect_prompt)
-	charted_bodies[sun] = true
-	charted_bodies[planets[HOME_PLANET_INDEX]] = true
+	_chart_known_bodies()
 	tech_tree_window = TechTreeWindow.new()
 	tech_tree_window.name = "TechTreeWindow"
 	planet_info_panel.get_parent().add_child(tech_tree_window)
@@ -3903,16 +3896,17 @@ func is_charted(body: Node2D) -> bool:
 	return charted_bodies.has(body)
 
 
-## Whether the player has found a resource of this type on `body`.
+## Whether the player has found a resource of this type on `body` as it is
+## now - on this planet, in the variant it has rolled, in any system.
 func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
 	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
 		return charted_bodies.has(body) and _has_deposit(body, type_name)
-	return found_resources.get(body, {}).has(type_name)
+	return Journal.is_found(get_body_name(body), _variant_of(body), type_name)
 
 
 ## Whether the player has found a resource of this type anywhere.
 func is_resource_known(type_name: StringName) -> bool:
-	return known_resources.has(type_name) or not bodies_where_found(type_name).is_empty()
+	return Journal.is_known(type_name) or not bodies_where_found(type_name).is_empty()
 
 
 ## The bodies the player has found this type on, in catalog order.
@@ -3927,10 +3921,33 @@ func bodies_where_found(type_name: StringName) -> Array[Node2D]:
 ## Records a find: this type, on this body - for gathering to call. Unlocks
 ## the resource in the catalog, and on that planet's page.
 func mark_resource_found(body: Node2D, type_name: StringName) -> void:
-	if not found_resources.has(body):
-		found_resources[body] = {}
-	found_resources[body][type_name] = true
-	known_resources[type_name] = true
+	Journal.record_find(get_body_name(body), body.get("terrain_params"), type_name)
+
+
+func _variant_of(body: Node2D) -> String:
+	return (body.get("terrain_params") as Dictionary).get("variant", "")
+
+
+## Charts `body` in this system and records the world it is in the Journal.
+## True if that variant (or a trait of it) was new to the Journal.
+func _chart(body: Node2D) -> bool:
+	charted_bodies[body] = true
+	if body == sun or body.get("is_anomaly"):
+		return false
+	var body_name: String = get_body_name(body)
+	var params: Dictionary = body.get("terrain_params")
+	var new: bool = not Journal.has_seen(body_name, params.get("variant", ""))
+	for flag: String in PlanetLore.traits_of(body.get("terrain_kind")):
+		if params.get(flag, false) == true and not Journal.has_seen_trait(body_name, flag):
+			new = true
+	Journal.record_world(body_name, params)
+	return new
+
+
+## The sun and the home planet: known from the start in every system.
+func _chart_known_bodies() -> void:
+	_chart(sun)
+	_chart(planets[HOME_PLANET_INDEX])
 
 
 func _has_deposit(body: Node2D, type_name: StringName) -> bool:
@@ -3948,8 +3965,13 @@ func _chart_nearby_bodies() -> void:
 			continue
 		var reach: float = maxf(soi_radii_cache[i], float(planet.get("radius")) * CHART_RADII)
 		if ship.global_position.distance_to(planet.global_position) < reach:
-			charted_bodies[planet] = true
-			music_toast.show_message("SURVEYED: %s   ·   J to view" % String(planet.get("body_name")).to_upper())
+			var label: String = String(planet.get("body_name")).to_upper()
+			var new_variant: bool = _chart(planet)
+			var variant: String = PlanetLore.variant_label(planet.get("terrain_kind"), planet.get("terrain_params"))
+			if new_variant and variant != "":
+				music_toast.show_message("NEW VARIANT: %s - %s   ·   J to view" % [label, variant.to_upper()])
+			else:
+				music_toast.show_message("SURVEYED: %s   ·   J to view" % label)
 			if planet_info_panel.visible:
 				planet_info_panel.queue_redraw()
 
