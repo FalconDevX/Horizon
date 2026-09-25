@@ -98,6 +98,10 @@ var orbit_line_radii: Array[float] = []
 var celestial_bodies: Array[Node2D] = []
 
 const HOME_PLANET_INDEX := 1
+## A body is charted once the ship is inside its sphere of influence, or
+## within this many of its radii for bodies whose SOI is barely bigger than
+## they are.
+const CHART_RADII := 12.0
 
 var camera_zoom := 1.0
 var is_dragging := false
@@ -199,6 +203,17 @@ var loading_screen: LoadingScreen
 var physics_planets: Array[PhysicsBody] = []
 var physics_ship: PhysicsBody
 var soi_radii_cache: PackedFloat64Array = []
+
+## Bodies the ship has surveyed by flying near them; the catalog (I) shows
+## only these in full - the rest are dark and redacted. The sun and the home
+## planet are known from the start.
+var charted_bodies: Dictionary = {}
+## What the player has found where: body -> {resource type: true}. The
+## catalog names a resource only on the planets it was found on, and knows it
+## at all only once it has been found somewhere. Nothing adds to it yet -
+## gathering will call mark_resource_found(). Scenery (tumbleweeds, geysers,
+## dead stalks) is in plain sight, so it counts as found on any charted planet.
+var found_resources: Dictionary = {}
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
 
@@ -594,6 +609,8 @@ func _ready() -> void:
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	_build_clock()
 	planet_info_panel.setup(self)
+	charted_bodies[sun] = true
+	charted_bodies[planets[HOME_PLANET_INDEX]] = true
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -3515,6 +3532,61 @@ func update_soi_visuals() -> void:
 		planet.soi_radius = get_soi_radius(planet)
 
 
+## Whether the ship has surveyed `body` (see charted_bodies).
+func is_charted(body: Node2D) -> bool:
+	return charted_bodies.has(body)
+
+
+## Whether the player has found a resource of this type on `body`.
+func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
+	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
+		return charted_bodies.has(body) and _has_deposit(body, type_name)
+	return found_resources.get(body, {}).has(type_name)
+
+
+## Whether the player has found a resource of this type anywhere.
+func is_resource_known(type_name: StringName) -> bool:
+	return not bodies_where_found(type_name).is_empty()
+
+
+## The bodies the player has found this type on, in catalog order.
+func bodies_where_found(type_name: StringName) -> Array[Node2D]:
+	var found: Array[Node2D] = []
+	for body: Node2D in [sun] + planets:
+		if is_resource_found_on(body, type_name):
+			found.append(body)
+	return found
+
+
+## Records a find: this type, on this body - for gathering to call. Unlocks
+## the resource in the catalog, and on that planet's page.
+func mark_resource_found(body: Node2D, type_name: StringName) -> void:
+	if not found_resources.has(body):
+		found_resources[body] = {}
+	found_resources[body][type_name] = true
+
+
+func _has_deposit(body: Node2D, type_name: StringName) -> bool:
+	for deposit: Dictionary in body.get("resource_deposits"):
+		if deposit["type"] == type_name:
+			return true
+	return false
+
+
+## Charts every body the ship has come close to, with a notice for each.
+func _chart_nearby_bodies() -> void:
+	for i in range(planets.size()):
+		var planet: Node2D = planets[i]
+		if charted_bodies.has(planet):
+			continue
+		var reach: float = maxf(soi_radii_cache[i], float(planet.get("radius")) * CHART_RADII)
+		if ship.global_position.distance_to(planet.global_position) < reach:
+			charted_bodies[planet] = true
+			music_toast.show_message("SURVEYED: %s   ·   I to view" % String(planet.get("body_name")).to_upper())
+			if planet_info_panel.visible:
+				planet_info_panel.queue_redraw()
+
+
 func _physics_process(delta: float) -> void:
 	if loading_screen != null:
 		return
@@ -3527,6 +3599,7 @@ func _physics_process(delta: float) -> void:
 		soi_radii_cache.resize(planets.size())
 	for i in range(planets.size()):
 		soi_radii_cache[i] = get_soi_radius(planets[i])
+	_chart_nearby_bodies()
 
 	while simulation_accumulator >= SIM_DT and steps < MAX_SIM_STEPS_PER_FRAME:
 		simulation_step(SIM_DT)

@@ -415,6 +415,20 @@ still shows the blob preview.
   and `spawn_notes()` - where, which variants, how many. List rows shrink to fit.
   A new variant needs a label in `PlanetLore.VARIANT_LABELS`; a new spawn key needs
   words in `spawn_notes()`.
+- **What the player knows** gates the catalog. `solar_system.gd` keeps
+  `charted_bodies` (the sun and home planet from the start; `_chart_nearby_bodies()`
+  adds a planet once the ship is within max(SOI, `CHART_RADII` radii) of it, with a
+  "SURVEYED" notice through `music_toast.show_message()`) and `found_resources`
+  (body -> {type: true}; empty - gathering is to call `mark_resource_found(body,
+  type)`). Scenery types count as found on any charted planet they stand on.
+  `is_resource_found_on()`, `is_resource_known()` (found anywhere) and
+  `bodies_where_found()` drive the panel: unknown planets and resources are dark rows,
+  black silhouettes and redaction bars (`_draw_redacted()`); a planet page names only
+  resources found on it, the rest summed as "Unidentified signals"; a resource page
+  ("OCCURS ON n planets") lists every planet holding it now - in full (count, that
+  kind's spawn notes) where it was found, as redaction bars everywhere else, known
+  resource or not.
+  Nothing is saved - a new session starts uncharted.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
