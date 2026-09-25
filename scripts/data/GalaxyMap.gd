@@ -128,6 +128,39 @@ static func is_current(system_seed: int) -> bool:
 	return _has_current and system_seed == _current_seed
 
 
+## Back to a galaxy nobody has travelled (a new game).
+static func reset() -> void:
+	_visits.clear()
+	_current_seed = 0
+	_has_current = false
+	_target_seed = 0
+	_has_target = false
+	_saved.clear()
+
+
+## Everything the player did in the galaxy, for SaveGame.
+static func to_dict() -> Dictionary:
+	return {
+		"visits": _visits.duplicate(true),
+		"current": _current_seed,
+		"has_current": _has_current,
+		"target": _target_seed,
+		"has_target": _has_target,
+		"saved": _saved.duplicate(true),
+	}
+
+
+static func from_dict(data: Dictionary) -> void:
+	_visits.clear()
+	for visit_entry: Dictionary in data.get("visits", []):
+		_visits.append(visit_entry)
+	_current_seed = int(data.get("current", 0))
+	_has_current = bool(data.get("has_current", false))
+	_target_seed = int(data.get("target", 0))
+	_has_target = bool(data.get("has_target", false))
+	_saved = (data.get("saved", {}) as Dictionary).duplicate(true)
+
+
 static func is_visited(system_seed: int) -> bool:
 	return index_of(system_seed) >= 0
 

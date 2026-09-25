@@ -727,7 +727,7 @@ func _update_warp_button() -> void:
 		warp_button.set_state(false, title, "Take off first")
 		return
 	var to_go: float = _warp_clearance() - ship.global_position.distance_to(sun.global_position)
-	if to_go > 0.0:
+	if to_go > 0.0 and not PlayerProgress.god_mode:
 		warp_button.set_state(false, title, "Clear the outer belt: %s to go" % _short_distance(to_go))
 		return
 	warp_button.set_state(true, title, "Hyperdrive ready")
@@ -747,7 +747,7 @@ func _short_distance(value: float) -> String:
 func start_hyperspace_jump() -> void:
 	if hyperspace_jump != null or not GalaxyMap.has_target() or landed_body != null:
 		return
-	if ship.global_position.distance_to(sun.global_position) < _warp_clearance():
+	if ship.global_position.distance_to(sun.global_position) < _warp_clearance() and not PlayerProgress.god_mode:
 		return
 	if autopilot_active:
 		disengage_autopilot(false)
@@ -1000,6 +1000,165 @@ func _ready() -> void:
 	)
 
 	_apply_all_settings()
+	pause_menu.save_requested.connect(save_game)
+	_apply_pending_save()
+
+
+## A loaded game names its system before the planets generate: they read
+## world_seed in their own _ready, which runs before this scene's.
+func _enter_tree() -> void:
+	if SaveGame.pending.has("world_seed"):
+		world_seed = int(SaveGame.pending["world_seed"])
+
+
+## Everything about the flight a saved game needs (SaveGame adds the galaxy
+## and the player's progress). Positions come from the float64 physics state,
+## not the float32 nodes, so far-out planets land back exactly.
+func build_save_data() -> Dictionary:
+	var planet_states: Array = []
+	for body: PhysicsBody in physics_planets:
+		planet_states.append([body.x, body.y, body.vx, body.vy])
+	var hull_modules: Array = []
+	if _builder_controller != null and _builder_controller.get_hull() != null:
+		for placed: PlacedModule in _builder_controller.get_hull().get_all_modules():
+			hull_modules.append({
+				"id": placed.data.id, "origin": placed.origin,
+				"rotation": placed.rotation, "health": placed.current_health,
+			})
+	var day: int = int(sim_time * CLOCK_HOURS_PER_SIM_SECOND / 24.0) + 1
+	var system: String = GalaxyMap.system_name(world_seed)
+	return {
+		"meta": {
+			"name": "%s  Day %d" % [system, day],
+			"system": system,
+			"day": day,
+			"saved_unix": int(Time.get_unix_time_from_system()),
+		},
+		"world_seed": world_seed,
+		"sim_time": sim_time,
+		"total_sim_time": total_sim_time,
+		"planet_visual_time": planet_visual_time,
+		"planets": planet_states,
+		"ship": [physics_ship.x, physics_ship.y, physics_ship.vx, physics_ship.vy, ship.rotation],
+		"landed": planets.find(landed_body) if landed_body != null else -1,
+		"landing_offset": _landing_state.get("offset", Vector2.ZERO) if landed_body != null else Vector2.ZERO,
+		"camera_zoom": camera_zoom,
+		"system_state": _capture_system_state(),
+		"known_resources": known_resources.keys(),
+		"hull": hull_modules,
+	}
+
+
+## Saves into this session's slot (pause menu), with a notice.
+func save_game() -> void:
+	if hyperspace_jump != null or loading_screen != null:
+		music_toast.show_message("CAN'T SAVE DURING A JUMP")
+		return
+	if SaveGame.save_session(build_save_data()).is_empty():
+		music_toast.show_message("SAVE FAILED")
+	else:
+		music_toast.show_message("GAME SAVED")
+
+
+## Puts a loaded game back (SaveGame.pending), once the scene is built. The
+## world seed was already applied in _enter_tree.
+func _apply_pending_save() -> void:
+	var data: Dictionary = SaveGame.pending
+	if data.is_empty():
+		return
+	SaveGame.pending = {}
+
+	sim_time = float(data.get("sim_time", 0.0))
+	total_sim_time = float(data.get("total_sim_time", 0.0))
+	planet_visual_time = float(data.get("planet_visual_time", 0.0))
+
+	var planet_states: Array = data.get("planets", [])
+	for i in mini(planet_states.size(), physics_planets.size()):
+		var state: Array = planet_states[i]
+		var body: PhysicsBody = physics_planets[i]
+		body.x = state[0]
+		body.y = state[1]
+		body.vx = state[2]
+		body.vy = state[3]
+		body.push_to_node()
+		planets[i].call("snap_visual_position")
+	soi_radii_cache.resize(planets.size())
+	for i in planets.size():
+		soi_radii_cache[i] = get_soi_radius(planets[i])
+		update_orbit_line(planets[i], orbit_lines[i], i)
+
+	var ship_state: Array = data.get("ship", [])
+	if ship_state.size() >= 5:
+		physics_ship.x = ship_state[0]
+		physics_ship.y = ship_state[1]
+		physics_ship.vx = ship_state[2]
+		physics_ship.vy = ship_state[3]
+		physics_ship.push_to_node()
+		ship.rotation = ship_state[4]
+		ship.reset_physics_interpolation()
+
+	# Charts, finds and collected deposits here; the planets may already have
+	# placed deposits from a cached bake, so drop the collected ones now too.
+	var state: Dictionary = data.get("system_state", {})
+	_restore_system_state(state)
+	for i in planets.size():
+		var collected: Dictionary = state.get("collected", {}).get(i, {})
+		planets[i].set("collected_deposit_seeds", collected.duplicate())
+		planets[i].call("drop_collected_deposits")
+	for type_name: StringName in data.get("known_resources", []):
+		known_resources[type_name] = true
+
+	_restore_hull(data.get("hull", []))
+
+	camera_zoom = clampf(float(data.get("camera_zoom", camera_zoom)), ZOOM_MIN, ZOOM_MAX)
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera.position = ship.position
+
+	var landed_index: int = int(data.get("landed", -1))
+	if landed_index >= 0 and landed_index < planets.size():
+		# land_on() reads where the ship came down from, relative to the planet.
+		var planet: Node2D = planets[landed_index]
+		var body_xy: PackedFloat64Array = get_precise_xy(planet)
+		var offset: Vector2 = data.get("landing_offset", Vector2.ZERO)
+		set_ship_state(Vector2(body_xy[0], body_xy[1]) + offset, planet.get("velocity"))
+		land_on(planet)
+	_restart_trajectory_prediction()
+	_update_system_title()
+
+
+## Rebuilds the ship's modules in the builder. Placement rules depend on what
+## is already there (engines need their hull), so modules that don't fit yet
+## are retried until a pass places nothing more.
+func _restore_hull(saved: Array) -> void:
+	if saved.is_empty() or _builder_controller == null:
+		return
+	var hull: ShipHull = _builder_controller.get_hull()
+	if hull == null:
+		return
+	var catalog: Dictionary = {}
+	for module: ModuleData in ModuleCatalog.all_buildable_modules():
+		catalog[module.id] = module
+	for placed: PlacedModule in hull.get_all_modules():
+		hull.detach_module(placed.instance_id)
+	var remaining: Array = saved.duplicate()
+	while not remaining.is_empty():
+		var left: Array = []
+		for entry: Dictionary in remaining:
+			var module: ModuleData = catalog.get(entry["id"])
+			if module == null:
+				continue
+			var attached: PlacedModule = hull.attach_module(module, entry["origin"], int(entry["rotation"]))
+			if attached == null:
+				left.append(entry)
+			else:
+				attached.current_health = float(entry.get("health", attached.current_health))
+		if left.size() == remaining.size():
+			push_warning("Save: %d ship modules could not be placed back" % left.size())
+			break
+		remaining = left
+	_sync_ship_from_builder()
 
 
 func _process(delta: float) -> void:
@@ -3453,6 +3612,7 @@ func _on_settings_menu_closed() -> void:
 
 
 func _on_pause_exit_requested() -> void:
+	save_game()
 	get_tree().change_scene_to_file("res://scenes/menu/MainMenu.tscn")
 
 
@@ -3613,6 +3773,12 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 			_push_starfield_to_black_holes()
 		"camera_smoothing":
 			pass
+		"god_mode":
+			# Everything the catalog and tree show may have changed.
+			if planet_info_panel.visible:
+				planet_info_panel.queue_redraw()
+			if tech_tree_window != null and tech_tree_window.visible:
+				tech_tree_window.open()
 
 
 ## Black holes lens the star image directly (see celestial_body.set_starfield).
@@ -4093,13 +4259,16 @@ func _set_space_overlays_visible(shown: bool) -> void:
 	ap_gauge.visible = shown
 
 
-## Whether the ship has surveyed `body` (see charted_bodies).
+## Whether the ship has surveyed `body` (see charted_bodies). God mode
+## (debug) charts everything.
 func is_charted(body: Node2D) -> bool:
-	return charted_bodies.has(body)
+	return PlayerProgress.god_mode or charted_bodies.has(body)
 
 
 ## Whether the player has found a resource of this type on `body`.
 func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return _has_deposit(body, type_name)
 	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
 		return charted_bodies.has(body) and _has_deposit(body, type_name)
 	return found_resources.get(body, {}).has(type_name)
@@ -4107,6 +4276,8 @@ func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
 
 ## Whether the player has found a resource of this type anywhere.
 func is_resource_known(type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return known_resources.has(type_name) or not bodies_where_found(type_name).is_empty()
 
 

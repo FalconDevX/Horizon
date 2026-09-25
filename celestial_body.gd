@@ -1362,6 +1362,18 @@ func deposit_under_view(reach: float) -> int:
 	return best
 
 
+## Removes the deposits listed in collected_deposit_seeds, for when a saved
+## game sets that list after the surface already placed them (a cached bake
+## lands at once).
+func drop_collected_deposits() -> void:
+	for i in range(resource_deposits.size() - 1, -1, -1):
+		if collected_deposit_seeds.has(resource_deposits[i]["seed"]):
+			var node: Node = resource_deposits[i].get("node")
+			if node != null:
+				node.queue_free()
+			resource_deposits.remove_at(i)
+
+
 ## Takes a deposit off the surface for good (until the world is rerolled) and
 ## returns it.
 func collect_deposit(index: int) -> Dictionary:

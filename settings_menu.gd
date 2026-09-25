@@ -58,6 +58,7 @@ var _zoom_slider_rect := Rect2()
 var _pan_slider_rect := Rect2()
 var _toggle_smoothing_rect := Rect2()
 var _toggle_warp_drop_rect := Rect2()
+var _toggle_god_mode_rect := Rect2()
 
 # Tab 1: Graphics rects
 var _toggle_fullscreen_rect := Rect2()
@@ -207,6 +208,11 @@ func _handle_gameplay_clicks(pos: Vector2) -> void:
 		settings.auto_drop_warp_on_thrust = not settings.auto_drop_warp_on_thrust
 		settings.save_settings()
 		setting_changed.emit("auto_drop_warp_on_thrust", settings.auto_drop_warp_on_thrust)
+		queue_redraw()
+	elif _toggle_god_mode_rect.has_point(pos):
+		settings.god_mode = not settings.god_mode
+		settings.save_settings()
+		setting_changed.emit("god_mode", settings.god_mode)
 		queue_redraw()
 
 
@@ -428,6 +434,12 @@ func _draw_tab_gameplay(top_y: float) -> void:
 	_draw_setting_label(Vector2(inner_x, y), "Drop Warp on Thrust", "Reset to 1x when pressing W")
 	_toggle_warp_drop_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
 	_draw_switch(_toggle_warp_drop_rect, settings.auto_drop_warp_on_thrust, "ON", "OFF")
+
+	# 2. God Mode (debug)
+	y += 74.0
+	_draw_setting_label(Vector2(inner_x, y), "God Mode", "Debug: unlock tree, catalog, warp")
+	_toggle_god_mode_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
+	_draw_switch(_toggle_god_mode_rect, settings.god_mode, "ON", "OFF")
 
 
 	# --- Column 2: Camera & Viewport ---

@@ -8,8 +8,10 @@ extends RefCounted
 ## game restarts. The hold starts empty: tier-1 nodes are free, the rest are
 ## paid for with what the player collects.
 
-## Testing switch: start with every tech-tree node (so every module) unlocked.
-const UNLOCK_ALL := true
+## Debug "god mode" (Settings > Gameplay, SettingsManager.god_mode): every
+## tech-tree node and module counts as unlocked while it is on. Nothing is
+## written into `_unlocked`, so switching it off puts the real progress back.
+static var god_mode := false
 
 static var inventory := Inventory.new()
 static var _unlocked: Dictionary = {}
@@ -21,8 +23,28 @@ static func ensure_initialized() -> void:
 		return
 	_initialized = true
 	for node: Dictionary in TechTree.NODES:
-		if UNLOCK_ALL or int(node["tier"]) <= 1:
+		if int(node["tier"]) <= 1:
 			_unlocked[node["id"]] = true
+
+
+## A new game: empty hold, only the free tier unlocked.
+static func reset() -> void:
+	inventory.clear()
+	_unlocked.clear()
+	_initialized = false
+
+
+## The hold and the unlocked tech, for SaveGame.
+static func to_dict() -> Dictionary:
+	ensure_initialized()
+	return {"inventory": inventory.to_dict(), "unlocked": _unlocked.keys()}
+
+
+static func from_dict(data: Dictionary) -> void:
+	ensure_initialized()
+	inventory.load_dict(data.get("inventory", {}))
+	for node_id: StringName in data.get("unlocked", []):
+		_unlocked[node_id] = true
 
 
 static func amount(id: StringName) -> int:
@@ -38,12 +60,12 @@ static func add(id: StringName, count: int) -> void:
 
 static func is_unlocked(node_id: StringName) -> bool:
 	ensure_initialized()
-	return _unlocked.has(node_id)
+	return god_mode or _unlocked.has(node_id)
 
 
 ## Modules no node covers are always available.
 static func is_module_unlocked(module_id: StringName) -> bool:
-	if UNLOCK_ALL:
+	if god_mode:
 		return true
 	var node: Dictionary = TechTree.node_for_module(module_id)
 	return node.is_empty() or is_unlocked(node["id"])

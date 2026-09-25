@@ -257,6 +257,16 @@ void fragment() {
 	col += star_layer(g, 0.0045, 0.02 + 0.6 * lum, 3u, arm_tight) * 0.8;
 	col += star_layer(g, 0.0014, 0.01 + 0.55 * lum, 4u, arm_tight) * 0.6;
 
+	// Nebulae far behind everything: big slow wisps in a few cool hues with
+	// the odd warm patch. Kept dim, and cleared away from our galaxy and from
+	// anything bright, so they sit in the empty space and never compete.
+	vec2 np = g * 0.22 + vec2(31.0, -17.0);
+	float wisps = smoothstep(0.5, 0.8, fbm(np, 5)) * (0.5 + 0.5 * fbm(np * 4.0 + 5.0, 4));
+	vec3 neb = mix(vec3(0.15, 0.34, 0.55), vec3(0.48, 0.17, 0.46), smoothstep(0.3, 0.7, fbm(np * 1.7 + vec2(8.3, 2.1), 4)));
+	neb = mix(neb, vec3(0.55, 0.28, 0.18), smoothstep(0.62, 0.8, fbm(np * 0.6 - 12.0, 3)) * 0.6);
+	float keep_clear = smoothstep(1.1, 2.2, r) * (1.0 - clamp(lum * 3.0, 0.0, 1.0));
+	col += neb * wisps * keep_clear * 0.24;
+
 	// Stars far out, between the galaxies, for when the view is zoomed out.
 	col += star_layer(g, 0.9, 0.14, 5u, 0.0) * 0.7;
 

@@ -25,6 +25,10 @@ const MENU_MARGIN := 110.0
 const MENU_COLUMN_WIDTH := 300.0
 const MENU_ROW_HEIGHT := 52.0
 const HOVER_RESPONSE := 13.0
+## Load panel: rows shown at once (the wheel scrolls the rest).
+const LOAD_ROWS := 6
+const LOAD_ROW_HEIGHT := 60.0
+const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 class MenuItem:
@@ -59,6 +63,17 @@ var _loading: LoadingScreen = null
 var _hover_player: AudioStreamPlayer = null
 var _credits_panel_rect := Rect2()
 
+## The saved-games panel (LOAD GAME): the list, what the mouse is over, and
+## the slot whose DELETE was clicked once and waits for a second click.
+var _load_open: bool = false
+var _saves: Array[Dictionary] = []
+var _load_scroll: int = 0
+var _load_panel_rect := Rect2()
+## "load" / "delete" button rects per visible row: [{slot, load, delete}].
+var _load_buttons: Array[Dictionary] = []
+var _load_mouse := Vector2(-1.0, -1.0)
+var _confirm_delete_slot: String = ""
+
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -77,16 +92,27 @@ func _ready() -> void:
 
 	_setup_gradient()
 
-	menu_items = [
+	_build_menu_items()
+
+
+## CONTINUE (newest save) leads when there is anything saved; LOAD GAME is
+## greyed out when there is not.
+func _build_menu_items() -> void:
+	var has_saves: bool = SaveGame.has_saves()
+	menu_items = []
+	if has_saves:
+		menu_items.append(MenuItem.new("CONTINUE", true, _on_continue))
+	menu_items.append_array([
 		MenuItem.new("NEW GAME", true, _on_new_game),
-		MenuItem.new("LOAD GAME", false, Callable()),
+		MenuItem.new("LOAD GAME", has_saves, _on_load_game),
 		MenuItem.new("SETTINGS", true, _on_settings),
 		MenuItem.new("CREDITS", true, _on_credits),
 		MenuItem.new("EXIT", true, _on_exit),
-	]
+	])
 	_highlight.resize(menu_items.size())
 	_highlight.fill(0.0)
-
+	selected_index = 0
+	hovered_index = -1
 	queue_redraw()
 
 
@@ -164,6 +190,8 @@ func _draw() -> void:
 
 	if _credits_open:
 		_draw_credits_panel()
+	if _load_open:
+		_draw_load_panel()
 
 
 func _draw_credits_panel() -> void:
@@ -205,6 +233,10 @@ func _gui_input(event: InputEvent) -> void:
 	if settings_menu.visible:
 		return
 
+	if _load_open:
+		_load_input(event)
+		return
+
 	if _credits_open:
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			if not _credits_panel_rect.has_point(event.position):
@@ -237,9 +269,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				_credits_open = false
 				queue_redraw()
 				get_viewport().set_input_as_handled()
+			elif _load_open:
+				_close_load_panel()
+				get_viewport().set_input_as_handled()
 			return
 
-		if settings_menu.visible or _credits_open:
+		if settings_menu.visible or _credits_open or _load_open:
 			return
 
 		if event.keycode == KEY_DOWN or event.keycode == KEY_S:
@@ -304,6 +339,27 @@ func _activate(idx: int) -> void:
 func _on_new_game() -> void:
 	if _loading != null:
 		return
+	SaveGame.start_new_game()
+	_launch_game()
+
+
+func _on_continue() -> void:
+	var saves: Array[Dictionary] = SaveGame.list_saves()
+	if not saves.is_empty():
+		_load_save(saves[0]["slot"])
+
+
+func _load_save(slot: String) -> void:
+	if _loading != null:
+		return
+	if not SaveGame.begin_load(slot):
+		_saves = SaveGame.list_saves()
+		queue_redraw()
+		return
+	_launch_game()
+
+
+func _launch_game() -> void:
 	# Put the loading screen up first and let it reach the screen, then load
 	# the game scene. The screen lives on the root, so it survives the scene
 	# change and the solar system takes it over (LoadingScreen.current) to
@@ -315,6 +371,129 @@ func _on_new_game() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	get_tree().change_scene_to_file(GAME_SCENE)
+
+
+func _on_load_game() -> void:
+	_saves = SaveGame.list_saves()
+	_load_scroll = 0
+	_confirm_delete_slot = ""
+	_load_open = true
+	queue_redraw()
+
+
+func _close_load_panel() -> void:
+	_load_open = false
+	_confirm_delete_slot = ""
+	_build_menu_items()
+
+
+func _load_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_load_mouse = event.position
+		queue_redraw()
+		return
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		var step: int = -1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1
+		_load_scroll = clampi(_load_scroll + step, 0, maxi(_saves.size() - LOAD_ROWS, 0))
+		queue_redraw()
+		return
+	if mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if not _load_panel_rect.has_point(mb.position):
+		_close_load_panel()
+		return
+	for row: Dictionary in _load_buttons:
+		if (row["load"] as Rect2).has_point(mb.position):
+			_load_save(row["slot"])
+			return
+		if (row["delete"] as Rect2).has_point(mb.position):
+			if _confirm_delete_slot == row["slot"]:
+				SaveGame.delete(row["slot"])
+				_confirm_delete_slot = ""
+				_saves = SaveGame.list_saves()
+				_load_scroll = clampi(_load_scroll, 0, maxi(_saves.size() - LOAD_ROWS, 0))
+				if _saves.is_empty():
+					_close_load_panel()
+					return
+			else:
+				_confirm_delete_slot = row["slot"]
+			queue_redraw()
+			return
+	_confirm_delete_slot = ""
+	queue_redraw()
+
+
+func _format_saved_time(unix: int) -> String:
+	var bias: int = int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+	var t: Dictionary = Time.get_datetime_dict_from_unix_time(unix + bias)
+	return "%d %s %d   %02d:%02d" % [t.day, MONTHS[t.month - 1], t.year, t.hour, t.minute]
+
+
+func _draw_load_panel() -> void:
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.015, 0.03, 0.6))
+	var panel_size := Vector2(640.0, 150.0 + LOAD_ROWS * LOAD_ROW_HEIGHT)
+	var panel_pos: Vector2 = (size - panel_size) * 0.5
+	_load_panel_rect = Rect2(panel_pos, panel_size)
+	_load_buttons.clear()
+
+	draw_set_transform(panel_pos)
+	HudPanelStyle.draw_chamfered(self, panel_size, COLOR_CYAN, 14.0, 0.92, 0.55)
+	draw_set_transform(Vector2.ZERO)
+
+	var font := HudPanelStyle.get_font()
+	var left: float = panel_pos.x + 30.0
+	var right: float = panel_pos.x + panel_size.x - 30.0
+	draw_string(font, Vector2(left, panel_pos.y + 46.0), "LOAD GAME", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, COLOR_TEXT_PRIMARY)
+	draw_string(
+		font, Vector2(left + 170.0, panel_pos.y + 46.0),
+		"%d %s" % [_saves.size(), "SAVE" if _saves.size() == 1 else "SAVES"],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_MUTED
+	)
+	draw_line(Vector2(left, panel_pos.y + 60.0), Vector2(right, panel_pos.y + 60.0), Color(COLOR_TEXT_FAINT, 0.7), 1.0)
+
+	var top: float = panel_pos.y + 76.0
+	var last: int = mini(_load_scroll + LOAD_ROWS, _saves.size())
+	for i in range(_load_scroll, last):
+		var save: Dictionary = _saves[i]
+		var row := Rect2(Vector2(left - 8.0, top + (i - _load_scroll) * LOAD_ROW_HEIGHT), Vector2(right - left + 16.0, LOAD_ROW_HEIGHT - 8.0))
+		var hovered: bool = row.has_point(_load_mouse)
+		draw_rect(row, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.9 if hovered else 0.6))
+		draw_rect(row, HudPanelStyle.COLOR_BORDER_HOVER if hovered else HudPanelStyle.COLOR_BORDER_DEFAULT, false, 1.0)
+		draw_string(font, row.position + Vector2(14.0, 22.0), String(save["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, 340.0, 14, COLOR_TEXT_PRIMARY)
+		draw_string(
+			font, row.position + Vector2(14.0, 40.0), "Saved %s" % _format_saved_time(save["saved_unix"]),
+			HORIZONTAL_ALIGNMENT_LEFT, 340.0, 11, COLOR_TEXT_MUTED
+		)
+		var delete_rect := Rect2(Vector2(row.end.x - 104.0, row.position.y + 12.0), Vector2(92.0, 28.0))
+		var load_rect := Rect2(Vector2(delete_rect.position.x - 100.0, delete_rect.position.y), Vector2(92.0, 28.0))
+		var confirming: bool = _confirm_delete_slot == save["slot"]
+		_draw_panel_button(load_rect, "LOAD", COLOR_CYAN)
+		_draw_panel_button(delete_rect, "CONFIRM" if confirming else "DELETE", HudPanelStyle.COLOR_AMBER if confirming else COLOR_TEXT_MUTED)
+		_load_buttons.append({"slot": save["slot"], "load": load_rect, "delete": delete_rect})
+
+	if _saves.size() > LOAD_ROWS:
+		draw_string(
+			font, Vector2(left, panel_pos.y + panel_size.y - 46.0),
+			"%d-%d of %d, scroll for more" % [_load_scroll + 1, last, _saves.size()],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_MUTED
+		)
+	draw_string(
+		font, Vector2(left, panel_pos.y + panel_size.y - 22.0), "ESC or click outside to close",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_FAINT
+	)
+
+
+func _draw_panel_button(rect: Rect2, text: String, accent: Color) -> void:
+	var hovered: bool = rect.has_point(_load_mouse)
+	draw_rect(rect, Color(accent, 0.28 if hovered else 0.1))
+	draw_rect(rect, Color(accent, 1.0 if hovered else 0.7), false, 1.0)
+	draw_string(
+		HudPanelStyle.get_font(), rect.position + Vector2(0.0, 19.0), text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, 12,
+		COLOR_TEXT_PRIMARY if hovered else accent.lerp(COLOR_TEXT_PRIMARY, 0.3)
+	)
 
 
 func _on_settings() -> void:

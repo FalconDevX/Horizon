@@ -29,6 +29,14 @@ var camera_pan_speed: float = 1.0
 var auto_drop_warp_on_thrust: bool = true
 var autopilot_default_main_engine: bool = true
 
+# Debug
+## Unlocks the whole tech tree and catalog and lets the hyperdrive fire
+## anywhere (PlayerProgress.god_mode mirrors it).
+var god_mode: bool = false:
+	set(value):
+		god_mode = value
+		PlayerProgress.god_mode = value
+
 
 func _init() -> void:
 	ensure_buses()
@@ -147,6 +155,8 @@ func save_settings() -> void:
 	cfg.set_value("gameplay", "auto_drop_warp_on_thrust", auto_drop_warp_on_thrust)
 	cfg.set_value("gameplay", "autopilot_default_main_engine", autopilot_default_main_engine)
 
+	cfg.set_value("debug", "god_mode", god_mode)
+
 	cfg.save(SAVE_PATH)
 
 
@@ -175,6 +185,8 @@ func load_settings() -> void:
 		camera_pan_speed = cfg.get_value("gameplay", "camera_pan_speed", 1.0)
 		auto_drop_warp_on_thrust = cfg.get_value("gameplay", "auto_drop_warp_on_thrust", true)
 		autopilot_default_main_engine = cfg.get_value("gameplay", "autopilot_default_main_engine", true)
+
+		god_mode = cfg.get_value("debug", "god_mode", false)
 
 	apply_audio_settings()
 	if fullscreen or not vsync:
