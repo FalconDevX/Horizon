@@ -1,6 +1,7 @@
 extends Control
 
 signal settings_requested
+signal save_requested
 signal exit_requested
 
 @onready var _settings_btn: Button = %SettingsButton
@@ -8,6 +9,17 @@ signal exit_requested
 
 
 func _ready() -> void:
+	# Save Game goes above Settings; built here so the scene stays as it was.
+	var save_btn := Button.new()
+	save_btn.name = "SaveButton"
+	save_btn.text = "Save Game"
+	_settings_btn.add_sibling(save_btn)
+	_settings_btn.get_parent().move_child(save_btn, _settings_btn.get_index())
+	_style_button(save_btn)
+	save_btn.pressed.connect(func() -> void: save_requested.emit())
+	# Room for the extra row, grown evenly about the centre.
+	offset_top -= 30.0
+	offset_bottom += 30.0
 	_style_button(_settings_btn)
 	_style_button(_exit_btn)
 	_settings_btn.pressed.connect(func() -> void: settings_requested.emit())

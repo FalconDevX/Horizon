@@ -2,19 +2,22 @@ class_name GalaxyMapWindow
 extends Control
 ## Full-screen map of the galaxy (GalaxyMap), framed like the tech tree.
 ## The galaxy itself is galaxy_map.gdshader; over it go distance rings, the
-## systems the player has been to (joined in the order they were reached,
-## the current one pulsing) and a card for the selected one. Clicking another
-## visited system and then WARP sends `travel_requested` with its seed.
+## galaxy's systems (unexplored ones faint), the ones the player has been to
+## (joined in the order they were reached, the current one pulsing), the
+## course the hyperdrive is set to, and a card for the selected system.
+## Clicking a system and then SET COURSE sends `course_set` with its seed;
+## the jump itself is made from the flight HUD (WARP), past the outer belt.
 ## Toggled with M (solar_system.gd routes the keys while it is open); Esc,
 ## the X or a click outside closes it. Wheel zooms about the cursor, right or
 ## middle drag pans, CENTER goes back to the current system. The (i) button
 ## lists these controls.
 
-signal travel_requested(system_seed: int)
+signal course_set(system_seed: int)
 
 const GALAXY_SHADER := preload("res://galaxy_map.gdshader")
 const MARGIN := 36.0
-const ZOOM_MIN := 0.7
+## Far enough out to see the neighbouring galaxies.
+const ZOOM_MIN := 0.06
 const ZOOM_MAX := 40.0
 const ZOOM_OPEN := 2.2
 ## How fast the view eases to where it is headed (per second).
@@ -24,6 +27,21 @@ const RADIUS_LY := 50000.0
 const MARKER_RADIUS := 6.0
 const COLOR_ROUTE := Color(0.30, 0.78, 0.88, 0.55)
 const COLOR_GRID := Color(0.55, 0.7, 0.9, 0.13)
+const COLOR_UNEXPLORED := Color(0.62, 0.7, 0.82)
+## Zoom past which unexplored systems are named without hovering.
+const NAME_ZOOM := 2.4
+## Unexplored systems fade out as the view pulls back past this zoom.
+const SYSTEMS_FADE_ZOOM := Vector2(0.18, 0.4)
+const COLOR_GALAXY_LABEL := Color(0.8, 0.76, 1.0)
+const KIND_LABELS := {"spiral": "SPIRAL GALAXY", "elliptical": "ELLIPTICAL GALAXY", "irregular": "IRREGULAR GALAXY"}
+const KIND_IDS := {"spiral": 0.0, "elliptical": 1.0, "irregular": 2.0}
+## Search: how many matches the drop-down lists.
+const MAX_RESULTS := 8
+const RESULT_ROW := 26.0
+## Visited list (left side panel).
+const LIST_WIDTH := 250.0
+const LIST_HEADER := 30.0
+const LIST_ROW := 36.0
 
 var _hover_close: bool = false
 var _hover_help: bool = false
@@ -34,6 +52,21 @@ var _has_hover: bool = false
 var _selected_seed: int = 0
 var _has_selected: bool = false
 var _hover_warp: bool = false
+## Neighbouring galaxy under the cursor / picked, as an index into
+## GalaxyMap.NEIGHBOURS, or -1.
+var _hover_galaxy: int = -1
+var _selected_galaxy: int = -1
+## seed -> GalaxyMap.star_class(), so markers don't re-roll it every frame.
+var _star_cache: Dictionary = {}
+## Search box in the header, and the systems whose names match it.
+var _search: LineEdit
+var _results: Array[Dictionary] = []
+## Unclipped layer over the map for the search drop-down, which starts in the
+## header above the map.
+var _top: Control
+## Whether the visited list is open; kept between openings of the map.
+static var _list_open: bool = true
+var _list_scroll: int = 0
 var _mouse: Vector2 = Vector2.ZERO
 ## Shown view, and the one it eases toward.
 var _zoom: float = 1.0
@@ -61,6 +94,19 @@ func _ready() -> void:
 	material.shader = GALAXY_SHADER
 	material.set_shader_parameter("arm_count", float(GalaxyMap.ARM_COUNT))
 	material.set_shader_parameter("arm_twist", GalaxyMap.ARM_TWIST)
+	var places := PackedVector4Array()
+	var shapes := PackedVector4Array()
+	var tints := PackedVector4Array()
+	for nb: Dictionary in GalaxyMap.NEIGHBOURS:
+		var at: Vector2 = nb["position"]
+		var tint: Color = nb["tint"]
+		places.append(Vector4(at.x, at.y, nb["radius"], nb["rotation"]))
+		shapes.append(Vector4(nb["tilt"], nb["arms"], nb["twist"], KIND_IDS[nb["kind"]]))
+		tints.append(Vector4(tint.r, tint.g, tint.b, nb["seed"]))
+	material.set_shader_parameter("neighbour_count", GalaxyMap.NEIGHBOURS.size())
+	material.set_shader_parameter("nb_place", places)
+	material.set_shader_parameter("nb_shape", shapes)
+	material.set_shader_parameter("nb_tint", tints)
 	_galaxy.material = material
 	_canvas.add_child(_galaxy)
 	_overlay = Control.new()
@@ -71,11 +117,43 @@ func _ready() -> void:
 		"Mouse wheel: zoom in and out",
 		"Right or middle drag: move the map",
 		"Click a system: select it",
-		"WARP: travel to the selected system",
+		"Search box: find a system by name, Enter picks the first",
+		"VISITED list on the left: jump to a system you have been to",
+		"Zoom far out to see the neighbouring galaxies",
+		"SET COURSE: aim the hyperdrive at the selected system",
+		"Then fly past the outer asteroid belt and press WARP",
 		"CENTER: back to the system you are in",
 		"M or Esc: close the map",
 	]))
 	add_child(_help)
+	_search = LineEdit.new()
+	_search.placeholder_text = "Search systems"
+	_search.clear_button_enabled = true
+	_search.add_theme_font_override("font", HudPanelStyle.get_font())
+	_search.add_theme_font_size_override("font_size", 12)
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(HudPanelStyle.COLOR_BG_SURFACE, 0.95)
+	box.border_color = HudPanelStyle.COLOR_BORDER_HOVER
+	box.set_border_width_all(1)
+	box.content_margin_left = 10.0
+	box.content_margin_right = 6.0
+	var focused := box.duplicate() as StyleBoxFlat
+	focused.border_color = HudPanelStyle.COLOR_CYAN
+	_search.add_theme_stylebox_override("normal", box)
+	_search.add_theme_stylebox_override("focus", focused)
+	_search.text_changed.connect(_on_search_changed)
+	_search.text_submitted.connect(func(_text: String) -> void:
+		if not _results.is_empty():
+			_focus_system(int(_results[0]["seed"]))
+	)
+	_top = Control.new()
+	_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_top.draw.connect(_draw_results)
+	add_child(_top)
+	add_child(_search)
+	# Help box last, so it draws over the search box too.
+	move_child(_help, -1)
 	resized.connect(queue_redraw)
 
 
@@ -90,7 +168,9 @@ func open() -> void:
 	visible = true
 	move_to_front()
 	_has_selected = false
+	_selected_galaxy = -1
 	_help.close()
+	_search.release_focus()
 	# Swoop in from the whole galaxy to where the player is.
 	_zoom = 1.0
 	_pan = Vector2.ZERO
@@ -169,7 +249,10 @@ func _system_at(screen_pos: Vector2) -> Dictionary:
 		return {}
 	var best: Dictionary = {}
 	var best_d: float = MARKER_RADIUS + 8.0
-	for system: Dictionary in GalaxyMap.visits():
+	var unexplored_shown: bool = _systems_fade() > 0.2
+	for system: Dictionary in GalaxyMap.systems():
+		if not unexplored_shown and not GalaxyMap.is_visited(int(system["seed"])):
+			continue
 		var d: float = _to_screen(system["position"]).distance_to(screen_pos)
 		if d < best_d:
 			best_d = d
@@ -177,18 +260,53 @@ func _system_at(screen_pos: Vector2) -> Dictionary:
 	return best
 
 
-func _can_warp() -> bool:
-	return _has_selected and not GalaxyMap.is_current(_selected_seed)
+## The neighbouring galaxy whose disc is under `screen_pos`, or -1.
+func _galaxy_at(screen_pos: Vector2) -> int:
+	if not _map_rect().has_point(screen_pos):
+		return -1
+	for i in GalaxyMap.NEIGHBOURS.size():
+		var nb: Dictionary = GalaxyMap.NEIGHBOURS[i]
+		var reach: float = maxf(float(nb["radius"]) * _scale() * 0.85, 10.0)
+		if _to_screen(nb["position"]).distance_to(screen_pos) < reach:
+			return i
+	return -1
+
+
+## 1 while unexplored systems are drawn in full, fading to 0 zoomed out.
+func _systems_fade() -> float:
+	return smoothstep(SYSTEMS_FADE_ZOOM.x, SYSTEMS_FADE_ZOOM.y, _zoom)
+
+
+func _star(system_seed: int) -> Dictionary:
+	if not _star_cache.has(system_seed):
+		_star_cache[system_seed] = GalaxyMap.star_class(system_seed)
+	return _star_cache[system_seed]
+
+
+func _can_set_course() -> bool:
+	return (
+		_has_selected
+		and not GalaxyMap.is_current(_selected_seed)
+		and not (GalaxyMap.has_target() and GalaxyMap.target_seed() == _selected_seed)
+	)
+
+
+func _find_system(system_seed: int) -> Dictionary:
+	for system: Dictionary in GalaxyMap.systems():
+		if int(system["seed"]) == system_seed:
+			return system
+	return {}
 
 
 func _update_hover() -> void:
 	var over: Dictionary = _system_at(_mouse)
 	_has_hover = not over.is_empty()
 	_hover_seed = int(over.get("seed", 0))
+	_hover_galaxy = -1 if _has_hover else _galaxy_at(_mouse)
 	_hover_close = _close_rect().has_point(_mouse)
 	_hover_help = HelpPopup.button_rect(_close_rect()).has_point(_mouse)
 	_hover_center = _center_rect().has_point(_mouse)
-	_hover_warp = _can_warp() and _warp_rect().has_point(_mouse)
+	_hover_warp = _can_set_course() and _warp_rect().has_point(_mouse)
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -199,7 +317,10 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			if mb.pressed:
+			if mb.pressed and _list_open and _list_rect().has_point(mb.position):
+				var step: int = -1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1
+				_list_scroll = clampi(_list_scroll + step, 0, maxi(GalaxyMap.visits().size() - _list_rows(), 0))
+			elif mb.pressed:
 				_zoom_about(mb.position, 1.25 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.25)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_dragging = mb.pressed
@@ -214,22 +335,116 @@ func _click(pos: Vector2) -> void:
 		_help.toggle_at(Vector2(close.end.x, close.end.y + 10.0))
 		return
 	_help.close()
+	_search.release_focus()
+	var result: int = _result_at(pos)
+	if result >= 0:
+		_focus_system(int(_results[result]["seed"]))
+		return
+	if _list_header_rect().has_point(pos):
+		_list_open = not _list_open
+		return
+	if _list_open and _list_rect().has_point(pos):
+		var row: int = _list_row_at(pos)
+		if row >= 0:
+			_focus_system(int(GalaxyMap.visits()[row]["seed"]))
+		return
 	if _close_rect().has_point(pos) or not _panel_rect().has_point(pos):
 		hide_window()
 		return
 	if _center_rect().has_point(pos):
 		_center_on_current(maxf(_zoom_goal, ZOOM_OPEN))
 		return
-	if _can_warp() and _warp_rect().has_point(pos):
-		var target: int = _selected_seed
-		hide_window()
-		travel_requested.emit(target)
+	if _can_set_course() and _warp_rect().has_point(pos):
+		GalaxyMap.set_target(_selected_seed)
+		course_set.emit(_selected_seed)
 		return
-	if _has_selected and _info_rect().has_point(pos):
+	if (_has_selected or _selected_galaxy >= 0) and _info_rect().has_point(pos):
 		return
 	var picked: Dictionary = _system_at(pos)
 	_has_selected = not picked.is_empty()
 	_selected_seed = int(picked.get("seed", 0))
+	_selected_galaxy = -1 if _has_selected else _galaxy_at(pos)
+
+
+## Selects a system and flies the view to it.
+func _focus_system(system_seed: int) -> void:
+	var system: Dictionary = _find_system(system_seed)
+	if system.is_empty():
+		return
+	_has_selected = true
+	_selected_seed = system_seed
+	_selected_galaxy = -1
+	_pan_goal = -(system["position"] as Vector2)
+	_zoom_goal = maxf(_zoom_goal, 3.0)
+	_search.release_focus()
+
+
+func _on_search_changed(text: String) -> void:
+	var query: String = text.strip_edges().to_lower()
+	_results.clear()
+	if query.is_empty():
+		return
+	for system: Dictionary in GalaxyMap.systems():
+		if String(system["name"]).to_lower().contains(query):
+			_results.append(system)
+	# Visited first, then names that start with the query, then A to Z.
+	_results.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var av: bool = GalaxyMap.is_visited(int(a["seed"]))
+		var bv: bool = GalaxyMap.is_visited(int(b["seed"]))
+		if av != bv:
+			return av
+		var a_start: bool = String(a["name"]).to_lower().begins_with(query)
+		var b_start: bool = String(b["name"]).to_lower().begins_with(query)
+		if a_start != b_start:
+			return a_start
+		return String(a["name"]) < String(b["name"])
+	)
+	_results.resize(mini(_results.size(), MAX_RESULTS))
+
+
+func _search_rect() -> Rect2:
+	var panel: Rect2 = _panel_rect()
+	return Rect2(panel.position + Vector2(340.0, 14.0), Vector2(minf(300.0, panel.size.x - 460.0), 26.0))
+
+
+## Row `i` of the search drop-down, under the box.
+func _result_rect(i: int) -> Rect2:
+	var box: Rect2 = _search_rect()
+	return Rect2(Vector2(box.position.x, box.end.y + 4.0 + i * RESULT_ROW), Vector2(box.size.x, RESULT_ROW))
+
+
+func _result_at(pos: Vector2) -> int:
+	if not _search.has_focus() and _search.text.is_empty():
+		return -1
+	for i in _results.size():
+		if _result_rect(i).has_point(pos):
+			return i
+	return -1
+
+
+func _list_header_rect() -> Rect2:
+	var map: Rect2 = _map_rect()
+	return Rect2(map.position + Vector2(12.0, 52.0), Vector2(LIST_WIDTH if _list_open else 170.0, LIST_HEADER))
+
+
+## The open list's rows, under its header, clear of the info card below.
+func _list_rect() -> Rect2:
+	var header: Rect2 = _list_header_rect()
+	var bottom: float = _info_rect().position.y - 10.0
+	var rows: float = minf(GalaxyMap.visits().size() * LIST_ROW, maxf(bottom - header.end.y, LIST_ROW))
+	return Rect2(Vector2(header.position.x, header.end.y), Vector2(LIST_WIDTH, rows))
+
+
+func _list_rows() -> int:
+	return maxi(int(_list_rect().size.y / LIST_ROW), 1)
+
+
+func _list_row_at(pos: Vector2) -> int:
+	var rect: Rect2 = _list_rect()
+	if not rect.has_point(pos):
+		return -1
+	var row: int = int((pos.y - rect.position.y) / LIST_ROW) + _list_scroll
+	return row if row < GalaxyMap.visits().size() else -1
 
 
 ## Zooms toward the goal, keeping the galaxy point under the cursor fixed.
@@ -258,6 +473,9 @@ func _draw() -> void:
 		"%d %s VISITED" % [visited, "SYSTEM" if visited == 1 else "SYSTEMS"],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
+	var search: Rect2 = _search_rect()
+	_search.position = search.position
+	_search.size = search.size
 	var close: Rect2 = _close_rect()
 	HelpPopup.draw_button(self, HelpPopup.button_rect(close), _hover_help, _help.visible)
 	draw_string(
@@ -279,6 +497,7 @@ func _draw() -> void:
 	material.set_shader_parameter("center", _to_screen(Vector2.ZERO) - map.position)
 	material.set_shader_parameter("px_per_unit", _scale())
 	_overlay.queue_redraw()
+	_top.queue_redraw()
 
 
 ## Everything over the galaxy, drawn on the clipped overlay in this window's
@@ -288,14 +507,110 @@ func _draw_overlay() -> void:
 	var font: Font = HudPanelStyle.get_font()
 	_overlay.draw_set_transform(-map.position)
 	_draw_grid(map, font)
+	_draw_galaxies(map, font)
 	_draw_route()
+	_draw_course()
+	_draw_unexplored(font)
 	_draw_systems(font)
 	_draw_scale_bar(map, font)
+	_draw_legend(map, font)
 	_draw_center_button(font)
 	_draw_hover(font)
 	_draw_info(font)
+	_draw_galaxy_info(font)
+	_draw_visited_list(font)
 	# Thin frame round the map.
 	_overlay.draw_rect(map, HudPanelStyle.COLOR_BORDER_DEFAULT, false, 1.0)
+
+
+## The search drop-down: name, star, and whether it has been visited.
+func _draw_results() -> void:
+	var font: Font = HudPanelStyle.get_font()
+	if _search.text.strip_edges().is_empty():
+		return
+	if _results.is_empty():
+		var empty: Rect2 = _result_rect(0)
+		_top.draw_rect(empty, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.97))
+		_top.draw_rect(empty, HudPanelStyle.COLOR_BORDER_HOVER, false, 1.0)
+		_top.draw_string(font, empty.position + Vector2(10.0, 17.0), "No system by that name", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+		return
+	for i in _results.size():
+		var system: Dictionary = _results[i]
+		var system_seed: int = int(system["seed"])
+		var row: Rect2 = _result_rect(i)
+		var hovered: bool = row.has_point(_mouse)
+		_top.draw_rect(row, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.97))
+		if hovered:
+			_top.draw_rect(row, Color(HudPanelStyle.COLOR_CYAN, 0.12))
+		_top.draw_rect(row, HudPanelStyle.COLOR_BORDER_HOVER, false, 1.0)
+		_top.draw_circle(row.position + Vector2(14.0, 13.0), 4.0, _star(system_seed)["color"])
+		_top.draw_string(
+			font, row.position + Vector2(28.0, 17.0), String(system["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
+			row.size.x - 120.0, 11, HudPanelStyle.COLOR_TEXT_PRIMARY if hovered else HudPanelStyle.COLOR_TEXT_SECONDARY
+		)
+		var tag: String = "YOU ARE HERE" if GalaxyMap.is_current(system_seed) else ("VISITED" if GalaxyMap.is_visited(system_seed) else "UNEXPLORED")
+		var tag_color: Color = HudPanelStyle.COLOR_AMBER if GalaxyMap.is_current(system_seed) else (HudPanelStyle.COLOR_CYAN if GalaxyMap.is_visited(system_seed) else HudPanelStyle.COLOR_TEXT_MUTED)
+		_top.draw_string(font, row.position + Vector2(0.0, 17.0), tag, HORIZONTAL_ALIGNMENT_RIGHT, row.size.x - 10.0, 9, tag_color)
+
+
+## The fold-away list of every system visited, in the order reached.
+func _draw_visited_list(font: Font) -> void:
+	var header: Rect2 = _list_header_rect()
+	var visits: Array[Dictionary] = GalaxyMap.visits()
+	var header_hover: bool = header.has_point(_mouse)
+	_overlay.draw_rect(header, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.94))
+	_overlay.draw_rect(header, HudPanelStyle.COLOR_CYAN if header_hover else HudPanelStyle.COLOR_BORDER_HOVER, false, 1.0)
+	# Chevron: down when open, right when folded.
+	var c: Vector2 = header.position + Vector2(16.0, header.size.y * 0.5)
+	var chevron: PackedVector2Array = (
+		PackedVector2Array([c + Vector2(-4.0, -2.0), c + Vector2(4.0, -2.0), c + Vector2(0.0, 3.0)]) if _list_open
+		else PackedVector2Array([c + Vector2(-2.0, -4.0), c + Vector2(3.0, 0.0), c + Vector2(-2.0, 4.0)])
+	)
+	_overlay.draw_colored_polygon(chevron, HudPanelStyle.COLOR_CYAN)
+	_overlay.draw_string(font, header.position + Vector2(30.0, 19.0), "VISITED SYSTEMS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_PRIMARY)
+	_overlay.draw_string(font, header.position + Vector2(0.0, 19.0), str(visits.size()), HORIZONTAL_ALIGNMENT_RIGHT, header.size.x - 12.0, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+	if not _list_open:
+		return
+	var rect: Rect2 = _list_rect()
+	_overlay.draw_rect(rect, Color(HudPanelStyle.COLOR_BG_CANVAS, 0.9))
+	_overlay.draw_rect(rect, HudPanelStyle.COLOR_BORDER_DEFAULT, false, 1.0)
+	var rows: int = _list_rows()
+	_list_scroll = clampi(_list_scroll, 0, maxi(visits.size() - rows, 0))
+	for n in rows:
+		var i: int = n + _list_scroll
+		if i >= visits.size():
+			break
+		var system: Dictionary = visits[i]
+		var system_seed: int = int(system["seed"])
+		var row := Rect2(Vector2(rect.position.x, rect.position.y + n * LIST_ROW), Vector2(rect.size.x, LIST_ROW))
+		var hovered: bool = row.has_point(_mouse)
+		var picked: bool = _has_selected and system_seed == _selected_seed
+		if hovered or picked:
+			_overlay.draw_rect(row, Color(HudPanelStyle.COLOR_CYAN, 0.14 if picked else 0.08))
+		var here: bool = GalaxyMap.is_current(system_seed)
+		var target: bool = GalaxyMap.has_target() and system_seed == GalaxyMap.target_seed()
+		var star: Dictionary = _star(system_seed)
+		_overlay.draw_circle(row.position + Vector2(16.0, 18.0), 4.5, star["color"])
+		_overlay.draw_string(
+			font, row.position + Vector2(30.0, 16.0), String(system["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
+			row.size.x - 40.0, 11, HudPanelStyle.COLOR_TEXT_PRIMARY if hovered or here else HudPanelStyle.COLOR_TEXT_SECONDARY
+		)
+		var sub: String = "Visit %d   Class %s" % [i + 1, star["letter"]]
+		var sub_color: Color = HudPanelStyle.COLOR_TEXT_MUTED
+		if here:
+			sub = "YOU ARE HERE"
+			sub_color = HudPanelStyle.COLOR_AMBER
+		elif target:
+			sub = "COURSE SET"
+			sub_color = HudPanelStyle.COLOR_AMBER
+		_overlay.draw_string(font, row.position + Vector2(30.0, 29.0), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, sub_color)
+		if n > 0:
+			_overlay.draw_line(row.position, row.position + Vector2(row.size.x, 0.0), Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 0.5), 1.0)
+	if visits.size() > rows:
+		# Scroll bar.
+		var bar_h: float = rect.size.y * float(rows) / float(visits.size())
+		var bar_y: float = rect.position.y + (rect.size.y - bar_h) * float(_list_scroll) / float(visits.size() - rows)
+		_overlay.draw_rect(Rect2(Vector2(rect.end.x - 4.0, bar_y), Vector2(3.0, bar_h)), Color(HudPanelStyle.COLOR_CYAN, 0.5))
 
 
 ## Rings every 10 000 ly out from the core, labelled, and the core itself.
@@ -306,7 +621,7 @@ func _draw_grid(map: Rect2, font: Font) -> void:
 		var ring_r: float = float(i) / 5.0
 		_overlay.draw_arc(center, ring_r * s, 0.0, TAU, 160, COLOR_GRID, 1.0, true)
 		var label_at: Vector2 = center + Vector2(0.0, -ring_r * s)
-		if map.grow(-10.0).has_point(label_at):
+		if _zoom > 0.5 and map.grow(-10.0).has_point(label_at):
 			_overlay.draw_string(
 				font, label_at + Vector2(4.0, -3.0), "%d kly" % (i * 10), HORIZONTAL_ALIGNMENT_LEFT, -1, 9,
 				Color(COLOR_GRID, 0.5)
@@ -315,11 +630,45 @@ func _draw_grid(map: Rect2, font: Font) -> void:
 	var reach: float = s * 1.05
 	_overlay.draw_line(center - Vector2(reach, 0.0), center + Vector2(reach, 0.0), Color(COLOR_GRID, 0.07), 1.0)
 	_overlay.draw_line(center - Vector2(0.0, reach), center + Vector2(0.0, reach), Color(COLOR_GRID, 0.07), 1.0)
-	if map.has_point(center) and _zoom < 8.0:
+	if map.has_point(center) and _zoom < 8.0 and _zoom > 0.5:
 		_overlay.draw_string(
 			font, center + Vector2(-60.0, s * 0.16 + 14.0), "GALACTIC CORE", HORIZONTAL_ALIGNMENT_CENTER, 120, 10,
 			Color(1.0, 0.9, 0.75, 0.45)
 		)
+
+
+## Names under the neighbouring galaxies (and ours, once zoomed out among
+## them), with brackets on the hovered or picked one.
+func _draw_galaxies(map: Rect2, font: Font) -> void:
+	var s: float = _scale()
+	var label_alpha: float = 1.0 - smoothstep(0.9, 1.6, _zoom)
+	for i in GalaxyMap.NEIGHBOURS.size():
+		var nb: Dictionary = GalaxyMap.NEIGHBOURS[i]
+		var p: Vector2 = _to_screen(nb["position"])
+		var rad: float = float(nb["radius"]) * s
+		if not map.grow(rad + 80.0).has_point(p):
+			continue
+		var hovered: bool = i == _hover_galaxy
+		var picked: bool = i == _selected_galaxy
+		if hovered or picked:
+			_draw_brackets(p, maxf(rad * 0.9, 12.0), Color(COLOR_GALAXY_LABEL, 0.9 if picked else 0.6))
+		var alpha: float = 1.0 if hovered or picked else label_alpha
+		if alpha <= 0.02:
+			continue
+		var below: float = maxf(rad * maxf(float(nb["tilt"]), 0.35), 6.0) + 16.0
+		_draw_centered_shadowed(font, p + Vector2(0.0, below), String(nb["name"]).to_upper(), 11, Color(COLOR_GALAXY_LABEL, alpha))
+		_draw_centered_shadowed(font, p + Vector2(0.0, below + 13.0), KIND_LABELS[nb["kind"]], 9, Color(COLOR_GALAXY_LABEL, 0.6 * alpha))
+	# Our own galaxy, once it is small enough to sit among them.
+	var home_alpha: float = 1.0 - smoothstep(0.35, 0.6, _zoom)
+	if home_alpha > 0.02:
+		var c: Vector2 = _to_screen(Vector2.ZERO) + Vector2(0.0, s * 1.05 + 16.0)
+		_draw_centered_shadowed(font, c, GalaxyMap.HOME_GALAXY_NAME.to_upper(), 12, Color(HudPanelStyle.COLOR_AMBER, home_alpha))
+		_draw_centered_shadowed(font, c + Vector2(0.0, 14.0), "HOME GALAXY", 9, Color(HudPanelStyle.COLOR_AMBER, 0.7 * home_alpha))
+
+
+func _draw_centered_shadowed(font: Font, at: Vector2, text: String, font_size: int, color: Color) -> void:
+	var w: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	_draw_text_shadowed(font, at - Vector2(w * 0.5, 0.0), text, font_size, color)
 
 
 ## The path taken: each visited system joined to the next, with an arrow
@@ -345,6 +694,64 @@ func _draw_route() -> void:
 		)
 
 
+## The jump the hyperdrive is set for: current system to the target, amber.
+func _draw_course() -> void:
+	if not GalaxyMap.has_target():
+		return
+	var here: Dictionary = _find_system(GalaxyMap.current_seed())
+	var there: Dictionary = _find_system(GalaxyMap.target_seed())
+	if here.is_empty() or there.is_empty():
+		return
+	var a: Vector2 = _to_screen(here["position"])
+	var b: Vector2 = _to_screen(there["position"])
+	var length: float = a.distance_to(b)
+	if length < MARKER_RADIUS * 3.0:
+		return
+	var dir: Vector2 = (b - a) / length
+	var a2: Vector2 = a + dir * (MARKER_RADIUS + 3.0)
+	var b2: Vector2 = b - dir * (MARKER_RADIUS + 3.0)
+	_overlay.draw_line(a2, b2, Color(HudPanelStyle.COLOR_AMBER, 0.15), 6.0, true)
+	_overlay.draw_dashed_line(a2, b2, Color(HudPanelStyle.COLOR_AMBER, 0.9), 1.5, 10.0, true, true)
+
+
+## Systems nobody has been to: small faint dots, named when hovered, picked,
+## on the course, or once zoomed in far enough.
+func _draw_unexplored(font: Font) -> void:
+	var map: Rect2 = _map_rect()
+	for system: Dictionary in GalaxyMap.systems():
+		var system_seed: int = int(system["seed"])
+		if GalaxyMap.is_visited(system_seed):
+			continue
+		var p: Vector2 = _to_screen(system["position"])
+		if not map.grow(40.0).has_point(p):
+			continue
+		var hovered: bool = _has_hover and system_seed == _hover_seed
+		var picked: bool = _has_selected and system_seed == _selected_seed
+		var target: bool = GalaxyMap.has_target() and system_seed == GalaxyMap.target_seed()
+		var fade: float = 1.0 if hovered or picked or target else _systems_fade()
+		if fade <= 0.02:
+			continue
+		var star: Color = _star(system_seed)["color"]
+		var color: Color = HudPanelStyle.COLOR_AMBER if target else COLOR_UNEXPLORED
+		var alpha: float = fade
+		# Halo and core in the star's own colour, ringed so it reads as a
+		# place and not just another star of the galaxy.
+		_overlay.draw_circle(p, MARKER_RADIUS * 2.3, Color(star, 0.07 * alpha))
+		_overlay.draw_circle(p, MARKER_RADIUS * 1.5, Color(star, 0.12 * alpha))
+		_overlay.draw_circle(p, MARKER_RADIUS * 1.1, Color(0.0, 0.0, 0.0, 0.45 * alpha))
+		_overlay.draw_arc(p, MARKER_RADIUS * (1.3 if hovered else 1.1), 0.0, TAU, 28, Color(color, 0.95 * alpha), 1.6, true)
+		_overlay.draw_circle(p, 3.4, Color(star, alpha))
+		_overlay.draw_circle(p, 1.4, Color(1.0, 1.0, 1.0, alpha))
+		if picked:
+			_draw_brackets(p, MARKER_RADIUS + 5.0, HudPanelStyle.COLOR_TEXT_PRIMARY)
+		var name_fade: float = 1.0 if hovered or picked or target else smoothstep(NAME_ZOOM * 0.8, NAME_ZOOM, _zoom) * fade
+		if name_fade > 0.02:
+			var tag_at: Vector2 = p + Vector2(MARKER_RADIUS + 6.0, -2.0)
+			_draw_text_shadowed(font, tag_at, String(system["name"]).to_upper(), 10, Color(color.lerp(Color.WHITE, 0.3), name_fade))
+			if target:
+				_draw_text_shadowed(font, tag_at + Vector2(0.0, 12.0), "COURSE SET", 9, Color(color, 0.85))
+
+
 func _draw_systems(font: Font) -> void:
 	var pulse: float = fmod(Time.get_ticks_msec() * 0.0006, 1.0)
 	var visits: Array[Dictionary] = GalaxyMap.visits()
@@ -367,14 +774,19 @@ func _draw_systems(font: Font) -> void:
 		var ring: float = MARKER_RADIUS * (1.25 if hovered else 1.0)
 		_overlay.draw_circle(p, ring, Color(0.0, 0.0, 0.0, 0.45))
 		_overlay.draw_arc(p, ring, 0.0, TAU, 32, color, 1.5, true)
-		_overlay.draw_circle(p, 2.2, Color(1.0, 1.0, 1.0, 0.95))
+		_overlay.draw_circle(p, 2.8, Color(_star(system_seed)["color"], 0.95))
+		_overlay.draw_circle(p, 1.2, Color(1.0, 1.0, 1.0, 0.95))
 		if _has_selected and system_seed == _selected_seed:
 			_draw_brackets(p, MARKER_RADIUS + 7.0, HudPanelStyle.COLOR_TEXT_PRIMARY)
-		# Name tag with the visit number.
+		# Name tag with the visit number, dropped once the galaxy is small
+		# among its neighbours and the tags would pile up.
+		if not hovered and (_zoom < 0.2 or (_zoom < 0.4 and not here)):
+			continue
 		var label: String = String(system["name"]).to_upper()
 		var tag_at: Vector2 = p + Vector2(MARKER_RADIUS + 9.0, -3.0)
 		_draw_text_shadowed(font, tag_at, label, 11, HudPanelStyle.COLOR_TEXT_PRIMARY if hovered or here else HudPanelStyle.COLOR_TEXT_SECONDARY)
-		var sub: String = "YOU ARE HERE" if here else "VISIT %d" % (i + 1)
+		var target: bool = GalaxyMap.has_target() and system_seed == GalaxyMap.target_seed()
+		var sub: String = "YOU ARE HERE" if here else ("COURSE SET" if target else "VISIT %d" % (i + 1))
 		_draw_text_shadowed(font, tag_at + Vector2(0.0, 12.0), sub, 9, Color(color, 0.85))
 
 
@@ -407,7 +819,13 @@ func _draw_scale_bar(map: Rect2, font: Font) -> void:
 	_overlay.draw_line(left, right, c, 1.5)
 	_overlay.draw_line(left - Vector2(0.0, 4.0), left + Vector2(0.0, 4.0), c, 1.5)
 	_overlay.draw_line(right - Vector2(0.0, 4.0), right + Vector2(0.0, 4.0), c, 1.5)
-	var text: String = ("%s kly" % _trim(step / 1000.0)) if step >= 1000.0 else ("%s ly" % _trim(step))
+	var text: String
+	if step >= 1000000.0:
+		text = "%s Mly" % _trim(step / 1000000.0)
+	elif step >= 1000.0:
+		text = "%s kly" % _trim(step / 1000.0)
+	else:
+		text = "%s ly" % _trim(step)
 	_overlay.draw_string(font, left + Vector2(0.0, -7.0), text, HORIZONTAL_ALIGNMENT_CENTER, w, 10, c)
 
 
@@ -445,16 +863,17 @@ func _distance_ly(a: Vector2, b: Vector2) -> float:
 	return a.distance_to(b) * RADIUS_LY
 
 
-## Details of the selected system, with WARP when it isn't the current one.
+## Details of the selected system, with SET COURSE when it isn't the current
+## one.
 func _draw_info(font: Font) -> void:
 	if not _has_selected:
 		return
-	var i: int = GalaxyMap.index_of(_selected_seed)
-	if i < 0:
+	var system: Dictionary = _find_system(_selected_seed)
+	if system.is_empty():
 		return
-	var system: Dictionary = GalaxyMap.visits()[i]
+	var i: int = GalaxyMap.index_of(_selected_seed)
 	var info: Rect2 = _info_rect()
-	var here: bool = not _can_warp()
+	var here: bool = GalaxyMap.is_current(_selected_seed)
 	var accent: Color = HudPanelStyle.COLOR_AMBER if here else HudPanelStyle.COLOR_CYAN
 	_overlay.draw_rect(info, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.94))
 	_overlay.draw_rect(info, HudPanelStyle.COLOR_BORDER_HOVER, false, 1.0)
@@ -466,12 +885,14 @@ func _draw_info(font: Font) -> void:
 	)
 	var pos: Vector2 = system["position"]
 	_overlay.draw_string(
-		font, x + Vector2(0.0, 42.0), "Visit %d" % (i + 1),
+		font, x + Vector2(0.0, 42.0), ("Visit %d" % (i + 1)) if i >= 0 else "Unexplored",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
 	)
+	var star: Dictionary = _star(_selected_seed)
+	_overlay.draw_circle(x + Vector2(4.0, 52.5), 3.5, star["color"])
 	_overlay.draw_string(
-		font, x + Vector2(0.0, 56.0), "Seed %d" % _selected_seed,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
+		font, x + Vector2(13.0, 56.0), "Class %s  %s" % [star["letter"], star["name"]],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(star["color"], 0.9)
 	)
 	_overlay.draw_string(
 		font, x + Vector2(0.0, 70.0), "%s kly from core" % _trim(snappedf(pos.length() * RADIUS_LY / 1000.0, 0.1)),
@@ -480,17 +901,97 @@ func _draw_info(font: Font) -> void:
 	if here:
 		_overlay.draw_string(font, x + Vector2(0.0, 96.0), "YOU ARE HERE", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, accent)
 		return
-	var cur: int = GalaxyMap.index_of(GalaxyMap.current_seed())
-	if cur >= 0:
-		var d: float = _distance_ly(GalaxyMap.visits()[cur]["position"], pos)
+	var current: Dictionary = _find_system(GalaxyMap.current_seed())
+	if not current.is_empty():
+		var d: float = _distance_ly(current["position"], pos)
 		_overlay.draw_string(
 			font, x + Vector2(0.0, 96.0), "%s kly away" % _trim(snappedf(d / 1000.0, 0.1)),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_SECONDARY
 		)
 	var warp: Rect2 = _warp_rect()
+	if not _can_set_course():
+		_overlay.draw_rect(warp, Color(HudPanelStyle.COLOR_AMBER, 0.12))
+		_overlay.draw_rect(warp, Color(HudPanelStyle.COLOR_AMBER, 0.7), false, 1.0)
+		_overlay.draw_string(
+			font, warp.position + Vector2(0.0, 16.0), "COURSE SET", HORIZONTAL_ALIGNMENT_CENTER, warp.size.x, 10,
+			HudPanelStyle.COLOR_AMBER
+		)
+		return
 	_overlay.draw_rect(warp, Color(HudPanelStyle.COLOR_CYAN, 0.32 if _hover_warp else 0.12))
 	_overlay.draw_rect(warp, HudPanelStyle.COLOR_CYAN, false, 1.0)
 	_overlay.draw_string(
-		font, warp.position + Vector2(0.0, 17.0), "WARP", HORIZONTAL_ALIGNMENT_CENTER, warp.size.x, 12,
+		font, warp.position + Vector2(0.0, 16.0), "SET COURSE", HORIZONTAL_ALIGNMENT_CENTER, warp.size.x, 10,
 		HudPanelStyle.COLOR_TEXT_PRIMARY
 	)
+
+
+## Details of the picked neighbouring galaxy. No course: the hyperdrive only
+## jumps between stars of our own galaxy.
+func _draw_galaxy_info(font: Font) -> void:
+	if _selected_galaxy < 0:
+		return
+	var nb: Dictionary = GalaxyMap.NEIGHBOURS[_selected_galaxy]
+	var info: Rect2 = _info_rect()
+	_overlay.draw_rect(info, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.94))
+	_overlay.draw_rect(info, HudPanelStyle.COLOR_BORDER_HOVER, false, 1.0)
+	_overlay.draw_rect(Rect2(info.position, Vector2(3.0, info.size.y)), COLOR_GALAXY_LABEL)
+	var x: Vector2 = info.position + Vector2(16.0, 0.0)
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 24.0), String(nb["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
+		HudPanelStyle.COLOR_TEXT_PRIMARY
+	)
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 42.0), String(KIND_LABELS[nb["kind"]]).capitalize(),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COLOR_GALAXY_LABEL
+	)
+	var distance: float = (nb["position"] as Vector2).length() * RADIUS_LY
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 56.0), "%s from our galaxy" % _light_years(distance),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
+	)
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 70.0), "%s across" % _light_years(float(nb["radius"]) * 2.0 * RADIUS_LY),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
+	)
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 96.0), "Beyond hyperdrive range", HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+		Color(HudPanelStyle.COLOR_AMBER, 0.85)
+	)
+
+
+func _light_years(value: float) -> String:
+	if value >= 1000000.0:
+		return "%s Mly" % _trim(snappedf(value / 1000000.0, 0.01))
+	return "%s kly" % _trim(snappedf(value / 1000.0, 1.0))
+
+
+## What the marks mean, bottom right over the scale bar.
+func _draw_legend(map: Rect2, font: Font) -> void:
+	var box := Rect2(Vector2(map.end.x - 196.0, map.end.y - 168.0), Vector2(182.0, 128.0))
+	_overlay.draw_rect(box, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.8))
+	_overlay.draw_rect(box, HudPanelStyle.COLOR_BORDER_DEFAULT, false, 1.0)
+	var muted := HudPanelStyle.COLOR_TEXT_SECONDARY
+	var x: float = box.position.x + 20.0
+	var y: float = box.position.y + 18.0
+	_overlay.draw_arc(Vector2(x, y), 5.0, 0.0, TAU, 24, HudPanelStyle.COLOR_AMBER, 1.5, true)
+	_overlay.draw_circle(Vector2(x, y), 1.8, Color.WHITE)
+	_overlay.draw_string(font, Vector2(x + 14.0, y + 4.0), "You are here", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, muted)
+	y += 20.0
+	_overlay.draw_arc(Vector2(x, y), 5.0, 0.0, TAU, 24, HudPanelStyle.COLOR_CYAN, 1.5, true)
+	_overlay.draw_circle(Vector2(x, y), 1.8, Color.WHITE)
+	_overlay.draw_string(font, Vector2(x + 14.0, y + 4.0), "Visited", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, muted)
+	y += 20.0
+	_overlay.draw_arc(Vector2(x, y), 5.0, 0.0, TAU, 24, Color(COLOR_UNEXPLORED, 0.75), 1.2, true)
+	_overlay.draw_circle(Vector2(x, y), 1.8, Color(1.0, 0.9, 0.6))
+	_overlay.draw_string(font, Vector2(x + 14.0, y + 4.0), "Unexplored", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, muted)
+	y += 20.0
+	_overlay.draw_dashed_line(Vector2(x - 7.0, y), Vector2(x + 7.0, y), HudPanelStyle.COLOR_AMBER, 1.5, 4.0, true, true)
+	_overlay.draw_string(font, Vector2(x + 14.0, y + 4.0), "Course set", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, muted)
+	y += 22.0
+	# Star colours, hottest to coolest.
+	var sx: float = x - 6.0
+	for entry: Dictionary in GalaxyMap.STAR_CLASSES:
+		_overlay.draw_circle(Vector2(sx + 3.0, y), 3.2, entry["color"])
+		_overlay.draw_string(font, Vector2(sx - 1.0, y + 15.0), entry["letter"], HORIZONTAL_ALIGNMENT_LEFT, -1, 9, HudPanelStyle.COLOR_TEXT_MUTED)
+		sx += 16.0
+	_overlay.draw_string(font, Vector2(sx + 4.0, y + 4.0), "Star", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, HudPanelStyle.COLOR_TEXT_MUTED)

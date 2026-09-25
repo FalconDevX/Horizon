@@ -20,7 +20,6 @@ signal hold_changed(module: ModuleData, rotation: int)
 const PLAN_TINT_ALPHA := 0.18
 @export var empty_tint := Color(0.25, 0.4, 0.7, 0.16)
 @export var deck_tint := Color(0.3, 0.5, 0.85, 0.22)
-@export var engine_mount_tint := Color(0.35, 0.6, 0.95, 0.3)
 @export var connector_tint := Color(0.4, 0.65, 0.95, 0.26)
 @export var occupied_tint := Color(0.35, 0.55, 0.85, 0.2)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
@@ -221,7 +220,7 @@ func get_zoom() -> float:
 
 func hold_module(module: ModuleData, rotation: int = 0, cargo: Array = [], pick_rotation: int = -1) -> void:
 	_held_module = module
-	_held_rotation = posmod(rotation, 4)
+	_held_rotation = posmod(rotation, 4) if module == null or module.is_rotatable() else 0
 	_held_cargo = cargo.duplicate(true)
 	_held_pick_rotation = _held_rotation if pick_rotation < 0 else posmod(pick_rotation, 4)
 	_hover_module = module
@@ -245,13 +244,15 @@ func has_held_module() -> bool:
 
 
 func rotate_held(steps: int = 1) -> void:
+	if _held_module != null and not _held_module.is_rotatable():
+		return
 	if _held_module != null:
 		_held_rotation = posmod(_held_rotation + steps, 4)
 		_hover_rotation = _held_rotation
 		hold_changed.emit(_held_module, _held_rotation)
 		_refresh_hover_validity()
 		_preview.queue_redraw()
-	elif _hover_module != null:
+	elif _hover_module != null and _hover_module.is_rotatable():
 		_hover_rotation = posmod(_hover_rotation + steps, 4)
 		_refresh_hover_validity()
 		_preview.queue_redraw()
@@ -269,8 +270,10 @@ func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
 	_hover_module = module
 	if _held_module == module:
 		_hover_rotation = _held_rotation
-	else:
+	elif module.is_rotatable():
 		_hover_rotation = int(data.get("rotation", 0))
+	else:
+		_hover_rotation = 0
 	_hover_origin = _centered_origin(at_position, module, _hover_rotation)
 	_hover_valid = ship_hull.can_place(module, _hover_origin, _hover_rotation)
 	_preview.queue_redraw()
@@ -284,6 +287,8 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 		return
 
 	var rotation := _held_rotation if _held_module == module else int(data.get("rotation", 0))
+	if not module.is_rotatable():
+		rotation = 0
 	var origin := _centered_origin(at_position, module, rotation)
 	var placed := ship_hull.attach_module(module, origin, rotation)
 	if placed != null:
@@ -481,8 +486,6 @@ func _draw() -> void:
 		match ship_hull.get_floor_type(cell):
 			HullData.FloorType.DECK:
 				fill = deck_tint
-			HullData.FloorType.ENGINE_MOUNT:
-				fill = engine_mount_tint
 			HullData.FloorType.CONNECTOR:
 				fill = connector_tint
 			_:
@@ -660,6 +663,9 @@ func _spawn_sprite(module: PlacedModule) -> void:
 	sprite.texture = tex
 	sprite.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	sprite.stretch_mode = TextureRect.STRETCH_SCALE
+	if module.data.category == ModuleData.Category.ENGINE:
+		# Engine art is square; the M footprint (2x1) is not - fit, don't squash.
+		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sprite.show_behind_parent = true
 

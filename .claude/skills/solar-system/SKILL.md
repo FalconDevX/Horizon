@@ -695,10 +695,10 @@ the body's current variant, so finds carry across systems per variant.
 ## Ship builder engines
 
 `ModuleCatalog.engines()` builds 5 families (Chemical, Nuclear Thermal, Ion, Plasma,
-Fusion) x 3 sizes S/M/L = square footprints 1x1/2x2/3x3, from star ratings
+Fusion) x 3 sizes S/M/L = footprints 1x1/2x1/2x2, from star ratings
 (`_STAR_*` tables, `_ENGINE_SIZES` multipliers). Sprites are
-`textures/modules/engine_<type>_<1|2|3>.png` (nozzle pointing left, the aft side where
-the orange `ENGINE_MOUNT` tiles are); an optional `..._plan.png` (`plan_texture`) is
+`textures/modules/engine_<type>_<1|2|3>.png` (nozzle pointing left, the aft side: main
+engines go in open space touching a hull's left face, grid -x, whatever the hull's rotation); an optional `..._plan.png` (`plan_texture`) is
 drawn over the footprint while a module is held. The inventory shows one engine family
 per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates
 engine art with the module. There is no RCS / corrective engine any more.
@@ -737,5 +737,40 @@ records every seed the player has been in (`visit()` from `_ready()` and
 opened with **M**, draws the galaxy (`galaxy_map.gdshader`: barred spiral on the same
 arm curve as `arm_angle()`, dust lanes, H II knots, point stars that resolve as you zoom;
 its noise uses an integer PCG hash - a float hash breaks into squares on the GPU), the visited systems joined in visit order and the
-current one pulsing; selecting another visited system offers WARP, which emits
-`travel_requested` → `set_world_seed()`. The ship keeps its position on a warp.
+current one pulsing, plus `GalaxyMap.systems()` (a fixed catalogue of `SYSTEM_COUNT`
+seeds, drawn faint while unexplored). Selecting a system offers SET COURSE
+(`GalaxyMap.set_target()`, `course_set` signal); the jump is made from the HUD's
+`WarpButton` (`scripts/ui/WarpButton.gd`, under the left panel), lit only with a course
+set, not landed, and past the outer edge of the last `AsteroidBelts.BELTS` belt
+(`_warp_clearance()`). `start_hyperspace_jump()` adds a `HyperspaceJump`
+(`scripts/ui/HyperspaceJump.gd` + `hyperspace.gdshader`: star streaks, blue tunnel,
+exit flash); the sim and input are held while it runs (`hyperspace_jump != null`), the
+ship runs ahead along its nose, and at the spool's end `_arrive_in_system()` calls
+`set_world_seed()`, spreads the planets round their orbits and puts the ship in a
+circular orbit round a random planet; the tunnel holds until every body
+`is_surface_ready()`. `set_world_seed()` saves the system left
+(`GalaxyMap.save_state`: charted bodies, finds, and each planet's
+`collected_deposit_seeds`, which `_place_deposits()` skips) and restores it on return.
+The HUD panel header and the catalog name the current system via `GalaxyMap.system_name()`.
+Systems are drawn in their star's colour (`GalaxyMap.star_class()`, `STAR_CLASSES` O..M),
+with a legend bottom right. Zoomed far out (`ZOOM_MIN` 0.06) the map shows
+`GalaxyMap.NEIGHBOURS` - spirals, ellipticals and irregular clouds drawn by
+`far_galaxy()` in `galaxy_map.gdshader` from the `nb_place` / `nb_shape` / `nb_tint`
+arrays; they can be picked for an info card but are out of hyperdrive range.
+
+## Galaxy map search, visited list; model plants; saves
+
+- `GalaxyMapWindow`: a header `LineEdit` searches `GalaxyMap.systems()` by name
+  (drop-down on the unclipped `_top` layer; Enter or click focuses the system), and a
+  fold-away VISITED SYSTEMS panel on the left (`_list_open` is static) lists visits in
+  order; clicking a row selects and flies to it.
+- Plants (`beanstalk`, `frozen_beanstalk`, `dried_beanstalk` ids, shown as Moonbloom)
+  use `ResourceDeposits.MODELS` `moonbloom`: `models/moonbloom.obj` (6k tris, decimated
+  in Blender from a Meshy GLB) + `models/moonbloom_albedo.png`. `make_node` gives them the
+  shared mesh and sets `use_texture` / `tex_adjust` (hue turn, saturation, value) on
+  `resource_deposit.gdshader`; the type's `tint` (spawns may override it) and `color`
+  make the variants (Slime worlds tint it green). The shader is `cull_disabled` and
+  flips back-face normals for the open petals.
+- Saves: `scripts/data/SaveGame.gd` (see its header); `solar_system.gd`
+  `build_save_data()` / `_apply_pending_save()`; `Journal`, `GalaxyMap`,
+  `PlayerProgress` each have `to_dict()` / `from_dict()`.

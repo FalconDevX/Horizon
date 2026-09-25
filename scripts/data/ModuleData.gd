@@ -37,7 +37,7 @@ enum Category {
 @export var thrust: float = 0.0
 @export var fuel_consumption: float = 0.0
 @export var max_heat: float = 100.0
-## When true, this engine is RCS-only (truss next to normal deck, not ENGINE_MOUNT).
+## When true, this engine is RCS-only (truss next to deck).
 @export var is_corrective_engine: bool = false
 ## Engine family this size belongs to (e.g. "Chemical") and its star ratings
 ## [thrust, fuel, energy, mass] - the shipyard groups engines into rows by it.
@@ -96,7 +96,7 @@ func is_equipment() -> bool:
 
 
 ## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
-## Main engines only on ENGINE_MOUNT (may overhang onto the weapon truss).
+## Main engines stand in open space on a hull's left (aft) face instead.
 ## Corrective engines and weapons only on truss cells adjacent to normal DECK.
 func is_deck_equipment() -> bool:
 	return (
@@ -123,6 +123,12 @@ func is_weapon() -> bool:
 
 func is_main_engine() -> bool:
 	return category == Category.ENGINE and not is_corrective_engine
+
+
+## Main engines never turn: their nozzle always points to the grid's left
+## (the aft, ShipHull.AFT). Rotating the shipyard view turns them with it.
+func is_rotatable() -> bool:
+	return not is_main_engine()
 
 
 func is_rcs_engine() -> bool:

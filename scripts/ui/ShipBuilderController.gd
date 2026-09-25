@@ -416,8 +416,13 @@ func _hook_slot(slot: ModuleInventorySlot, module: ModuleData) -> void:
 
 
 func _on_visibility_changed() -> void:
-	if visible and _shown_category >= 0:
+	if not visible:
+		return
+	if _shown_category >= 0:
 		_show_category(_shown_category as ModuleData.Category)
+	# The panel starts hidden, so the _ready centering ran with no layout:
+	# open on the middle of the grid every time.
+	_on_center_view_pressed()
 
 
 func _on_inventory_module_selected(module: ModuleData) -> void:
@@ -454,11 +459,11 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 			ModuleData.Category.CONNECTOR:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.WEAPON:
-				floor_hint = "truss next to normal deck (not orange mount)"
+				floor_hint = "truss next to deck"
 			ModuleData.Category.RADAR:
 				floor_hint = "deck"
 			ModuleData.Category.ENGINE:
-				floor_hint = "orange mount only (≥1 cell) + optional truss overhang"
+				floor_hint = "open space touching a hull's left side"
 			_:
 				if module.is_deck_equipment():
 					floor_hint = "deck"

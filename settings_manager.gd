@@ -24,11 +24,18 @@ var starfield_brightness: float = 0.5
 
 # Gameplay & Flight settings
 var camera_smoothing: bool = true
-var ship_rotation_speed: float = 2.5
 var camera_zoom_speed: float = 1.2
 var camera_pan_speed: float = 1.0
 var auto_drop_warp_on_thrust: bool = true
 var autopilot_default_main_engine: bool = true
+
+# Debug
+## Unlocks the whole tech tree and catalog and lets the hyperdrive fire
+## anywhere (PlayerProgress.god_mode mirrors it).
+var god_mode: bool = false:
+	set(value):
+		god_mode = value
+		PlayerProgress.god_mode = value
 
 
 func _init() -> void:
@@ -143,11 +150,12 @@ func save_settings() -> void:
 	cfg.set_value("display", "starfield_brightness", starfield_brightness)
 
 	cfg.set_value("gameplay", "camera_smoothing", camera_smoothing)
-	cfg.set_value("gameplay", "ship_rotation_speed", ship_rotation_speed)
 	cfg.set_value("gameplay", "camera_zoom_speed", camera_zoom_speed)
 	cfg.set_value("gameplay", "camera_pan_speed", camera_pan_speed)
 	cfg.set_value("gameplay", "auto_drop_warp_on_thrust", auto_drop_warp_on_thrust)
 	cfg.set_value("gameplay", "autopilot_default_main_engine", autopilot_default_main_engine)
+
+	cfg.set_value("debug", "god_mode", god_mode)
 
 	cfg.save(SAVE_PATH)
 
@@ -173,11 +181,12 @@ func load_settings() -> void:
 		starfield_brightness = cfg.get_value("display", "starfield_brightness", 0.5)
 
 		camera_smoothing = cfg.get_value("gameplay", "camera_smoothing", true)
-		ship_rotation_speed = cfg.get_value("gameplay", "ship_rotation_speed", 2.5)
 		camera_zoom_speed = cfg.get_value("gameplay", "camera_zoom_speed", 1.2)
 		camera_pan_speed = cfg.get_value("gameplay", "camera_pan_speed", 1.0)
 		auto_drop_warp_on_thrust = cfg.get_value("gameplay", "auto_drop_warp_on_thrust", true)
 		autopilot_default_main_engine = cfg.get_value("gameplay", "autopilot_default_main_engine", true)
+
+		god_mode = cfg.get_value("debug", "god_mode", false)
 
 	apply_audio_settings()
 	if fullscreen or not vsync:

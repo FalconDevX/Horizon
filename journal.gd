@@ -5,11 +5,14 @@ extends RefCounted
 ## planet (by name - galaxy-map travel re-rolls the same planets), which of its
 ## variants and traits they have seen and what they found on each variant, and
 ## which resource types they know. Static, like PlayerProgress, so it survives
-## travel and scene reloads; there is no save system yet.
+## travel and scene reloads, and it goes into saved games (SaveGame).
 ##
 ## A "variant" is terrain_params.variant ("" for kinds without one); a "trait"
 ## is a flag a roll can set beside it (PlanetLore.FLAG_LABELS: blind, julia,
 ## rings).
+##
+## God mode (PlayerProgress.god_mode, a debug setting) answers every question
+## here with yes, without touching what was really learned.
 
 ## body name -> {variant: true}
 static var _variants: Dictionary = {}
@@ -42,10 +45,14 @@ static func record_find(body_name: String, params: Dictionary, type_name: String
 
 
 static func has_seen(body_name: String, variant: String) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return _variants.get(body_name, {}).has(variant)
 
 
 static func has_seen_trait(body_name: String, flag: String) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return _traits.get(body_name, {}).has(flag)
 
 
@@ -55,6 +62,8 @@ static func seen_count(body_name: String) -> int:
 
 
 static func is_found(body_name: String, variant: String, type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return _finds.get(body_name, {}).get(variant, {}).has(type_name)
 
 
@@ -74,7 +83,24 @@ static func variants_found_on(body_name: String, type_name: StringName) -> Array
 
 
 static func is_known(type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return _known.has(type_name)
+
+
+## Everything learned, for SaveGame.
+static func to_dict() -> Dictionary:
+	return {
+		"variants": _variants.duplicate(true), "traits": _traits.duplicate(true),
+		"finds": _finds.duplicate(true), "known": _known.duplicate(true),
+	}
+
+
+static func from_dict(data: Dictionary) -> void:
+	_variants = (data.get("variants", {}) as Dictionary).duplicate(true)
+	_traits = (data.get("traits", {}) as Dictionary).duplicate(true)
+	_finds = (data.get("finds", {}) as Dictionary).duplicate(true)
+	_known = (data.get("known", {}) as Dictionary).duplicate(true)
 
 
 ## Forgets everything - a new game.

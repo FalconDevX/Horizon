@@ -95,18 +95,19 @@ const _STAR_FUEL: Array[float] = [1.0, 2.5, 4.5, 7.0, 10.0]
 const _STAR_ENERGY: Array[float] = [1.5, 4.0, 8.0, 13.0, 18.0]
 const _STAR_MASS: Array[float] = [3.0, 6.0, 10.0, 15.0, 22.0]
 
-## Engine sizes S / M / L: square footprints 1x1 / 2x2 / 3x3. Bigger engines
+## Engine sizes S / M / L: footprints 1x1 / 2x1 / 2x2 (as on the Drive sketches,
+## "Horizon/silniki 2d"; art index 1/2/3 in the file names). Bigger engines
 ## get a little more thrust per unit of fuel and mass.
 const _ENGINE_SIZES := [
-	{"suffix": "S", "id": "s", "cells": 1, "thrust": 1.0, "fuel": 1.0, "energy": 1.0, "mass": 1.0, "heat": 1.0},
-	{"suffix": "M", "id": "m", "cells": 2, "thrust": 2.5, "fuel": 2.3, "energy": 2.3, "mass": 2.2, "heat": 1.8},
-	{"suffix": "L", "id": "l", "cells": 3, "thrust": 4.5, "fuel": 4.0, "energy": 4.0, "mass": 3.8, "heat": 2.6},
+	{"suffix": "S", "id": "s", "art": 1, "size": Vector2i(1, 1), "thrust": 1.0, "fuel": 1.0, "energy": 1.0, "mass": 1.0, "heat": 1.0},
+	{"suffix": "M", "id": "m", "art": 2, "size": Vector2i(2, 1), "thrust": 2.5, "fuel": 2.3, "energy": 2.3, "mass": 2.2, "heat": 1.8},
+	{"suffix": "L", "id": "l", "art": 3, "size": Vector2i(2, 2), "thrust": 4.5, "fuel": 4.0, "energy": 4.0, "mass": 3.8, "heat": 2.6},
 ]
 
 
 ## Five engine types in three sizes each. Stars: thrust, fuel, energy, mass.
 ## Sprites: textures/modules/engine_<type>_<1|2|3>.png, nozzle pointing left
-## (the aft side, where the orange ENGINE_MOUNT tiles are).
+## (the aft side: main engines stand left of a hull).
 static func engines() -> Array[ModuleData]:
 	var list: Array[ModuleData] = []
 	list.append_array(_engine_family("Chemical", "chemical", 5, 5, 1, 2, 120.0))
@@ -128,10 +129,11 @@ static func _engine_family(
 ) -> Array[ModuleData]:
 	var list: Array[ModuleData] = []
 	for size: Dictionary in _ENGINE_SIZES:
-		var cells: int = size["cells"]
+		var art: int = size["art"]
+		var footprint: Vector2i = size["size"]
 		var shape: Array[Vector2i] = []
-		for y in cells:
-			for x in cells:
+		for y in footprint.y:
+			for x in footprint.x:
 				shape.append(Vector2i(x, y))
 		var m := _engine(
 			"%s %s" % [title, size["suffix"]],
@@ -143,10 +145,10 @@ static func _engine_family(
 			base_heat * float(size["heat"]),
 			shape
 		)
-		var sprite := "res://textures/modules/engine_%s_%d.png" % [key, cells]
+		var sprite := "res://textures/modules/engine_%s_%d.png" % [key, art]
 		if ResourceLoader.exists(sprite):
 			m.texture = load(sprite)
-		var plan := "res://textures/modules/engine_%s_%d_plan.png" % [key, cells]
+		var plan := "res://textures/modules/engine_%s_%d_plan.png" % [key, art]
 		if ResourceLoader.exists(plan):
 			m.plan_texture = load(plan)
 		m.family = title
@@ -465,15 +467,9 @@ static func make_hull_texture(hull: HullData, rotation: int = 0, cell_px: int = 
 	var img := Image.create(bounds.x * cell_px, bounds.y * cell_px, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 
-	var deck := Color(0.32, 0.4, 0.52)
-	var mount := Color(0.55, 0.34, 0.22)
+	var base := Color(0.32, 0.4, 0.52)
 	for i in local_shape.size():
-		var local: Vector2i = local_shape[i]
 		var c: Vector2i = placed[i]
-		var floor := hull.get_local_floor(local)
-		var base := deck
-		if floor == HullData.FloorType.ENGINE_MOUNT:
-			base = mount
 		var ox := c.x * cell_px
 		var oy := c.y * cell_px
 		for py in cell_px:
