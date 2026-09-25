@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_mothership.png" id="2_tex"]
+[ext_resource type="PackedScene" path="res://scenes/enemies/EnemyFast.tscn" id="3_fast"]
+
+[node name="EnemyMothership" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_tex")
+visual_length = 58.0
+move_speed = 70.0
+turn_speed = 1.2
+can_fire = false
+deploy_fighters = true
+fighter_scene = ExtResource("3_fast")
+deploy_cooldown = 1.35
+deploy_offset = 52.0
+collision_radius = 24.0
+muzzles = PackedVector2Array()
+## Six rear thrusters on the carrier art.
+engine_exits = PackedVector2Array(0.28, 0.94, 0.4, 0.96, 0.5, 0.97, 0.6, 0.96, 0.72, 0.94)
+engine_half_width = 2.8
