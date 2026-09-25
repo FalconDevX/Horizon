@@ -54,6 +54,8 @@ var radar_contacts: Array[String] = []
 var weapon_locks: Array[String] = []
 var _fire_flash_timer := 0.0
 var _fire_flash_to := Vector2.ZERO
+## Sniper Laser shots still on screen: {device, to (world), time}.
+var _sniper_beams: Array[Dictionary] = []
 var show_fov_cones := true
 
 var velocity := Vector2.ZERO
@@ -99,6 +101,15 @@ const THROTTLE_SEGMENTS := 18
 
 const LASER_SOUND := preload("res://sounds/laser.wav")
 var _laser_player: AudioStreamPlayer
+## The Sniper Laser (ModuleCatalog) fires a long yellow beam instead of the
+## short flash: it grows out to the target, then narrows and fades.
+const SNIPER_ID := &"weapon_sniper"
+const SNIPER_BEAM_TIME := 0.9
+## Share of SNIPER_BEAM_TIME the beam takes to reach the target.
+const SNIPER_BEAM_GROW := 0.08
+const SNIPER_GLOW_COLOR := Color(1.0, 0.78, 0.12)
+const SNIPER_CORE_COLOR := Color(1.0, 0.97, 0.75)
+var _sniper_player: AudioStreamPlayer
 
 ## A few players taken in turn, so a beep rings out under the next one
 ## (changing a player's stream would cut it off).
@@ -127,6 +138,15 @@ func _ready() -> void:
 	_laser_player.bus = &"SFX"
 	_laser_player.max_polyphony = 4
 	add_child(_laser_player)
+
+	# Same sample, pitched down: a heavier crack for the sniper.
+	_sniper_player = AudioStreamPlayer.new()
+	_sniper_player.name = "SniperSound"
+	_sniper_player.stream = LASER_SOUND
+	_sniper_player.bus = &"SFX"
+	_sniper_player.pitch_scale = 0.55
+	_sniper_player.max_polyphony = 2
+	add_child(_sniper_player)
 
 	for i in range(4):
 		var beep := AudioStreamPlayer.new()
@@ -211,15 +231,25 @@ func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
 	return FovUtil.has_clear_los(local_origin, to_local, hull_rects, ignore_rects)
 
 
-func try_fire_at(world_pos: Vector2) -> bool:
+## `target_radius`: a sniper beam stops that far short of `world_pos`, on the
+## target's surface.
+func try_fire_at(world_pos: Vector2, target_radius: float = 0.0) -> bool:
 	if weapon_locks.is_empty():
 		return false
 	var best_range := INF
 	var fired := false
+	var sniper_fired := false
 	for device in fov_devices:
 		if str(device.get("kind", "")) != "weapon":
 			continue
 		if not is_body_in_device_fov(device, world_pos):
+			continue
+		if device.get("id", &"") == SNIPER_ID:
+			# Each sniper fires its own beam from its muzzle.
+			var muzzle: Vector2 = device_world_origin(device)
+			var hit: Vector2 = world_pos.move_toward(muzzle, minf(target_radius, muzzle.distance_to(world_pos)))
+			_sniper_beams.append({"device": device, "to": hit, "time": 0.0})
+			sniper_fired = true
 			continue
 		var dist := device_world_origin(device).distance_to(world_pos)
 		if dist < best_range:
@@ -229,8 +259,11 @@ func try_fire_at(world_pos: Vector2) -> bool:
 			fired = true
 	if fired:
 		_laser_player.play()
+	if sniper_fired:
+		_sniper_player.play()
+	if fired or sniper_fired:
 		queue_redraw()
-	return fired
+	return fired or sniper_fired
 
 
 func _on_click_area_input_event(
@@ -421,6 +454,10 @@ func get_autopilot_acceleration(max_force: float) -> Vector2:
 func _process(delta: float) -> void:
 	if _fire_flash_timer > 0.0:
 		_fire_flash_timer = maxf(0.0, _fire_flash_timer - delta)
+	for i in range(_sniper_beams.size() - 1, -1, -1):
+		_sniper_beams[i]["time"] = float(_sniper_beams[i]["time"]) + delta
+		if float(_sniper_beams[i]["time"]) >= SNIPER_BEAM_TIME:
+			_sniper_beams.remove_at(i)
 	queue_redraw()
 	_update_main_engine_sound(delta)
 
@@ -495,6 +532,38 @@ func _draw() -> void:
 	if _fire_flash_timer > 0.0:
 		var alpha := clampf(_fire_flash_timer / 0.35, 0.0, 1.0)
 		draw_line(Vector2.ZERO, _fire_flash_to, Color(1.0, 0.45, 0.2, 0.85 * alpha), 2.0)
+
+	for beam in _sniper_beams:
+		_draw_sniper_beam(beam)
+
+
+## A sniper shot: a yellow beam that shoots out to the target in a blink,
+## flares where it hits, then thins and fades. Sizes are in screen pixels.
+func _draw_sniper_beam(beam: Dictionary) -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var t: float = float(beam["time"]) / SNIPER_BEAM_TIME
+	var grow: float = clampf(t / SNIPER_BEAM_GROW, 0.0, 1.0)
+	var fade: float = 1.0 - smoothstep(SNIPER_BEAM_GROW, 1.0, t)
+	# From the muzzle as it is now, so the beam stays on the moving ship.
+	var from: Vector2 = to_local(device_world_origin(beam["device"]))
+	var to: Vector2 = to_local(beam["to"])
+	var tip: Vector2 = from.lerp(to, grow)
+	# Wide soft glow, a bright band, then a white-hot core.
+	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.1 * fade), 18.0 * px * (0.5 + 0.5 * fade))
+	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.25 * fade), 9.0 * px * (0.5 + 0.5 * fade))
+	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.8 * fade), 4.0 * px * (0.4 + 0.6 * fade))
+	draw_line(from, tip, Color(SNIPER_CORE_COLOR, fade), 1.8 * px)
+	# Muzzle flash.
+	var flash: float = 1.0 - smoothstep(0.0, 0.35, t)
+	if flash > 0.0:
+		draw_circle(from, 12.0 * px * flash, Color(SNIPER_GLOW_COLOR, 0.45 * flash))
+		draw_circle(from, 5.0 * px * flash, Color(SNIPER_CORE_COLOR, 0.9 * flash))
+	# Impact flare once the beam lands.
+	if grow >= 1.0:
+		var hit: float = 1.0 - smoothstep(SNIPER_BEAM_GROW, 0.7, t)
+		draw_circle(to, 30.0 * px * hit, Color(SNIPER_GLOW_COLOR, 0.15 * hit))
+		draw_circle(to, 14.0 * px * hit, Color(SNIPER_GLOW_COLOR, 0.4 * hit))
+		draw_circle(to, 6.0 * px * hit, Color(SNIPER_CORE_COLOR, 0.95 * hit))
 
 
 func _draw_fov_cones() -> void:

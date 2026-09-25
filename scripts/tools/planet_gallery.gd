@@ -113,7 +113,8 @@ func _process(_delta: float) -> bool:
 
 func _wait_for_bakes() -> bool:
 	for planet in world.planets:
-		if planet.get("terrain_data").is_empty():
+		# Bodies with no heightmap (the black hole) never bake - don't wait on them.
+		if int(planet.get("terrain_kind")) != 0 and planet.get("terrain_data").is_empty():
 			if Time.get_ticks_msec() - bake_started_ms > BAKE_TIMEOUT_MS:
 				push_error("planet_gallery: bakes did not land - is this running --headless?")
 				return true
@@ -137,7 +138,7 @@ func _frame(planet: Node2D) -> void:
 
 	var side: float = view.y * 0.8
 	caption.position = Vector2((view.x - side) * 0.5 + 16.0, (view.y - side) * 0.5 + 12.0)
-	caption.text = "%s  ·  %s\nworld %d" % [planet.get("body_name"), _kind_label(planet), seeds[world_index]]
+	caption.text = "%s\n%s\nworld %d" % [planet.get("body_name"), _kind_label(planet), seeds[world_index]]
 
 
 func _kind_label(planet: Node2D) -> String:

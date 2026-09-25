@@ -12,6 +12,8 @@ enum Category {
 	SHIELD,
 	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
 	RADAR,
+	FLOOR, ## deck tiles that attach straight to a hull, extending it
+	TRUSS, ## mounting frame: guns sit on it, and it reaches further out
 }
 
 @export var title: String = "Module"
@@ -67,7 +69,18 @@ enum Category {
 
 
 func is_structure() -> bool:
-	return category == Category.HULL or category == Category.CONNECTOR
+	return (
+		category == Category.HULL
+		or category == Category.CONNECTOR
+		or category == Category.FLOOR
+		or category == Category.TRUSS
+	)
+
+
+## Hulls, floor tiles and truss beams: what the weapon-mount ring is measured
+## from (ShipHull.WEAPON_MOUNT_DEPTH).
+func is_frame() -> bool:
+	return category == Category.HULL or category == Category.FLOOR or category == Category.TRUSS
 
 
 func is_equipment() -> bool:

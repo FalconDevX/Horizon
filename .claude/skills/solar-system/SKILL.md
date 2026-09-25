@@ -446,7 +446,14 @@ still shows the blob preview.
   up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
   A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
 
-## Black hole
+## Black hole / wormhole
+
+Erebus has `is_anomaly`: `_roll_anomaly()` rolls from `generation_seed` (again on a world
+reroll) a black hole with `BLACK_HOLE_CHANCE` = 10%, otherwise a wormhole sized from `WORMHOLE_SIZES`
+(Small to Giant, 0.05-0.8 of the authored radius and mass; `set_world_seed` refreshes
+`mu_planets`). Both keep `is_black_hole` = true and use the same shader. With `wormhole` set, the
+shader skips the disk, the captured rays show a tinted fisheye of another patch of sky
+(`far_tint` / `far_offset`) and the throat gets a glowing lip. Its catalog text is `PlanetLore.WORMHOLE`.
 
 `is_black_hole` on a `celestial_body.gd` body (Erebus): `radius` is the event horizon.
 `build_black_hole()` hides the sphere and turns the glow plane into a quad
@@ -529,8 +536,8 @@ There is no test suite. Changes are checked by running the game in Godot 4.7
 (`run/main_scene` is the main menu; New Game shows the loading screen, then
 `solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
 zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
-follow, `N` reroll the world seed, `B` ship builder, `I` planet catalog, plus the flight
-keys above.
+follow, `N` reroll the world seed, `B` ship builder, `I` planet catalog, `M` galaxy map,
+plus the flight keys above.
 
 ## Ship builder engines
 
@@ -542,3 +549,42 @@ the orange `ENGINE_MOUNT` tiles are); an optional `..._plan.png` (`plan_texture`
 drawn over the footprint while a module is held. The inventory shows one engine family
 per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates
 engine art with the module. There is no RCS / corrective engine any more.
+
+## Resources, tech tree, builder inventory
+
+From the Horizon Miro board ("Moduły statku", "Receptury modułów", "Planety → surowce").
+
+- `scripts/data/ResourceCatalog.gd`: 14 resources in tiers T1 (Common), T2 (Uncommon) and T3 (Rare), with icons in
+  `textures/resources/<id>.png`, and `PLANETS` (body_name → resources, zone, why) for every body. The
+  I panel (`planet_info_panel.gd` `_draw_resources`) reads it. A new planet needs a row
+  there, or it shows no resources.
+- `scripts/data/TechTree.gd`: `NODES` (branch, tier, recipe, requires, modules). Tier 1
+  is open from the start. Higher tiers need `requires` (my own links, not from the board) and pay
+  `UNLOCK_COST[tier]` of each recipe resource. A catalog module in no node is always
+  available.
+- `scripts/data/PlayerProgress.gd`: static stock and unlocked set, starting at 50 T1, 20 T2 and 0 T3.
+  There is no gathering yet, so T3 nodes cannot be unlocked.
+- The builder inventory (B) lists every module by category as before (FLOOR, TRUSS
+  included). Locked ones are greyed out and not clickable (`ShipBuilderController._hook_slot`), and
+  the list refreshes when the yard opens. The tree itself is `scripts/ui/TechTreePanel.gd` (branch
+  tabs, resource bar, scrolling `TechTreeView`) in its own window, `TechTreeWindow`, which
+  `solar_system.gd` creates next to the planet catalog. **T** opens and closes it, apart from
+  the **I** catalog.
+- New structure categories: `FLOOR` (deck tiles that edge-attach to a hull or floor, +1 slot/cell)
+  and `TRUSS` (built on the weapon-mount ring; the ring also grows from floor and truss,
+  `ModuleData.is_frame()`; guns may stand on truss, `ShipHull.is_truss_beam_cell`;
+  truss does not block line of sight).
+- Module art is cut from `Downloads/horizon_png` into N×128 px PNGs, loaded by
+  `ModuleCatalog._use_art(m, name)` when the file exists.
+
+## Galaxy map
+
+A star system is its `world_seed`. `scripts/data/GalaxyMap.gd` (static, no save yet)
+records every seed the player has been in (`visit()` from `_ready()` and
+`set_world_seed()`, so `N` adds one) and derives from the seed alone a spot on a
+4-arm spiral (`position_for()`) and a name (`system_name()`). `scripts/ui/GalaxyMapWindow.gd`,
+opened with **M**, draws the galaxy (`galaxy_map.gdshader`: barred spiral on the same
+arm curve as `arm_angle()`, dust lanes, H II knots, point stars that resolve as you zoom;
+its noise uses an integer PCG hash - a float hash breaks into squares on the GPU), the visited systems joined in visit order and the
+current one pulsing; selecting another visited system offers WARP, which emits
+`travel_requested` → `set_world_seed()`. The ship keeps its position on a warp.

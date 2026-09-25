@@ -1,0 +1,21 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_sniper.png" id="2_sniper"]
+[ext_resource type="AudioStream" path="res://sounds/laser_tank.wav" id="3_laser"]
+
+[node name="EnemySniper" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_sniper")
+visual_length = 48.0
+move_speed = 95.0
+turn_speed = 1.4
+fire_cooldown = 2.5
+laser_sound = ExtResource("3_laser")
+laser_range = 12000.0
+laser_damage = 60.0
+laser_pitch = 0.6
+beam_mode = true
+muzzles = PackedVector2Array(0.508, 0.015)
+engine_exits = PackedVector2Array(0.35, 0.99, 0.5, 0.97, 0.667, 0.99)
+engine_half_width = 1.6

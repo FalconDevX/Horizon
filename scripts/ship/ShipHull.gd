@@ -9,7 +9,10 @@ extends Node2D
 ##   - Left edge is ENGINE_MOUNT; main engines only there (+ optional truss overhang), not on deck.
 ##   - Corrective / RCS engines and weapons only on truss cells adjacent to normal DECK (not ENGINE_MOUNT).
 ##   - Ship-wide: ≥1 RCS on each outer side except the main-engine side.
-##   - Truss itself: empty cells within WEAPON_MOUNT_DEPTH of a hull (also used for main-engine overhang).
+##   - Truss itself: empty cells within WEAPON_MOUNT_DEPTH of a hull, floor tile or truss beam
+##     (also used for main-engine overhang).
+##   - FLOOR tiles attach straight to a hull or other floor and act as deck (+1 slot per cell).
+##   - TRUSS beams go on the truss ring (so they can chain outward); weapons may stand on them.
 ##   - Moving a hull keeps its attached modules (cargo).
 
 signal stats_changed(new_stats: Dictionary)
@@ -104,6 +107,8 @@ func get_hull_blocker_rects_local(centroid: Vector2 = Vector2.INF) -> Array:
 	var rects: Array = []
 	var half := FovUtil.WORLD_UNITS_PER_CELL * 0.5
 	for cell: Vector2i in _structure.keys():
+		if _is_open_frame(cell):
+			continue
 		var c := Vector2(cell) + Vector2(0.5, 0.5) - centroid
 		var local := c * FovUtil.WORLD_UNITS_PER_CELL
 		rects.append(Rect2(local - Vector2(half, half), Vector2(half, half) * 2.0))
@@ -114,8 +119,15 @@ func get_hull_blocker_rects_local(centroid: Vector2 = Vector2.INF) -> Array:
 func get_structure_blocker_cells() -> Dictionary:
 	var cells: Dictionary = {}
 	for cell: Vector2i in _structure.keys():
-		cells[cell] = true
+		if not _is_open_frame(cell):
+			cells[cell] = true
 	return cells
+
+
+## Truss beams are an open lattice: they never block a gun's or radar's view.
+func _is_open_frame(cell: Vector2i) -> bool:
+	var s := get_structure_at(cell)
+	return s != null and s.data != null and s.data.category == ModuleData.Category.TRUSS
 
 
 func _structure_centroid_cells() -> Vector2:
@@ -163,6 +175,8 @@ func get_floor_type(cell: Vector2i) -> HullData.FloorType:
 		return HullData.FloorType.EMPTY
 	if structure.data.category == ModuleData.Category.CONNECTOR:
 		return HullData.FloorType.CONNECTOR
+	if structure.data.category == ModuleData.Category.FLOOR:
+		return HullData.FloorType.DECK
 	if structure.data.category == ModuleData.Category.HULL:
 		if structure.data.hull_data == null:
 			return HullData.FloorType.DECK
@@ -192,7 +206,7 @@ func get_used_cells() -> Array:
 ## over the whole build grid.
 func get_weapon_mount_cells() -> Dictionary:
 	var result: Dictionary = {}
-	for hull_cell: Vector2i in _collect_hull_cells().keys():
+	for hull_cell: Vector2i in _collect_frame_cells().keys():
 		for dy in range(-WEAPON_MOUNT_DEPTH, WEAPON_MOUNT_DEPTH + 1):
 			for dx in range(-WEAPON_MOUNT_DEPTH, WEAPON_MOUNT_DEPTH + 1):
 				var dist := absi(dx) + absi(dy)
@@ -228,7 +242,7 @@ func _nearest_hull_manhattan(cell: Vector2i, ignore_instance_id: int = -1) -> in
 				continue
 			if neighbor.instance_id == ignore_instance_id:
 				continue
-			if neighbor.data.category == ModuleData.Category.HULL:
+			if neighbor.data.is_frame():
 				best = mini(best, dist)
 	return best
 
@@ -243,6 +257,14 @@ static func _cell_in_weapon_truss(cell: Vector2i, hull_cells: Dictionary) -> boo
 			if hull_cells.has(cell + Vector2i(dx, dy)):
 				return true
 	return false
+
+
+func is_truss_beam_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
+	var s := get_structure_at(cell)
+	return (
+		s != null and s.data != null and s.instance_id != ignore_instance_id
+		and s.data.category == ModuleData.Category.TRUSS
+	)
 
 
 ## Empty truss cell orthogonally adjacent to at least one normal DECK (not ENGINE_MOUNT).
@@ -282,14 +304,20 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 	if data == null:
 		return false
 	match data.category:
-		ModuleData.Category.HULL, ModuleData.Category.CONNECTOR:
+		ModuleData.Category.HULL, ModuleData.Category.CONNECTOR, ModuleData.Category.FLOOR:
 			return get_structure_at(cell) == null and get_equipment_at(cell) == null
-		ModuleData.Category.WEAPON:
+		ModuleData.Category.TRUSS:
 			return (
 				get_structure_at(cell) == null
 				and get_equipment_at(cell) == null
-				and is_deck_adjacent_truss_cell(cell)
+				and is_weapon_mount_cell(cell)
 			)
+		ModuleData.Category.WEAPON:
+			if get_equipment_at(cell) != null:
+				return false
+			if is_truss_beam_cell(cell):
+				return true
+			return get_structure_at(cell) == null and is_deck_adjacent_truss_cell(cell)
 		_:
 			if data.is_main_engine():
 				# Orange mount only, or empty truss (≥1 ENGINE_MOUNT checked in can_place).
@@ -337,6 +365,15 @@ func can_place(
 	if data.category == ModuleData.Category.HULL:
 		if _hull_would_touch_other_hull(cells, ignore_instance_id):
 			return false
+
+	if data.category == ModuleData.Category.FLOOR:
+		if not _cells_touch_deck_structure(cells, ignore_instance_id):
+			return false
+
+	if data.category == ModuleData.Category.TRUSS:
+		for cell: Vector2i in cells:
+			if not is_weapon_mount_cell(cell, ignore_instance_id):
+				return false
 
 	if data.is_main_engine():
 		if not _cells_touch_floor(cells, HullData.FloorType.ENGINE_MOUNT):
@@ -622,6 +659,16 @@ func are_ship_rcs_sides_covered() -> bool:
 	return true
 
 
+## Hull, floor and truss cells - what the weapon-mount ring grows from.
+func _collect_frame_cells() -> Dictionary:
+	var cells: Dictionary = {}
+	for cell: Vector2i in _structure.keys():
+		var s := get_structure_at(cell)
+		if s != null and s.data != null and s.data.is_frame():
+			cells[cell] = true
+	return cells
+
+
 func _collect_hull_cells() -> Dictionary:
 	var hull_cells: Dictionary = {}
 	for cell: Vector2i in _structure.keys():
@@ -810,7 +857,9 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 	var eq := get_equipment_at(cell)
 	if eq != null and eq.instance_id != ignore_instance_id:
 		return false
-	# RCS, like weapons, never sits on a structure cell.
+	# Weapons stand on truss beams; otherwise, like RCS, never on structure.
+	if data.category == ModuleData.Category.WEAPON and is_truss_beam_cell(cell, ignore_instance_id):
+		return true
 	if get_structure_at(cell) != null:
 		var s2 := get_structure_at(cell)
 		if s2.instance_id != ignore_instance_id:
@@ -870,6 +919,24 @@ func _cells_touch_floor_on_hull(
 	return false
 
 
+## A floor tile must sit edge-to-edge with a hull or another floor tile.
+func _cells_touch_deck_structure(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
+	var proposed: Dictionary = {}
+	for c: Vector2i in cells:
+		proposed[c] = true
+	for c: Vector2i in cells:
+		for d: Vector2i in _DIRS:
+			var n := c + d
+			if proposed.has(n):
+				continue
+			var s := get_structure_at(n)
+			if s == null or s.data == null or s.instance_id == ignore_instance_id:
+				continue
+			if s.data.category == ModuleData.Category.HULL or s.data.category == ModuleData.Category.FLOOR:
+				return true
+	return false
+
+
 func _hull_would_touch_other_hull(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
 	var proposed: Dictionary = {}
 	for c: Vector2i in cells:
@@ -911,9 +978,12 @@ func _count_equipment_cells(ignore_instance_id: int = -1) -> int:
 func _total_hull_capacity(ignore_instance_id: int = -1) -> int:
 	var cap := 0
 	for m: PlacedModule in _modules.values():
-		if m.data == null or m.data.category != ModuleData.Category.HULL:
+		if m.data == null or m.instance_id == ignore_instance_id:
 			continue
-		if m.instance_id == ignore_instance_id:
+		if m.data.category == ModuleData.Category.FLOOR:
+			cap += int(m.data.capacity)
+			continue
+		if m.data.category != ModuleData.Category.HULL:
 			continue
 		if m.data.hull_data != null:
 			cap += m.data.hull_data.capacity

@@ -31,6 +31,8 @@ var _bodies: Array[Node2D] = []
 var _selected: int = 0
 var _hovered: int = -1
 var _hover_close: bool = false
+var _hover_help: bool = false
+var _help: HelpPopup
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
@@ -48,6 +50,13 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
 	_build_viewport()
+	_help = HelpPopup.new(PackedStringArray([
+		"Drag the planet: turn it",
+		"Mouse wheel over the planet: zoom",
+		"Up and Down arrows: previous and next body",
+		"I or Esc: close the catalog",
+	]))
+	add_child(_help)
 	resized.connect(_layout)
 	# Over the rest of the HUD, which is added after this node in the scene.
 	move_to_front.call_deferred()
@@ -69,6 +78,7 @@ func toggle() -> void:
 		open_on(null)
 
 
+
 ## Opens the catalog, on `body` if it is in it.
 func open_on(body: Node2D) -> void:
 	if _bodies.is_empty():
@@ -86,6 +96,7 @@ func step(offset: int) -> void:
 
 func hide_panel() -> void:
 	visible = false
+	_help.close()
 	_clear_preview()
 
 
@@ -244,15 +255,25 @@ func _gui_input(event: InputEvent) -> void:
 			_turn(Vector3(1.0, 0.0, 0.0), motion.relative.y * DRAG_TURN)
 		var hovered: int = _row_at(motion.position)
 		var hover_close: bool = _close_rect().has_point(motion.position)
-		if hovered != _hovered or hover_close != _hover_close:
+		var hover_help: bool = HelpPopup.button_rect(_close_rect()).has_point(motion.position)
+		if hovered != _hovered or hover_close != _hover_close or hover_help != _hover_help:
 			_hovered = hovered
 			_hover_close = hover_close
+			_hover_help = hover_help
 			queue_redraw()
 
 	elif event is InputEventMouseButton:
 		var button := event as InputEventMouseButton
 		if button.button_index == MOUSE_BUTTON_LEFT:
 			if button.pressed:
+				var close: Rect2 = _close_rect()
+				if HelpPopup.button_rect(close).has_point(button.position):
+					_help.toggle_at(Vector2(close.end.x, close.end.y + 10.0))
+					queue_redraw()
+					accept_event()
+					return
+				_help.close()
+				queue_redraw()
 				if _close_rect().has_point(button.position) or not _panel_rect().has_point(button.position):
 					hide_panel()
 				elif _row_at(button.position) >= 0:
@@ -276,6 +297,10 @@ func _gui_input(event: InputEvent) -> void:
 # ---- numbers ----------------------------------------------------------------
 
 func _lore(body: Node2D) -> Dictionary:
+	if body.get("is_wormhole"):
+		var lore: Dictionary = PlanetLore.WORMHOLE.duplicate()
+		lore["class"] = "%s %s" % [body.get("wormhole_size"), lore["class"]]
+		return lore
 	if body.get("is_black_hole"):
 		return PlanetLore.BLACK_HOLE
 	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
@@ -344,10 +369,11 @@ func _draw() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 20, HudPanelStyle.COLOR_TEXT_PRIMARY
 	)
 	draw_string(
-		font, panel.position + Vector2(260.0, 36.0), "VESPERIS SYSTEM   ·   I or Esc to close",
+		font, panel.position + Vector2(260.0, 36.0), "VESPERIS SYSTEM",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
+	HelpPopup.draw_button(self, HelpPopup.button_rect(close), _hover_help, _help.visible)
 	draw_string(
 		font, close.position + Vector2(5.0, 18.0), "X", HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
 		HudPanelStyle.COLOR_TEXT_PRIMARY if _hover_close else HudPanelStyle.COLOR_TEXT_MUTED
@@ -388,13 +414,9 @@ func _draw_list(font: Font) -> void:
 		)
 
 
-func _draw_view_frame(font: Font) -> void:
+func _draw_view_frame(_font: Font) -> void:
 	var view: Rect2 = _view_rect()
 	draw_rect(view, Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 0.4), false, 1.0)
-	draw_string(
-		font, view.position + Vector2(10.0, view.size.y - 12.0), "DRAG TO ROTATE   ·   SCROLL TO ZOOM",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_FAINT
-	)
 
 
 func _draw_text(font: Font) -> void:
@@ -418,6 +440,8 @@ func _draw_text(font: Font) -> void:
 		)
 		y += 18.0
 
+	y = _draw_resources(font, body, x, y, text.size.x)
+
 	y += 10.0
 	y = _draw_paragraph(font, lore.get("description", ""), x, y, text.size.x, 12, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
@@ -430,6 +454,52 @@ func _draw_text(font: Font) -> void:
 			draw_string(font, Vector2(x, y), "›", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, HudPanelStyle.COLOR_EMERALD)
 			y = _draw_paragraph(font, fact, x + 14.0, y, text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
 			y += 6.0
+
+
+const RESOURCE_ICON := 22.0
+const RESOURCE_CELL := 132.0
+
+## What the planet yields (ResourceCatalog.PLANETS): zone, an icon and name per
+## resource tinted by tier, and why. Nothing for bodies the survey skips (the
+## sun). Returns the next free y.
+func _draw_resources(font: Font, body: Node2D, x: float, y: float, width: float) -> float:
+	var info: Dictionary = ResourceCatalog.planet_info(String(body.get("body_name")))
+	if info.is_empty():
+		return y
+
+	y += 12.0
+	draw_string(font, Vector2(x, y), "RESOURCES", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD)
+	var zone: int = info.get("zone", 1)
+	var zone_text: String = "Zone: %s" % ResourceCatalog.ZONE_NAMES.get(zone, "?")
+	if zone > 0:
+		zone_text += " (T%d)" % zone
+	draw_string(font, Vector2(x + 110.0, y), zone_text, HORIZONTAL_ALIGNMENT_LEFT, width - 110.0, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+	y += 10.0
+
+	var resources: Array = info.get("resources", [])
+	if resources.is_empty():
+		y += 12.0
+		draw_string(font, Vector2(x, y), "None to harvest", HORIZONTAL_ALIGNMENT_LEFT, width, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+		y += 8.0
+	else:
+		var per_row: int = maxi(1, int(width / RESOURCE_CELL))
+		for i in range(resources.size()):
+			var id: StringName = resources[i]
+			var cx: float = x + float(i % per_row) * RESOURCE_CELL
+			var cy: float = y + float(i / per_row) * (RESOURCE_ICON + 6.0)
+			var tex: Texture2D = ResourceCatalog.icon(id)
+			if tex != null:
+				draw_texture_rect(tex, Rect2(cx, cy, RESOURCE_ICON, RESOURCE_ICON), false)
+			draw_string(
+				font, Vector2(cx + RESOURCE_ICON + 5.0, cy + RESOURCE_ICON * 0.7),
+				ResourceCatalog.display_name(id), HORIZONTAL_ALIGNMENT_LEFT,
+				RESOURCE_CELL - RESOURCE_ICON - 8.0, 11, ResourceCatalog.tier_color(id)
+			)
+		var rows: int = int(ceil(float(resources.size()) / per_row))
+		y += float(rows) * (RESOURCE_ICON + 6.0)
+
+	y += 12.0
+	return _draw_paragraph(font, info.get("why", ""), x, y, width, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
 
 ## Word-wrapped text from its first baseline at `y`; returns the next free y.
