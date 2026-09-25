@@ -280,25 +280,43 @@ still shows the blob preview.
   Liquid kinds: Terran (water), Volcanic (lava or cryo, emissive), Ice, Toxic (acid).
   `terrain_liquid_coverage` overrides the share (0 = dry).
 - **Per-kind variants** (rolled in `_roll_*()`, named in `params.variant` - plus the
-  flags `blind`, `julia`, `rings` - and described by `PlanetLore.VARIANT_NOTES` /
-  `FLAG_NOTES`): Terran temperate/autumn (autumn grass + forests, more sand);
-  Rings green/sandy/volcanic/autumn/flooded (flooded = every ring set an island;
-  islands = plateau + moat per `ISLAND_MOAT`, sea coverage 0.27·size² each; violet
-  bushes round every set via `bud_near_features`); Occult dust/obsidian_purple/
-  obsidian_yellow + `blind` (eye `style.y` 3 = closed lid, both shaders' `eye_parts`);
+  flags `blind`, `rings` - and described by `PlanetLore.VARIANT_NOTES` /
+  `FLAG_NOTES`): Terran temperate/autumn (autumn grass + forests, more sand)/snowy
+  (flag-rolled on temperate: 14-22 snow humps as `sigils[]`, `FeatureMode.SNOW` -
+  bake `feature_relief` TERRAN dome * `c.x`, shader `snow_at()` on land only);
+  Rings green/sandy/volcanic/autumn/flooded (islands = plateau + moat per
+  `ISLAND_MOAT`, 40% of ring sets, sea coverage 0.27·size² each; violet bushes round
+  every set via `bud_near_features`; volcanic = cones from the bake's
+  `volcano_cones()` on the *unseeded* `hash3_plain` lattice (`volcano_scale`,
+  `_density`, `_shift`), mirrored by the shader's `volcano_at()` - scorched brown
+  ring to 1.6 radii, lava in the caldera and rivulets down the flanks - and by
+  `ResourceDeposits._volcano_distance()`; flooded = coverage ~0.5 plus rivers carved
+  by `channels()` (detail `c.zw`, `detail[3].xy`)); Occult dust/obsidian_purple/
+  obsidian_yellow + `blind` on any of them (eye `style.y` 3 = closed lid, stained
+  `sigil_color`; both shaders' `eye_parts`);
   Lotus open/night (petals folded to buds via bake `b.x` openness, pads glow via
-  `land_glow`)/giant (one continent-sized flower from `sigils[0]`, `flower_shape()`);
-  Fractal palettes classic/ember/verdigris/orchid/frozen + `julia` (Julia sets:
-  `extra.x` 1, constant in `extra.yz`); Meridian pink/inverted (white seas, dark
+  `land_glow`)/giant (3-5 huge flowers from `sigils[]`, `flower_shape()`, and no
+  small ones - flower share `a.z` = 0);
+  Fractal mandelbrot/julia (the massifs' shape: `params.julia`, `extra.x` 1,
+  constant in `extra.yz`) - the palette classic/ember/verdigris/orchid/frozen is
+  only a colouring in `params.palette`, described by
+  `PlanetLore.FRACTAL_PALETTE_NOTES`; Meridian pink/inverted (white seas, dark
   land); Quake settled/active (`quake_glow`, orange)/terraced (bake `c.x` steps) and
   every scar a carved hole (`quake_holes()` mirrors `quakes_at()` via `hash3_plain()`
-  and `quake_shift`); Bloom fields/winter/dried; Oasis dry season/monsoon (+50% muddy
+  and `quake_shift`; settled also raises a flat-topped pillar under each hole,
+  `quake_pillars()` * `c.y`; terraced wears a fast blue-grey mist - clouds 0.8,
+  `cloud_speed`); Bloom fields/winter (+ snow humps as on snowy Terran: sigils,
+  `FeatureMode.SNOW`, bake `b.z`)/dried; Oasis dry season/monsoon (+50% muddy
   rivers); Barren spiked/cracks/red mist + `rings` (master's `_build_rings()`, the roll
   tips the axis with `spin_axis` - see below); Toxic still/crystal (`crust_color`)/
   boiling (`boil*`, `bubbles_at()`); Desert open/lava/glass (`rock_patches`)/sandstorm
   (`cloud_speed`); Slime slick/bubbling/petrified (solid: liquid off, chalky low
   ground, cracks); Gloom single/twin (`crack_twin`, second `cracks_at()` pass); Frozen
-  white/pink; Ice sheet/geysers.
+  white/pink; Ice geysers ("Wurm field": ice wurms, the geyser mesh, now
+  collectible)/hollows (2-4 bowls as BAKE_ONLY sigils cut by the bake,
+  `feature_relief` ICE * `c.y`, liquid off; wurms 4-5 per hollow via the
+  `per_feature` spawn key); every Ice world shines silver (silver `atmo`,
+  `land_glow` over the whole surface). Meridian relief is 0.11-0.16 (tall).
 - **Forcing a variant**: `terrain_variant` on a planet (comma-separated, e.g.
   `"julia,frozen"`, `"rings,spiked"`) reaches `resolve()` as `forced_variant`; the
   rolls pick through `Roller.variant()` / `Roller.flag()`, which still draw their
@@ -689,6 +707,38 @@ the body's current variant, so finds carry across systems per variant.
   List rows show "seen/total". The resource tab's OCCURS ON lists every planet +
   variant a type can spawn on (`_occurrences`, &"random" entries count for every
   collectible type they allow), in full only where found on that variant.
+- The planet page's RESOURCES lists `ResourceDeposits.rules_for(kind, params)` -
+  the spawn entries that apply to the world as rolled (variant and traits) - with
+  `spawn_notes()` (where, note, count range), never the deposits generated this
+  time, so it reads the same for the planet in any system; unfound ones redacted
+  with their count range.
+- While a card is viewed, the text column describes its twin (`_viewed_twin`):
+  lore, variant, liquid, clouds, atmosphere and resource rules from the twin's
+  params, found-ness per that variant via `_found_on()` (Journal); orbit and body
+  numbers stay the real planet's (`_stats(body, look)`).
+- **Clicking a seen card** shows that variant in the log's view. The live planet
+  if it is HERE; otherwise a *twin* (`_twin_for`): a new node with the planet's
+  script and stored exports, `terrain_variant = PlanetLore.forced_variant(...)`,
+  the scene's own spin axis, `terrain_resolution` capped at 512, `preview_only`
+  (celestial_body hides its 3D) and `world` = solar_system (it has no owner to
+  read the world seed from), a hidden child of the panel. `_process` swaps in its
+  `make_preview()` once `terrain_data` lands; twins are cached per log opening
+  and freed in `hide_panel`. `forced_variant` forces every other variant and
+  trait off with `!name` - `Roller.flag` honours `!name` (after drawing its roll),
+  which flag-rolled variants (autumn, cryo, spiked, geysers, pink, twin, monsoon)
+  need to reach their default.
+- **God mode** (Settings > Gameplay, `PlayerProgress.god_mode`, a debug setting):
+  every planet charted (`is_charted`), every variant/trait seen, every type known
+  and found - plus the whole tech tree and warp anywhere. The real discovery is
+  still recorded underneath (and saved: `Journal.to_dict`). Off by default.
+- Spawn key `per_feature` (Vector2i): that many round every sigil of the world
+  instead of `count` per world (`_place_per_feature`, `_near()`); `snow_hump`
+  spawns also aim at a hump's top. Types added: wind_crystal (`wind_crystals`
+  mesh), hel (`bubbles`, gas giants only - excluded from Quake's random finds),
+  silver_spheres (`sphere_arch`, Gloom), ice_wurm (was the scenery geyser).
+- **The bake is an imported `RDShaderFile`**: after editing
+  `planet_terrain_bake.glsl`, a command-line run keeps the old compiled bake until
+  `--import` (or the editor) reimports it - `.gdshader` files load fresh.
 - The scene still forces a showcase `terrain_variant` on 16 planets: those never
   change variant on travel until the field is cleared.
 

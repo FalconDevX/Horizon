@@ -356,6 +356,31 @@ float peak_layer(vec3 p, float density, float sharpness) {
 	return height;
 }
 
+// Rings volcanoes: lone cones like peak_layer's, but on the unseeded hash so
+// the planet shader (volcano_at) and the deposits (resource_deposits.gd
+// _volcano_distance) find the same ones.
+float volcano_cones(vec3 p, float density) {
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float height = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 offset = vec3(x, y, z);
+				vec3 roll = hash3_plain(cell + offset + vec3(0.0, 0.0, 6143.0));
+				if (roll.x > density) {
+					continue;
+				}
+				vec3 r = offset + 0.5 + (hash3_plain(cell + offset + vec3(0.0, 31.0, 0.0)) - 0.5) * 0.8 - local;
+				float radius = mix(0.35, 0.6, roll.x / max(density, 1e-3));
+				float cone = pow(max(1.0 - length(r) / radius, 0.0), 1.6);
+				height = max(height, cone * mix(0.6, 1.0, roll.y));
+			}
+		}
+	}
+	return height;
+}
+
 // Long wandering fractures, like Europa's lineae: the zero lines of warped
 // noise at two scales, not the closed cells a Worley pattern gives (those
 // read as a football). x = the groove, y = the raised flanks either side.
@@ -631,6 +656,30 @@ float quake_holes(vec3 dir, float scale, float density, float size_share, float 
 	return hole;
 }
 
+// Settled Quake: a pillar of rock under each hole of quake_holes() (same
+// lattice), flat-topped, so every hole is sunk into a pillar's top.
+float quake_pillars(vec3 dir, float scale, float density, float size_share, float shift) {
+	vec3 p = dir * scale + vec3(shift);
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float pillar = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 h = hash3_plain(cell + o + vec3(0.0, 0.0, 577.0));
+				if (h.x > density) {
+					continue;
+				}
+				vec3 off = o + 0.5 + (hash3_plain(cell + o + vec3(0.0, 57.0, 0.0)) - 0.5) * 0.7 - local;
+				float t = length(off) / (size_share * mix(0.7, 1.2, h.y));
+				pillar = max(pillar, 1.0 - smoothstep(1.15, 1.35, t));
+			}
+		}
+	}
+	return pillar;
+}
+
 // Relief of every placed feature at dir for Swirl, Rings and Fractal.
 float feature_relief(vec3 dir, int kind) {
 	float relief = 0.0;
@@ -651,6 +700,11 @@ float feature_relief(vec3 dir, int kind) {
 			// Arm 0 a raised shell ridge, arm 1 a pit of the same shape.
 			vec4 w = swirl_parts(q, style);
 			relief += w.x * w.w * mix(0.6, -extra.y, w.y) * extra.x;
+		} else if (kind == TERRAN || kind == BLOOM || kind == ICE) {
+			// A snow hump (Terran, Bloom) or an Ice hollow (subtracted by the
+			// caller): a rounded dome, a little lumpy.
+			float r = length(q) * (1.0 + (noised(dir * 40.0 + float(i) * 7.0).x) * 0.25);
+			relief = max(relief, pow(max(1.0 - r * r, 0.0), 1.2));
 		} else if (kind == RINGS) {
 			relief += ring_parts(q, style, extra).x * extra.y;
 			if (extra.z > 0.5) {
@@ -835,9 +889,14 @@ float raw_height(vec3 dir) {
 	if (kind == TERRAN) {
 		// a: land threshold low / high (coast steepness), lowland flattening, peak weight
 		// b: erosion weight, extra erosion in mountain belts, erosion scale
+		// c.x: snow hump height (sigils[] on a snowy world)
 		float erosion = erosion_at(dir, frequency, b.z);
 		float land = smoothstep(a.x, a.y, continent);
-		return continent * (1.0 - a.z * land) + land * (peaks * a.w + erosion * (b.x + b.y * belt));
+		float h = continent * (1.0 - a.z * land) + land * (peaks * a.w + erosion * (b.x + b.y * belt));
+		if (c.x > 0.0) {
+			h += feature_relief(dir, TERRAN) * c.x;
+		}
+		return h;
 	}
 
 	if (kind == TOXIC) {
@@ -887,11 +946,15 @@ float raw_height(vec3 dir) {
 		// a: continent, peak and erosion weights, fracture scale
 		// b: fracture width, fracture depth, raised-flank height, how much of the
 		//    surface is fractured (-1 nearly all .. 1 nearly none)
-		// c.x: how far the fractures wander
+		// c.x: how far the fractures wander, c.y: hollow depth (sigils[])
 		float erosion = erosion_at(dir, frequency, 3.0);
 		vec2 f = fractures(dir * frequency * a.w + 13.0, b.x, c.x);
 		float fractured = smoothstep(b.w - 0.15, b.w + 0.15, fbm(p * 0.7 + 91.0, 3) * 1.6);
-		return continent * a.x + peaks * a.y + erosion * a.z + (f.y * b.z - f.x) * b.y * fractured;
+		float h = continent * a.x + peaks * a.y + erosion * a.z + (f.y * b.z - f.x) * b.y * fractured;
+		if (c.y > 0.0) {
+			h -= feature_relief(dir, ICE) * c.y;
+		}
+		return h;
 	}
 
 	if (kind == BARREN) {
@@ -989,8 +1052,10 @@ float raw_height(vec3 dir) {
 	if (kind == RINGS) {
 		// a: continent, peak and erosion weights, ring ridge weight
 		// b: sand-hill weight (0 = none), sand-hill scale, volcano weight
-		//    (0 = none), volcano scale
-		// c.x: share of cells with a volcano
+		//    (0 = none), volcano lattice scale
+		// c.x: share of cells with a volcano, c.y: volcano lattice shift,
+		// c.z: river depth (0 = none), c.w: river scale
+		// e.x: river width, e.y: river wander
 		float erosion = erosion_at(dir, frequency, 3.0);
 		float h = continent * a.x + peaks * a.y + erosion * a.z + feature_relief(dir, kind) * a.w;
 		if (b.x > 0.0) {
@@ -1001,8 +1066,12 @@ float raw_height(vec3 dir) {
 		}
 		if (b.z > 0.0) {
 			// A few volcanoes: lone cones, each with a caldera at the top.
-			float cone = peak_layer(dir * frequency * b.w + 151.0, c.x, 1.6);
+			float cone = volcano_cones(dir * b.w + c.y, c.x);
 			h += (cone - smoothstep(0.8, 0.95, cone) * 0.45) * b.z;
+		}
+		if (c.z > 0.0) {
+			// Winding river beds, cut below the sea so they fill.
+			h -= channels(dir * c.w + 61.0, e.x, e.y) * c.z;
 		}
 		return h;
 	}
@@ -1023,9 +1092,14 @@ float raw_height(vec3 dir) {
 		// a: continent, peak and erosion weights, hole depth
 		// b: scar scale, density, size, shift - quake_* in the planet shader,
 		//    which draws the scars' rings and spokes over these holes
-		// c.x: terraces in each hole (0 = a smooth bowl)
+		// c.x: terraces per hole (0 = a smooth bowl), c.y: pillar height under
+		//      each hole (settled; 0 = none)
 		float erosion = erosion_at(dir, frequency, 3.0);
-		return continent * a.x + peaks * a.y + erosion * a.z - quake_holes(dir, b.x, b.y, b.z, b.w, c.x) * a.w;
+		float h = continent * a.x + peaks * a.y + erosion * a.z - quake_holes(dir, b.x, b.y, b.z, b.w, c.x) * a.w;
+		if (c.y > 0.0) {
+			h += quake_pillars(dir, b.x, b.y, b.z, b.w) * c.y;
+		}
+		return h;
 	}
 
 	if (kind == GLOOM) {
@@ -1058,9 +1132,12 @@ float raw_height(vec3 dir) {
 	if (kind == BLOOM) {
 		// a: continent weight (rolling fields), erosion weight, valley scale,
 		//    valley width
-		// b: valley depth, valley wander
+		// b: valley depth, valley wander, snow hump height (winter's sigils[])
 		float erosion = erosion_at(dir, frequency, 3.0);
 		float h = continent * a.x + erosion * a.y;
+		if (b.z > 0.0) {
+			h += feature_relief(dir, BLOOM) * b.z;
+		}
 		return h - channels(dir * frequency * a.z + 61.0, a.w, b.y) * b.x;
 	}
 

@@ -249,7 +249,7 @@ var soi_radii_cache: PackedFloat64Array = []
 ## (J) shows only these in full - the rest are dark and redacted. The sun and
 ## the home planet are known from the start. Charting a body records the
 ## variant it is in the Journal, which - unlike this - outlives travel, along
-## with every find (mark_resource_found). Scenery (tumbleweeds, geysers, dead
+## with every find (mark_resource_found). Scenery (tumbleweeds, dead
 ## stalks) is in plain sight, so it counts as found on any charted planet.
 var charted_bodies: Dictionary = {}
 
@@ -432,6 +432,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif event is InputEventKey and event.pressed and (event.keycode == KEY_DOWN or event.keycode == KEY_UP):
 			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
+			get_viewport().set_input_as_handled()
+		elif event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_TAB or event.keycode == KEY_LEFT or event.keycode == KEY_RIGHT
+		):
+			planet_info_panel.switch_tab()
 			get_viewport().set_input_as_handled()
 		return
 
@@ -4476,7 +4481,7 @@ func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
 	if PlayerProgress.god_mode:
 		return _has_deposit(body, type_name)
 	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
-		return charted_bodies.has(body) and _has_deposit(body, type_name)
+		return is_charted(body) and _has_deposit(body, type_name)
 	return Journal.is_found(get_body_name(body), _variant_of(body), type_name)
 
 

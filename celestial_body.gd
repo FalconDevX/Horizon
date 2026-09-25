@@ -1013,6 +1013,13 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("sigil_color_b", p["sigil_color_b"])
 	m.set_shader_parameter("sigil_glow", p["sigil_glow"])
 
+	m.set_shader_parameter("volcano_strength", p["volcano"])
+	m.set_shader_parameter("volcano_scale", p["volcano_scale"])
+	m.set_shader_parameter("volcano_density", p["volcano_density"])
+	m.set_shader_parameter("volcano_shift", p["volcano_shift"])
+	m.set_shader_parameter("volcano_ground", p["volcano_ground"])
+	m.set_shader_parameter("lava_color", p["lava_color"])
+	m.set_shader_parameter("volcano_glow", p["volcano_glow"])
 	m.set_shader_parameter("quake_strength", p["quake"])
 	m.set_shader_parameter("quake_color", p["quake_color"])
 	m.set_shader_parameter("quake_scale", p["quake_scale"])

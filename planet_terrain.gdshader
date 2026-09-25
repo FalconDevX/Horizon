@@ -102,7 +102,8 @@ uniform float crack_scale_b = 10.0;
 
 // Placed features the bake carved (see PlanetTerrain.sigil_arrays()), coloured
 // here. `sigil_mode` mirrors PlanetTerrain.FeatureMode: 0 Occult eyes, 1 Swirl
-// spirals, 2 Rings, 3 nothing to colour (Fractal). Array sizes mirror
+// spirals, 2 Rings, 3 nothing to colour (Fractal, Lotus), 4 Terran snow humps.
+// Array sizes mirror
 // PlanetTerrain.MAX_SIGILS.
 const int MAX_SIGILS = 24;
 uniform int sigil_count = 0;
@@ -120,6 +121,16 @@ uniform vec3 sigil_color_b : source_color = vec3(0.0);
 uniform float sigil_glow : hint_range(0.0, 4.0) = 0.0;
 
 // Quake scars: small silver jagged rings with spokes, scattered by cell. 0 = none.
+// Rings volcanoes (the bake's volcano_cones): scorched ground round each cone,
+// lava in the caldera and down the flanks. 0 = none.
+uniform float volcano_strength : hint_range(0.0, 1.0) = 0.0;
+uniform float volcano_scale = 5.0;
+uniform float volcano_density : hint_range(0.0, 1.0) = 0.2;
+uniform float volcano_shift = 0.0;
+uniform vec3 volcano_ground : source_color = vec3(0.35, 0.22, 0.13);
+uniform vec3 lava_color : source_color = vec3(1.0, 0.42, 0.08);
+uniform float volcano_glow : hint_range(0.0, 4.0) = 1.8;
+
 uniform float quake_strength : hint_range(0.0, 1.0) = 0.0;
 uniform vec3 quake_color : source_color = vec3(0.85, 0.87, 0.9);
 uniform float quake_scale = 16.0;
@@ -472,6 +483,24 @@ vec3 ring_parts(vec2 q, vec4 style, vec4 extra) {
 
 // The nearest placed feature's colour at d, for Swirl and Rings: rgb, and
 // how much of it covers the ground in a.
+// Terran snow humps (sigil_mode 4): 0..1 snow cover, with a ragged edge.
+float snow_at(vec3 d) {
+	float cover = 0.0;
+	for (int i = 0; i < MAX_SIGILS; i++) {
+		if (i >= sigil_count) {
+			break;
+		}
+		vec4 s = sigils[i];
+		if (dot(d, s.xyz) < cos(min(s.w * 1.3, 3.0))) {
+			continue;
+		}
+		float r = length(sigil_frame(d, s, sigil_styles[i].x));
+		r *= 1.0 + (value_noise(d * 60.0 + float(i) * 13.0) - 0.5) * 0.35;
+		cover = max(cover, 1.0 - smoothstep(0.8, 1.0, r));
+	}
+	return cover;
+}
+
 vec4 feature_color_at(vec3 d) {
 	vec4 best = vec4(0.0);
 	for (int i = 0; i < MAX_SIGILS; i++) {
@@ -499,6 +528,33 @@ vec4 feature_color_at(vec3 d) {
 			float cover = ring.x * ring.z;
 			if (cover > best.a) {
 				best = vec4(mix(sigil_color, sigil_color_b, mod(ring.y, 2.0)), cover);
+			}
+		}
+	}
+	return best;
+}
+
+// The nearest Rings volcano to d, on the bake's lattice (volcano_cones): x =
+// distance from its centre in its own radii, y = its height share.
+vec2 volcano_at(vec3 d) {
+	vec3 p = d * volcano_scale + vec3(volcano_shift);
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	vec2 best = vec2(99.0, 0.0);
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 roll = hash3(cell + o + vec3(0.0, 0.0, 6143.0));
+				if (roll.x > volcano_density) {
+					continue;
+				}
+				vec3 r = o + 0.5 + (hash3(cell + o + vec3(0.0, 31.0, 0.0)) - 0.5) * 0.8 - local;
+				float radius = mix(0.35, 0.6, roll.x / max(volcano_density, 1e-3));
+				float dist = length(r) / radius;
+				if (dist < best.x) {
+					best = vec2(dist, mix(0.6, 1.0, roll.y));
+				}
 			}
 		}
 	}
@@ -845,6 +901,27 @@ void fragment() {
 				emit += col * land_glow * (1.0 - smoothstep(land_glow_band * 0.6, land_glow_band, land));
 			}
 
+			if (sigil_count > 0 && sigil_mode == 4) {
+				// Terran snow humps - on land only; one under the sea stays
+				// hidden, one that breaks the surface is a snowy island.
+				col = mix(col, sigil_color * (0.92 + 0.1 * grain), snow_at(d));
+			}
+
+			if (volcano_strength > 0.0) {
+				// Scorched brown ground round each cone, lava pooled in the
+				// caldera and running down the flanks in glowing rivulets.
+				vec2 volcano = volcano_at(d);
+				float scorched = 1.0 - smoothstep(1.05, 1.6, volcano.x);
+				col = mix(col, volcano_ground * (0.8 + 0.4 * grain), scorched * volcano_strength);
+				float caldera = 1.0 - smoothstep(0.1, 0.16, volcano.x);
+				float streak = 1.0 - smoothstep(0.0, 0.06, abs(noised(d * 60.0 + 29.0).x));
+				float rivulet = streak * (1.0 - smoothstep(0.35, 0.95, volcano.x)) * step(volcano.x, 0.95);
+				float lava = max(caldera, rivulet * 0.85) * volcano_strength;
+				float flicker = 0.85 + 0.15 * sin(planet_time * 1.7 + volcano.y * 40.0);
+				col = mix(col, lava_color, lava);
+				emit += lava_color * lava * volcano_glow * flicker;
+			}
+
 			if (quake_strength > 0.0) {
 				// Silver with a little shine of its own, so the scars catch the
 				// eye even on shaded slopes.
@@ -868,6 +945,7 @@ void fragment() {
 		} else if (sigil_count > 0 && (sigil_mode == 1 || sigil_mode == 2)) {
 			vec4 feature = feature_color_at(d);
 			col = mix(col, feature.rgb * (0.9 + 0.2 * grain), feature.a);
+
 		}
 	}
 
