@@ -318,6 +318,11 @@ var _scene_spin_axis := Vector3.UP
 ## Resource deposits standing on the surface (ResourceDeposits.place), each
 ## with its node under `"node"`. Placed once the heightmap lands.
 var resource_deposits: Array = []
+## Set on a catalog stand-in (planet_info_panel.gd): a copy of a body built
+## only to show another of its variants - hidden, and reading the world
+## settings from `world`, as it has no owner.
+var preview_only := false
+var world: Node = null
 ## Seeds of deposits already collected in this world (seed -> true). Placement
 ## skips them, so a system the player comes back to stays picked clean; the
 ## game sets it before rebuild_surface() on a jump.
@@ -408,6 +413,7 @@ func _build_visual_3d() -> void:
 	_anchor_3d = Node3D.new()
 	_anchor_3d.name = "Visual3D"
 	_anchor_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
+	_anchor_3d.visible = not preview_only
 	add_child(_anchor_3d)
 
 	_sphere_3d = MeshInstance3D.new()
@@ -1168,12 +1174,13 @@ func get_world_chaos() -> float:
 
 
 ## Read from the scene root, which owns every body in solar_system.tscn.
-## A body with no world gets the fallback.
+## A body with no owner reads `world` instead (a catalog stand-in), or gets the fallback.
 func _world_setting(setting: StringName, fallback: Variant) -> Variant:
-	if owner == null:
+	var source: Node = owner if owner != null else world
+	if source == null:
 		return fallback
 
-	var value: Variant = owner.get(setting)
+	var value: Variant = source.get(setting)
 	return fallback if value == null else value
 
 

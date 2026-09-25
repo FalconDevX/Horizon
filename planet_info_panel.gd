@@ -11,6 +11,9 @@ extends Control
 ## blind, Julia sets, ringed): its name and note. Seen variants come from the
 ## Journal, so the cards fill up across every system the player travels to;
 ## unseen ones stay redacted. The one in front of the player now is marked HERE.
+## Clicking a seen card previews that variant: a hidden stand-in copy of the
+## planet (celestial_body.gd preview_only) generates it, and the view switches
+## once its terrain has baked. The HERE card goes back to the world as it is.
 ##
 ## Only what the player knows is shown: a planet until the ship has charted it
 ## (solar_system.gd is_charted - flying near it) is a dark row, a silhouette
@@ -58,6 +61,14 @@ var _view_size: float = VIEW_DEFAULT
 var _dragging: bool = false
 var _idle_time: float = 0.0
 
+## The card being previewed instead of the world as it is now - {name, trait}
+## - or {} for the live world; the stand-in body generating it; whether its
+## preview is up yet; and where each card was drawn, for clicks.
+var _viewing: Dictionary = {}
+var _stand_in: Node2D = null
+var _stand_in_shown: bool = false
+var _card_rects: Array = []
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -67,6 +78,7 @@ func _ready() -> void:
 		"Drag the planet: turn it",
 		"Mouse wheel over the planet: zoom",
 		"Up and Down arrows: previous and next entry",
+		"Click a variant card: preview that variant",
 		"J or Esc: close the log",
 	]))
 	add_child(_help)
@@ -115,6 +127,8 @@ func hide_panel() -> void:
 	visible = false
 	_help.close()
 	_clear_preview()
+	_viewing = {}
+	_drop_stand_in()
 
 
 func _build_viewport() -> void:
@@ -163,10 +177,18 @@ func _preview_origin() -> Vector3:
 
 func _select(index: int) -> void:
 	_selected = clampi(index, 0, _row_count() - 1)
+	_viewing = {}
+	_drop_stand_in()
+	_show_preview(_bodies[_selected])
+
+
+## Puts `source`'s look in the view - the selected body, or a stand-in showing
+## one of its variants - framed for the selected body.
+func _show_preview(source: Node2D) -> void:
 	_clear_preview()
 	var body: Node2D = _bodies[_selected]
 	if _known_body(body):
-		_preview = body.call("make_preview")
+		_preview = source.call("make_preview")
 	else:
 		# Uncharted: only its dark shape against the stars.
 		_preview = Node3D.new()
@@ -208,6 +230,64 @@ func _known_body(body: Node2D) -> bool:
 	return _system.call("is_charted", body)
 
 
+## A seen card was clicked: preview that variant, or - the HERE card, or the
+## one already shown - go back to the world as it is.
+func _pick_card(card: Dictionary) -> void:
+	if not card["seen"]:
+		return
+	var body: Node2D = _bodies[_selected]
+	if card["here"]:
+		if not _viewing.is_empty():
+			_viewing = {}
+			_drop_stand_in()
+			_show_preview(body)
+		return
+	if _viewing.get("name", "") == card["name"] and _viewing.get("trait", false) == card["trait"]:
+		return
+	_drop_stand_in()
+	_viewing = {"name": card["name"], "trait": card["trait"]}
+	# A trait is shown on the variant the world has now.
+	var params: Dictionary = body.get("terrain_params")
+	var forced: String = (
+		"%s,%s" % [params.get("variant", ""), card["name"]] if card["trait"] else String(card["name"])
+	)
+	_stand_in = _make_stand_in(body, forced)
+	_stand_in_shown = false
+	queue_redraw()
+
+
+## A hidden copy of `body` rolling the variant(s) in `forced`: the same
+## exported settings, so the same seed and kind, at a lighter bake size.
+func _make_stand_in(body: Node2D, forced: String) -> Node2D:
+	var copy: Node2D = body.get_script().new()
+	for prop: Dictionary in body.get_property_list():
+		var usage: int = prop["usage"]
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE and usage & PROPERTY_USAGE_STORAGE:
+			copy.set(prop["name"], body.get(prop["name"]))
+	# The pole the scene gave it, before any roll tilted it.
+	copy.set("surface_spin_axis", body.get("_scene_spin_axis"))
+	copy.set("terrain_variant", forced)
+	copy.set("terrain_resolution", mini(int(body.get("terrain_resolution")), 512))
+	copy.set("preview_only", true)
+	copy.set("world", _system)
+	add_child(copy)
+	return copy
+
+
+func _drop_stand_in() -> void:
+	if _stand_in != null:
+		_stand_in.queue_free()
+	_stand_in = null
+	_stand_in_shown = false
+
+
+func _card_at(point: Vector2) -> Dictionary:
+	for card: Dictionary in _card_rects:
+		if (card["rect"] as Rect2).has_point(point):
+			return card
+	return {}
+
+
 func _clear_preview() -> void:
 	if _preview != null:
 		_preview.queue_free()
@@ -218,6 +298,11 @@ func _clear_preview() -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
+
+	# A variant preview swaps in once its stand-in has baked.
+	if _stand_in != null and not _stand_in_shown and _stand_in.call("is_surface_ready"):
+		_stand_in_shown = true
+		_show_preview(_stand_in)
 
 	# The live materials follow the game's clock; the preview turns on its
 	# own until the player grabs it.
@@ -313,6 +398,8 @@ func _gui_input(event: InputEvent) -> void:
 		var hovered: int = _row_at(motion.position)
 		var hover_close: bool = _close_rect().has_point(motion.position)
 		var hover_help: bool = HelpPopup.button_rect(_close_rect()).has_point(motion.position)
+		if _cards_rect().grow(4.0).has_point(motion.position):
+			queue_redraw()
 		if (
 			hovered != _hovered or hover_close != _hover_close or hover_help != _hover_help
 		):
@@ -337,6 +424,8 @@ func _gui_input(event: InputEvent) -> void:
 					hide_panel()
 				elif _row_at(button.position) >= 0:
 					_select(_row_at(button.position))
+				elif not _card_at(button.position).is_empty():
+					_pick_card(_card_at(button.position))
 				elif view.has_point(button.position):
 					_dragging = true
 			else:
@@ -576,13 +665,26 @@ func _draw_variant_cards(font: Font) -> void:
 		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen" % [total if PlayerProgress.god_mode else Journal.seen_count(body_name), total],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
 	)
+	var hint: String = "Click a card to preview it"
+	if not _viewing.is_empty():
+		hint = "PREVIEW  %s%s" % [
+			PlanetLore.variant_name(kind, _viewing["name"]).to_upper(),
+			"   generating" if not _stand_in_shown else "   click HERE to go back",
+		]
+	draw_string(
+		font, strip.position + Vector2(0.0, -6.0), hint, HORIZONTAL_ALIGNMENT_RIGHT, strip.size.x, 10,
+		HudPanelStyle.COLOR_AMBER if not _viewing.is_empty() else HudPanelStyle.COLOR_TEXT_MUTED
+	)
+	_card_rects.clear()
 	var width: float = minf(CARD_MAX_WIDTH, (strip.size.x - CARD_GAP * (cards.size() - 1)) / cards.size())
 	for i in range(cards.size()):
 		var card := Rect2(strip.position + Vector2(i * (width + CARD_GAP), 4.0), Vector2(width, strip.size.y - 4.0))
-		_draw_variant_card(font, body, card, cards[i]["name"], cards[i]["trait"])
+		_card_rects.append(_draw_variant_card(font, body, card, cards[i]["name"], cards[i]["trait"]))
 
 
-func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_trait: bool) -> void:
+## Draws one card and returns what a click on it needs: {rect, name, trait,
+## seen, here}.
+func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_trait: bool) -> Dictionary:
 	var body_name: String = body.get("body_name")
 	var kind: int = body.get("terrain_kind")
 	var params: Dictionary = body.get("terrain_params")
@@ -592,9 +694,20 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 		params.get(name, false) == true if is_trait else params.get("variant", "") == name
 	)
 
+	# VIEWING: the card whose look is in the view right now.
+	var viewing: bool = (
+		here and _viewing.is_empty()
+		or _viewing.get("name", "") == name and _viewing.get("trait", false) == is_trait
+	)
+	var hovered: bool = seen and card.has_point(get_local_mouse_position())
+
 	draw_rect(card, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.9 if seen else 0.4))
-	var border: Color = HudPanelStyle.COLOR_CYAN if here else Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 1.0 if seen else 0.4)
-	draw_rect(card, border, false, 1.0)
+	if hovered and not viewing:
+		draw_rect(card, Color(1.0, 1.0, 1.0, 0.04))
+	var border: Color = HudPanelStyle.COLOR_AMBER if viewing and not here else (
+		HudPanelStyle.COLOR_CYAN if here else Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 1.0 if seen else 0.4)
+	)
+	draw_rect(card, border, false, 2.0 if viewing else 1.0)
 	if here:
 		draw_rect(Rect2(card.position, Vector2(card.size.x, 3.0)), HudPanelStyle.COLOR_CYAN)
 
@@ -602,6 +715,8 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 	var inner: float = card.size.x - 20.0
 	var y: float = card.position.y + 30.0
 	var tag: String = "HERE" if here else ("SEEN" if seen else "UNSEEN")
+	if viewing and not here:
+		tag = "VIEWING"
 	if is_trait:
 		tag = "TRAIT   " + tag
 	draw_string(
@@ -619,6 +734,7 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 		)
 		y += 16.0
 		_draw_paragraph(font, PlanetLore.variant_note(kind, name), x, y, inner, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
+	return {"rect": card, "name": name, "trait": is_trait, "seen": seen, "here": here}
 
 
 ## A planet the ship has not charted: the headings are there, the data is not.
