@@ -3,7 +3,7 @@ extends Control
 ## Planet catalog: every body in the system, each with a live 3D view (the
 ## same shaders as in space - drag to turn it, scroll to zoom), its vital
 ## numbers read straight off the body, and a description and facts that
-## PlanetLore writes from its kind and this world's roll. Toggled with I (solar_system.gd routes the keys while it is
+## PlanetLore writes from its kind and this world's roll. Toggled with J (solar_system.gd routes the keys while it is
 ## open), or opened on the current body by the (i) button in the left panel.
 ## Arrow keys step through the bodies.
 ##
@@ -412,6 +412,8 @@ func _gui_input(event: InputEvent) -> void:
 # ---- numbers ----------------------------------------------------------------
 
 func _lore(body: Node2D) -> Dictionary:
+	if body.get("is_black_hole"):
+		return PlanetLore.BLACK_HOLE
 	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
 
 
@@ -493,7 +495,7 @@ func _draw() -> void:
 		)
 	draw_string(
 		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0),
-		"VESPERIS SYSTEM   ·   Tab to switch   ·   I or Esc to close",
+		"VESPERIS SYSTEM   ·   Tab to switch   ·   J or Esc to close",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()

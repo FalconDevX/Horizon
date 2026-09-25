@@ -1,20 +1,29 @@
 extends Control
 
-## The "ENTER - land" / "ENTER - take off" prompt at the top of the screen:
-## a chamfered HUD plate with a key cap, the action and a hint line. Fades in
-## and out on its own; solar_system.gd only says what it should read.
+## A key prompt at the top of the screen - "ENTER - land" / "ENTER - take off",
+## "E - collect": a chamfered HUD plate with a key cap, the action and a hint
+## line. Fades in and out on its own; solar_system.gd only says what it should
+## read. Further prompts stack under the first by `row`.
 
 const WIDTH := 460.0
 const HEIGHT := 58.0
-## From the top of the screen - clear of the speed gauge and the panels.
-const TOP_MARGIN := 24.0
+## From the top of the screen - under the notice toast (HUD/MusicToast, which
+## ends at 44), clear of the speed gauge and the side panels.
+const TOP_MARGIN := 52.0
 const FADE_RATE := 6.0
+const ROW_GAP := 8.0
 
 var _action := ""
 var _hint := ""
 var _key := "ENTER"
+var _row := 0
 var _wanted := false
 var _alpha := 0.0
+
+
+func _init(key: String = "ENTER", row: int = 0) -> void:
+	_key = key
+	_row = row
 
 
 func _ready() -> void:
@@ -26,8 +35,8 @@ func _ready() -> void:
 	anchor_bottom = 0.0
 	offset_left = -WIDTH * 0.5
 	offset_right = WIDTH * 0.5
-	offset_top = TOP_MARGIN
-	offset_bottom = TOP_MARGIN + HEIGHT
+	offset_top = TOP_MARGIN + _row * (HEIGHT + ROW_GAP)
+	offset_bottom = offset_top + HEIGHT
 	modulate.a = 0.0
 
 

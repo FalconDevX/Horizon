@@ -18,6 +18,16 @@ const STAR := {
 	],
 }
 
+const BLACK_HOLE := {
+	"class": "Stellar black hole",
+	"description": "A collapsed star so dense that not even light escapes from inside its event horizon. What you see is its shadow - about two and a half times wider than the horizon itself - ringed by a white-hot accretion disk. Light from the far side of the disk is bent over and under the shadow, and the stars behind are smeared into arcs and rings.",
+	"facts": [
+		"One side of the disk is brighter: the gas there is racing toward you at a sizeable fraction of light speed, and relativistic beaming concentrates its light forward.",
+		"The thin bright ring hugging the shadow is light that circled the hole, possibly more than once, before escaping.",
+		"Gas can orbit stably only down to three horizon radii; inside that it plunges straight in.",
+	],
+}
+
 const KINDS := {
 	# Filled in by describe(): lava or cryo, depending on the roll.
 	PlanetTerrain.Kind.VOLCANIC: {"class": "Volcanic world", "description": "", "facts": []},

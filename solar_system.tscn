@@ -511,8 +511,20 @@ show_soi = true
 surface_seed = 1020
 surface_blob_count = 40
 surface_spin_speed = 0.5
-surface_spin_axis = Vector3(-0.15, 0.98, 0.1)
+surface_spin_axis = Vector3(-0.2, 0.88, 0.42)
 terrain_kind = 7
+has_rings = true
+[node name="Erebus" type="Node2D" parent="Planets"]
+position = Vector2(14000000, 0)
+script = ExtResource("1_hbvo3")
+radius = 30000
+visual_radius = 30000
+color = Color(1, 0.55, 0.2, 1)
+mass = 300.0
+body_name = "Erebus"
+atmosphere = "None - event horizon"
+show_soi = true
+is_black_hole = true
 
 [node name="Ship" type="Node2D" parent="." unique_id=1594130779]
 position = Vector2(74000, 0)
@@ -524,6 +536,10 @@ script = ExtResource("3_ship")
 shape = SubResource("CircleShape2D_ship")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=641785987]
+limit_left = -50000000
+limit_top = -50000000
+limit_right = 50000000
+limit_bottom = 50000000
 
 [node name="Camera3D" type="Camera3D" parent="."]
 physics_interpolation_mode = 2

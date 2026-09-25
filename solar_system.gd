@@ -30,7 +30,7 @@ enum AutopilotPhase {
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
 ## planets. N rerolls it in game.
-@export var world_seed: int = 20260924
+@export var world_seed: int = 1461402483
 
 ## How much of each kind's designed range a planet may use (see the _roll_*()
 ## functions in planet_terrain.gd): 0 is every kind's textbook look, 1 the full
@@ -85,6 +85,7 @@ var autopilot_off_sound: AudioStreamPlayer
 @onready var music_toast: Control = $HUD/MusicToast
 @onready var settings_button: Button = $HUD/PanelContainer/VBoxContainer/TitleRow/SettingsButton
 @onready var background_mask: ColorRect = $Background/BackgroundMask
+@onready var background_image: TextureRect = $Background/BackgroundImage
 
 var settings_mgr: SettingsManager
 var music_mgr: MusicManager
@@ -221,8 +222,8 @@ var soi_radii_cache: PackedFloat64Array = []
 var charted_bodies: Dictionary = {}
 ## What the player has found where: body -> {resource type: true}. The
 ## catalog names a resource only on the planets it was found on, and knows it
-## at all only once it has been found somewhere. Nothing adds to it yet -
-## gathering will call mark_resource_found(). Scenery (tumbleweeds, geysers,
+## at all only once it has been found somewhere. collect_under_ship() adds to
+## it through mark_resource_found(). Scenery (tumbleweeds, geysers,
 ## dead stalks) is in plain sight, so it counts as found on any charted planet.
 var found_resources: Dictionary = {}
 
@@ -238,13 +239,19 @@ var ground_velocity := Vector2.ZERO
 ## to the planet, which way it was going round, and the camera.
 var _landing_state: Dictionary = {}
 var landing_prompt: Control
+## "E - collect" under the landing prompt, while the ship is over a deposit.
+var collect_prompt: Control
+## What the ship carries (collect_under_ship fills it); shown by
+## inventory_screen, toggled with I.
+var inventory := Inventory.new()
+var inventory_screen: Control
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
 
 const TARGET_ORBIT_COLOR := Color(0.55, 1.0, 0.62, 0.8)
 const TARGET_ORBIT_FLASH_COLOR := Color(0.8, 1.0, 0.85, 1.0)
 const TARGET_ORBIT_FLASH_FADE := 4.0
-const ZOOM_MIN := 0.00005
+const ZOOM_MIN := 0.00002
 const ZOOM_MAX := 50.0
 const MIN_BODY_SCREEN_RADIUS := 4.0
 ## On-screen radius, in pixels, above which a body switches to its fine sphere.
@@ -351,7 +358,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
 		return
-	if loading_screen != null or planet_info_panel.visible:
+	if loading_screen != null or planet_info_panel.visible or inventory_screen.visible:
 		return
 	for menu: Control in [settings_menu, pause_menu, ship_builder_panel]:
 		if menu != null and menu.visible:
@@ -368,10 +375,31 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if loading_screen != null:
 		return
-	# The planet catalog sits over everything and keeps the keyboard to itself.
-	if planet_info_panel.visible:
+	# The cargo hold and the planet catalog sit over everything and keep the
+	# keyboard to themselves.
+	if inventory_screen.visible:
 		if event is InputEventKey and event.pressed and not event.echo and (
 			event.keycode == KEY_ESCAPE or event.keycode == KEY_I
+		):
+			inventory_screen.hide_panel()
+		elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_J:
+			inventory_screen.hide_panel()
+			planet_info_panel.toggle()
+		elif event is InputEventKey and event.pressed and event.keycode in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
+			inventory_screen.view.step(
+				int(event.keycode == KEY_RIGHT) - int(event.keycode == KEY_LEFT),
+				int(event.keycode == KEY_DOWN) - int(event.keycode == KEY_UP)
+			)
+		if event is InputEventKey:
+			get_viewport().set_input_as_handled()
+		return
+	if planet_info_panel.visible:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_I:
+			planet_info_panel.hide_panel()
+			inventory_screen.open()
+			get_viewport().set_input_as_handled()
+		elif event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_ESCAPE or event.keycode == KEY_J
 		):
 			planet_info_panel.hide_panel()
 			get_viewport().set_input_as_handled()
@@ -394,12 +422,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		event is InputEventKey
 		and event.pressed
 		and not event.echo
-		and event.keycode == KEY_I
+		and (event.keycode == KEY_I or event.keycode == KEY_J)
 		and (ship_builder_panel == null or not ship_builder_panel.visible)
 		and (pause_menu == null or not pause_menu.visible)
 		and (settings_menu == null or not settings_menu.visible)
 	):
-		planet_info_panel.toggle()
+		# I - the cargo hold, J - the planetary log.
+		if event.keycode == KEY_I:
+			inventory_screen.open()
+		else:
+			planet_info_panel.toggle()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -426,7 +458,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
-		toggle_enemy_menu()
+		# On a planet E gathers what the ship is over; out in space it is the
+		# enemy menu.
+		if landed_body != null:
+			collect_under_ship()
+		else:
+			toggle_enemy_menu()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -603,6 +640,10 @@ func _ready() -> void:
 		line.antialiased = true
 		var orbit_color: Color = planet.get("color")
 		orbit_color.a = 0.85
+		# A black hole's own orbit line would be lensed into a ring and
+		# streaks right through it; leave it out.
+		if planet.get("is_black_hole"):
+			orbit_color.a = 0.0
 		line.default_color = orbit_color
 		orbit_lines_container.add_child(line)
 		orbit_lines.append(line)
@@ -614,6 +655,8 @@ func _ready() -> void:
 	autopilot_off_sound.stream = AUTOPILOT_OFF_SOUND
 	autopilot_off_sound.bus = &"SFX"
 	add_child(autopilot_off_sound)
+
+	_push_starfield_to_black_holes()
 
 	asteroid_belts = AsteroidBelts.new()
 	asteroid_belts.name = "AsteroidBelts"
@@ -661,8 +704,13 @@ func _ready() -> void:
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	_build_clock()
 	planet_info_panel.setup(self)
+	inventory_screen = preload("res://inventory_screen.gd").new()
+	$HUD.add_child(inventory_screen)
+	inventory_screen.setup(self, inventory)
 	landing_prompt = preload("res://landing_prompt.gd").new()
 	$HUD.add_child(landing_prompt)
+	collect_prompt = preload("res://landing_prompt.gd").new("E", 1)
+	$HUD.add_child(collect_prompt)
 	charted_bodies[sun] = true
 	charted_bodies[planets[HOME_PLANET_INDEX]] = true
 	target_orbit.visible = false
@@ -3312,11 +3360,21 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 		"starfield_brightness":
 			if background_mask != null:
 				background_mask.color.a = clampf(1.0 - float(value), 0.0, 1.0)
+			_push_starfield_to_black_holes()
 		"ship_rotation_speed":
 			if ship != null:
 				ship.rotation_speed = float(value)
 		"camera_smoothing":
 			pass
+
+
+## Black holes lens the star image directly (see celestial_body.set_starfield).
+func _push_starfield_to_black_holes() -> void:
+	if background_image == null:
+		return
+	var dim: float = background_mask.color.a if background_mask != null else 0.0
+	for planet in planets:
+		planet.call("set_starfield", background_image.texture, dim)
 
 
 func _apply_all_settings() -> void:
@@ -3329,6 +3387,7 @@ func _apply_all_settings() -> void:
 	trajectory_prediction.visible = settings_mgr.show_trajectory
 	if background_mask != null:
 		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
+	_push_starfield_to_black_holes()
 	if ship != null:
 		ship.rotation_speed = settings_mgr.ship_rotation_speed
 
@@ -3623,6 +3682,8 @@ func _find_landing_candidate() -> Node2D:
 	var best_distance: float = INF
 	for i in range(planets.size()):
 		var planet: Node2D = planets[i]
+		if planet.get("is_black_hole"):
+			continue  # No surface to land on.
 		var reach: float = float(planet.get("radius")) * LANDING_RANGE_RADII
 		if i < soi_radii_cache.size():
 			reach = minf(reach, soi_radii_cache[i])
@@ -3638,7 +3699,20 @@ func _update_landing_prompt() -> void:
 		landing_prompt.show_prompt(
 			"TAKE OFF", "Surface of %s   ·   W thrust   ·   RMB / A D steer" % landed_body.get("body_name")
 		)
+		var index: int = landed_body.call("deposit_under_view", ship.get("collision_radius"))
+		if index < 0:
+			collect_prompt.hide_prompt()
+		else:
+			var type_name: StringName = landed_body.get("resource_deposits")[index]["type"]
+			if is_resource_found_on(landed_body, type_name):
+				collect_prompt.show_prompt(
+					"COLLECT %s" % String(ResourceDeposits.TYPES[type_name]["name"]).to_upper(),
+					"In the hold: %d   ·   I to open" % inventory.count(type_name)
+				)
+			else:
+				collect_prompt.show_prompt("COLLECT UNIDENTIFIED SAMPLE", "Unknown signal right under the ship")
 		return
+	collect_prompt.hide_prompt()
 	landing_candidate = _find_landing_candidate()
 	if landing_candidate == null:
 		landing_prompt.hide_prompt()
@@ -3732,14 +3806,36 @@ func _restart_trajectory_prediction() -> void:
 	prediction_update_accumulator = PREDICTION_UPDATE_INTERVAL
 
 
+## Gathers the deposit the landed ship is over, if there is one: it leaves the
+## surface, goes into the inventory, and the catalog learns the resource
+## (and that it grows on this planet).
+func collect_under_ship() -> void:
+	var index: int = landed_body.call("deposit_under_view", ship.get("collision_radius"))
+	if index < 0:
+		return
+	var deposit: Dictionary = landed_body.call("collect_deposit", index)
+	var type_name: StringName = deposit["type"]
+	var first_find: bool = not is_resource_known(type_name)
+	inventory.add(type_name, 1, String(landed_body.get("body_name")))
+	mark_resource_found(landed_body, type_name)
+	var label: String = String(ResourceDeposits.TYPES[type_name]["name"]).to_upper()
+	music_toast.show_message(
+		("NEW RESOURCE: %s   ·   J to view" if first_find else "COLLECTED: %s") % label
+		+ "   ·   ×%d" % inventory.count(type_name)
+	)
+	if planet_info_panel.visible:
+		planet_info_panel.queue_redraw()
+
+
 ## Holds the ship on the planet's centre, moving with it.
+## Reads the planet's PhysicsBody, not its node: the nodes are only pushed once
+## per physics tick, and this runs every sim step.
 func _pin_ship_to(body: Node2D) -> void:
-	var body_xy: PackedFloat64Array = get_precise_xy(body)
-	var body_velocity: Vector2 = body.get("velocity")
-	physics_ship.x = body_xy[0]
-	physics_ship.y = body_xy[1]
-	physics_ship.vx = body_velocity.x
-	physics_ship.vy = body_velocity.y
+	var state: PhysicsBody = physics_planets[planets.find(body)]
+	physics_ship.x = state.x
+	physics_ship.y = state.y
+	physics_ship.vx = state.vx
+	physics_ship.vy = state.vy
 	physics_ship.push_to_node()
 
 
@@ -3802,7 +3898,7 @@ func _chart_nearby_bodies() -> void:
 		var reach: float = maxf(soi_radii_cache[i], float(planet.get("radius")) * CHART_RADII)
 		if ship.global_position.distance_to(planet.global_position) < reach:
 			charted_bodies[planet] = true
-			music_toast.show_message("SURVEYED: %s   ·   I to view" % String(planet.get("body_name")).to_upper())
+			music_toast.show_message("SURVEYED: %s   ·   J to view" % String(planet.get("body_name")).to_upper())
 			if planet_info_panel.visible:
 				planet_info_panel.queue_redraw()
 
@@ -3828,6 +3924,8 @@ func _physics_process(delta: float) -> void:
 		steps += 1
 
 	if steps > 0:
+		for body: PhysicsBody in physics_planets:
+			body.push_to_node()
 		for i in range(planets.size()):
 			update_orbit_line(planets[i], orbit_lines[i], i)
 
@@ -3853,9 +3951,13 @@ func simulation_step(dt: float) -> void:
 	# While test-flying a sandbox enemy (E menu), the player ship stops reading
 	# WASD/mouse-aim so both craft don't respond to the same keys at once.
 	if _test_enemy == null:
-		# Prograde / retrograde hold follows the orbit around the current SOI body.
-		var hold_body: Node2D = get_current_orbit_body()
-		var hold_body_velocity: Vector2 = Vector2.ZERO if hold_body == sun else hold_body.get("velocity")
+		# Prograde / retrograde hold follows the orbit around the current SOI body
+		# (from the SOI cache and the precise state - this runs every step).
+		var hold_index: int = _ship_soi_index_precise()
+		var hold_body_velocity: Vector2 = Vector2.ZERO
+		if hold_index >= 0:
+			var hold_body: PhysicsBody = physics_planets[hold_index]
+			hold_body_velocity = Vector2(hold_body.vx, hold_body.vy)
 		ship.hold_reference_velocity = ship.velocity - hold_body_velocity
 		if landed_body != null:
 			# Flight assist and the holds work against the ground.
@@ -3873,44 +3975,62 @@ func simulation_step(dt: float) -> void:
 		else:
 			ship.update_throttle(dt, time_scale <= 1.0)
 
-	var count: int = physics_planets.size()
-
 	var landed: bool = landed_body != null
 
-	var a0 := PackedVector2Array()
-	a0.resize(count)
-	for i in range(count):
-		a0[i] = get_planet_acceleration_precise(physics_planets[i])
+	# Ship acceleration at the start of the step, planets where they are now.
+	# Landed, the ship is not integrated at all - it is pinned below.
 	var ship_a0: Vector2 = Vector2.ZERO if landed else get_ship_acceleration_precise()
 
-	for i in range(count):
-		physics_planets[i].advance_position(a0[i], dt)
-	if not landed:
-		physics_ship.advance_position(ship_a0, dt)
-
-	var a1 := PackedVector2Array()
-	a1.resize(count)
-	for i in range(count):
-		a1[i] = get_planet_acceleration_precise(physics_planets[i])
-	var ship_a1: Vector2 = Vector2.ZERO if landed else get_ship_acceleration_precise()
-
-	for i in range(count):
-		physics_planets[i].advance_velocity(a0[i], a1[i], dt)
-	if not landed:
-		physics_ship.advance_velocity(ship_a0, ship_a1, dt)
-
-	for i in range(count):
-		physics_planets[i].push_to_node()
+	# Planets feel only the sun: a whole velocity-Verlet step each, inline -
+	# this loop runs for every planet on every step, hundreds of times a frame
+	# under time warp, so no per-planet calls or array allocations here.
+	var sun_x: float = sun.position.x
+	var sun_y: float = sun.position.y
+	var half_dt: float = 0.5 * dt
+	var half_dt2: float = 0.5 * dt * dt
+	for body: PhysicsBody in physics_planets:
+		var dx: float = sun_x - body.x
+		var dy: float = sun_y - body.y
+		var d2: float = dx * dx + dy * dy
+		var k0: float = mu_sun / (d2 * sqrt(d2)) if d2 >= 1.0 else 0.0
+		var ax0: float = dx * k0
+		var ay0: float = dy * k0
+		body.x += body.vx * dt + ax0 * half_dt2
+		body.y += body.vy * dt + ay0 * half_dt2
+		dx = sun_x - body.x
+		dy = sun_y - body.y
+		d2 = dx * dx + dy * dy
+		var k1: float = mu_sun / (d2 * sqrt(d2)) if d2 >= 1.0 else 0.0
+		body.vx += (ax0 + dx * k1) * half_dt
+		body.vy += (ay0 + dy * k1) * half_dt
 
 	if landed:
 		# Over the ground: the engines push the ship across the surface, and the
 		# surface rolls the other way under it, while the ship itself rides
-		# the planet's centre round the sun.
+		# the planet's centre round the sun. _pin_ship_to reads the precise
+		# state, so it does not need the planets' nodes pushed this step.
 		ground_velocity += ship.get_manual_acceleration() * dt
 		landed_body.roll_surface(ground_velocity * dt)
 		_pin_ship_to(landed_body)
-	else:
-		physics_ship.push_to_node()
+		return
+
+	physics_ship.advance_position(ship_a0, dt)
+	var ship_a1: Vector2 = get_ship_acceleration_precise()
+	physics_ship.advance_velocity(ship_a0, ship_a1, dt)
+
+	# The ship's node every step (input, autopilot and HUD read it); the
+	# planets' nodes once per physics tick in _physics_process - anything that
+	# needs them exactly mid-tick reads the PhysicsBody state instead.
+	physics_ship.push_to_node()
+
+
+## Index of the planet whose SOI holds the ship (first match, like the ship's
+## gravity), from the per-tick SOI cache and the precise state; -1 for the sun.
+func _ship_soi_index_precise() -> int:
+	for i in range(physics_planets.size()):
+		if is_inside_soi_precise(physics_planets[i], soi_radii_cache[i]):
+			return i
+	return -1
 
 
 func get_gravity_precise(body: PhysicsBody, source_x: float, source_y: float, mu: float) -> Vector2:
@@ -3942,16 +4062,19 @@ func get_ship_acceleration_precise() -> Vector2:
 		physics_ship, sun.position.x, sun.position.y, mu_sun
 	)
 
-	for i in range(planets.size()):
-		if is_inside_soi_precise(physics_planets[i], soi_radii_cache[i]):
+	# First planet whose SOI holds the ship (patched conics). Inline distance
+	# test - this runs twice per sim step, hundreds of steps a frame on warp.
+	var ship_x: float = physics_ship.x
+	var ship_y: float = physics_ship.y
+	for i in range(physics_planets.size()):
+		var body: PhysicsBody = physics_planets[i]
+		var dx: float = ship_x - body.x
+		var dy: float = ship_y - body.y
+		var soi: float = soi_radii_cache[i]
+		if dx * dx + dy * dy <= soi * soi:
 			acceleration = (
-				get_gravity_precise(
-					physics_ship,
-					physics_planets[i].x,
-					physics_planets[i].y,
-					mu_planets[i]
-				)
-				+ get_planet_acceleration_precise(physics_planets[i])
+				get_gravity_precise(physics_ship, body.x, body.y, mu_planets[i])
+				+ get_planet_acceleration_precise(body)
 			)
 			break
 

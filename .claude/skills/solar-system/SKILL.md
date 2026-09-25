@@ -24,19 +24,26 @@ grep -n "^func \|^const \|^var \|^class " solar_system.gd
 | File | Role |
 | --- | --- |
 | `solar_system.gd` | Main scene script: sim loop, autopilot, trajectory prediction, HUD, camera, input |
-| `solar_system.tscn` | Scene: `Sun`, `Planets/*` (8 planet nodes), `Ship`, line/marker nodes, `HUD/*` |
+| `solar_system.tscn` | Scene: `Sun`, `Planets/*` (20 planets + the black hole Erebus), `Ship`, line/marker nodes, `HUD/*` |
 | `celestial_body.gd` | `@tool` Node2D for the sun and every planet: exports, `_draw` (glow, SOI ring), surface sprite + spin |
 | `planet_surface.gd` | `PlanetSurface` static lib: palette generator, blob generation, CPU-side blob lookup |
 | `planet_surface.gdshader` | Canvas shader: projects a sphere onto the disc and colours it by nearest blob |
 | `orbit_math.gd` | `OrbitMath` static lib: Kepler propagation, orbital elements, transfer solving |
 | `interplanetary_planner.gd` | `InterplanetaryPlanner` static lib: off-thread transfer planning |
-| `ship.gd` | Ship node: thrust, RCS, rotation, throttle lock |
+| `ship.gd` | Ship node: main engine (no RCS), flight assist, attitude hold, throttle lock, engine/laser/beep sounds |
 | `*_panel.gd`, `*_gauge.gd`, `hud_panel_style.gd` | HUD widgets, all custom `_draw` |
 
 ## How the simulation works
 
-- Gravity constant `G = 3000.0` in `solar_system.gd`; `planet_info_panel.gd` hardcodes
-  its own copy as `GRAVITY_CONSTANT` - keep them in sync.
+- **World scale 4x.** Every distance and radius is 4x what the system was first built
+  at, and `G = 192000.0` (= 3000 x 4^3), so orbital periods are unchanged and speeds
+  are 4x. Distance-type constants (autopilot tolerances/altitudes, planner tolerances,
+  belts, spawn offset) were scaled with it; `planet_info_panel.gd` reads `G` from the
+  script, so there is only one copy.
+- `PLANET_GRAVITY_SCALE := 0.4` multiplies every planet's `mass` once in `_ready()`
+  (planets only feel the sun, so this only weakens their pull on the ship). Sim,
+  predictor, autopilot, SOI sizes and the catalog all see the scaled mass - scene
+  masses in the table below are pre-scale.
 - `_physics_process` accumulates `delta * time_scale` and runs fixed `SIM_DT = 1/120`
   steps (velocity Verlet) via `simulation_step`, up to `MAX_SIM_STEPS_PER_FRAME`.
 - Positions are held in `PhysicsBody` wrappers (`physics_planets`, `physics_ship`) as
@@ -46,8 +53,9 @@ grep -n "^func \|^const \|^var \|^class " solar_system.gd
   gravity anywhere - not in the sim, not in the predictor, not in the planner.
 - The ship feels the sun, *or* - when inside one planet's SOI - that planet plus the
   planet's own sun-acceleration (patched conics, first match wins, `break`).
-- `get_soi_radius(body) = distance_to_sun * (mass / sun_mass) ** 0.4`. Recomputed every
-  physics frame into `soi_radii_cache`.
+- `get_soi_radius(body) = max(distance_to_sun * (mass / sun_mass) ** 0.4,
+  radius * MIN_SOI_RADII)` (floor 5 radii, so small planets near the sun still have
+  room to orbit). Recomputed every physics frame into `soi_radii_cache`.
 
 ## Planets
 
@@ -69,9 +77,9 @@ exports below. Existing nodes are the template (`solar_system.tscn` lines ~151-2
 `visual_radius = radius` and `show_soi = true`; `soi_radius` / `soi_line_width` are
 overwritten every frame by `update_soi_visuals` / `update_screen_space_visuals`.
 
-Current system (sun `Virelia`, mass 1000, radius 3 200) - master scaled every orbit and
-radius 4x (masses unchanged, so SOIs scaled 4x too). Asteroid belts (`asteroid_belts.gd`
-`BELTS`) fill 154 000-177 200, 752 000-864 000 and 4 160 000-4 800 000; keep planets out:
+Current system (sun `Virelia`, mass 1000, radius 3 200), 4x scale. Asteroid belts
+(`asteroid_belts.gd` `BELTS`) fill 154 000-177 200, 752 000-864 000 and
+4 160 000-4 800 000; keep planets and their SOIs out:
 
 | # | Name | Orbit radius | Radius | Mass |
 | --- | --- | --- | --- | --- |
@@ -95,20 +103,23 @@ radius 4x (masses unchanged, so SOIs scaled 4x too). Asteroid belts (`asteroid_b
 | 17 | Hoarveil | 1 688 000 | 1 320 | 0.2 |
 | 18 | Rimebeck | 2 700 000 | 600 | 0.04 |
 | 19 | Taurvane | 5 600 000 | 2 600 | 8 |
+| 20 | Erebus (black hole) | 14 000 000 | 30 000 | 300 |
 
 Starting phases are random every launch: `_ready()` keeps each planet's orbit
 radius from the scene but rotates it to a random angle round the sun (then calls
 `snap_visual_position()` so the 3D visuals don't interpolate across). Angles
-authored in the scene no longer matter. Cindral and Vesk squeeze between their neighbours'
-SOIs with ~1 200-1 800 to spare - keep them light.
+authored in the scene no longer matter.
 
-Dunmere's SOI (~42 000) clears Glacenna's and Marrow's by only ~1 500 each side - SOI
-grows with distance, so outer gaps only fit very light planets.
+The tightest SOI gaps (after the 0.4 gravity scale and the 5-radii floor) are
+Emberrock-Mireth (~600), Cindral-Emberrock (~1 400) and Anthea-Cindral (~1 800); Taurvane
+clears Erebus's SOI by ~1.8 M. Recheck every gap (and the belts) after touching a mass,
+radius or orbit - a quick script over `solar_system.tscn` computing
+`max(d * (0.4 m / 1000)^0.4, 5 r)` per body does it.
 
 ### Constraints when touching the planet set
 
 - `HOME_PLANET_INDEX := 1` indexes `planets` **by scene child order**. The ship spawns
-  1000 units from that planet. Inserting a node above `Coralyss` silently moves the
+  4000 units from that planet. Inserting a node above `Coralyss` silently moves the
   spawn - append new planets at the end, or update the constant.
 - Only the distance of a planet's scene `position` from the sun matters - the start
   angle is randomised in `_ready()`, and the circular velocity follows automatically.
@@ -166,7 +177,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
 - **Seeds.** `surface_seed` is only a planet's *local* seed. Everything — blob rolls,
   terrain colours, the elevation bake, the shaders' `seed_offset` — reads
   `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, set at the
-  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 20260924),
+  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 1461402483),
   read through `owner` in `get_world_seed()` because planets `_ready` before the root.
   Changing the script default of `surface_seed` does nothing - every planet overrides
   it in the scene. `set_world_seed(value)` clears `PlanetTerrain`'s bake cache and
@@ -317,7 +328,7 @@ still shows the blob preview.
   `planet_clouds.gdshaderinc` for cloud shadows, and noise helpers live in
   `planet_noise.gdshaderinc`. Cyclones come from `PlanetTerrain.roll_cyclones()`,
   seeded by `generation_seed`. `rebuild_surface()` frees both shells before
-  rebuilding. The catalog (I key) calls `make_preview()` on each body; unknown names
+  rebuilding. The catalog (J key) calls `make_preview()` on each body; unknown names
   in `PlanetLore` (Anthea, Dunmere) just show blank lore. Cloud *amount* reads much
   heavier on the shell than it did in-shader, so the `clouds` ranges in `_roll_*()`
   may want lowering.
@@ -360,7 +371,9 @@ still shows the blob preview.
   to save memory. **Mireth** (Slime) was added back, then the last unused kinds got
   a planet each: Cinderhal (Volcanic), Aurumbra (Gloom), Hoarveil (Ice), Rimebeck
   (Frozen, bakes at 512) and Taurvane (Gas giant, past Oruvel and belt 3 - its SOI
-  fits no inner gap). At 4x scale Mireth sits between Emberrock and Coralyss and
+  fits no inner gap; it carries the system's **rings**, with its spin axis leaned
+  toward the camera so they are not edge-on). **Erebus**, the black hole, is last in
+  `Planets`, at 14 M. At 4x scale Mireth sits between Emberrock and Coralyss and
   Cinderhal between Thornix and Ashkar (both moved out of the asteroid belts;
   Cinderhal's mass cut to 0.04 to fit). Masses kept low so each SOI clears its
   neighbours by ~1 500-19 000 (Taurvane clears belt 3). Every kind has a planet.
@@ -464,14 +477,14 @@ still shows the blob preview.
 ## Asteroid belts, rings, loading screen
 
 - **Belts** (`asteroid_belts.gd`, `asteroid_belt.gdshader`) are scenery: no gravity,
-  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (38.5-44.3k,
-  188-216k, 1.04-1.2M) sit in SOI gaps - recheck the gaps before moving one. Each belt
+  no collisions, unknown to SOI/autopilot/planner. Three belts in `BELTS` (154-177.2k,
+  752-864k, 4.16-4.8M) sit in SOI gaps - recheck the gaps before moving one. Each belt
   is 3 MultiMeshes (rock shape variants); orbits advance on the GPU from
   `total_sim_time` (split hi/lo for float32), rocks grow to >= 1.1 px when zoomed out,
   and the mesh swaps between 3 LODs by on-screen size. `asteroid_belt_map.gd` tints
   each band light red on the `BehindWorld` layer.
 - **Rings**: `has_rings` / `ring_inner_radius` / `ring_outer_radius` exports on
-  `celestial_body.gd` (terrain planets only; Vantauri has them). The ring plane is
+  `celestial_body.gd` (terrain planets only; Taurvane has them). The ring plane is
   perpendicular to `surface_spin_axis`, so the axis must lean toward the viewer or the
   rings are edge-on. Profile lives in `planet_rings.gdshaderinc`, shared by
   `planet_rings.gdshader` and `planet_terrain.gdshader` (ring shadow on the globe).
@@ -506,9 +519,54 @@ plate, fed by `_update_landing_prompt()` every frame.
   came in, at the landing distance clamped to `[TAKE_OFF_MIN_RADII * R, 0.8 * SOI]`;
   camera and overlays restored. Both land and take-off call
   `_restart_trajectory_prediction()`, and no prediction runs while landed.
+- **Collecting** (`E` while landed; in space `E` is still the enemy menu):
+  `CelestialBody.deposit_under_view(reach)` is the collectible deposit whose
+  footprint (`size * 0.5` rad, plus `reach / draw radius`, reach = ship
+  `collision_radius`) holds `point_under_view()` - deposit `direction`s are in
+  the same planet space. `collect_under_ship()` removes it (`collect_deposit`,
+  node freed; back on a world reroll), adds it to `inventory` (with the
+  planet's name as its source) and calls `mark_resource_found()`, which unlocks it in the catalog. A second
+  `landing_prompt.gd` instance (`collect_prompt`, key "E", row 1) shows "COLLECT
+  <name>" or, for a type not yet found on this planet, "COLLECT UNIDENTIFIED
+  SAMPLE". Prompts start at y 52, under `HUD/MusicToast` (16-44).
 - The predictor's ORBIT/ESCAPE test is made against the planet whose SOI the
   prediction ends in (planet-relative velocity), not always the sun - against the sun,
   low planet orbits read ESCAPE on every prograde half.
+
+## Black hole
+
+`is_black_hole` on a `celestial_body.gd` body (Erebus): `radius` is the event horizon.
+`build_black_hole()` hides the sphere and turns the glow plane into a quad
+`BLACK_HOLE_EXTENT` (16) horizon radii across each way, shaded by `black_hole.gdshader`:
+per-pixel ray tracing in Schwarzschild units (Rs = 1, photon bending
+`-1.5 h^2 x / r^5`), a tilted thin accretion disk with Doppler beaming and gravitational
+redshift, and lensing of whatever is behind (stars, orbit lines) through the screen
+texture - the `Environment` background mode is Canvas up to layer -5, so those layers
+are in it. Up to `max_steps` (180) steps per pixel: expensive when it fills the
+screen. Its own orbit line is hidden (it would be lensed into streaks). Physics, SOI,
+autopilot and the catalog (`PlanetLore.BLACK_HOLE`) treat it as a planet; flying into
+the horizon is an impact. Camera2D limits are +-50 M and `ZOOM_MIN` is 0.00002 so it
+can be reached.
+
+## Flight model
+
+- **No RCS.** Main engine only: A/D (or arrows) turn, RMB aims at the cursor, W burns,
+  S cuts, X locks the throttle (W/S then trim it, a beep per two bar segments from
+  `sounds/throttle_beep_1..9.wav`), Z/C hold prograde/retrograde, Shift = 20% precision.
+- **Flight assist** (V, on by default, `[FA]` in the HUD): W pushes along the nose like
+  the locked throttle (no speed cap) plus vectored sideways thrust that cancels drift
+  relative to the SOI body, so velocity follows the nose; S brakes to a stop. Knobs in
+  `ship.gd`: `MAIN_ENGINE_BOOST` (12 = 3 for handling x 4 for world scale),
+  `TURN_RATE_SCALE`, `ASSIST_MAX_ACCEL`, `ASSIST_RESPONSE`, `throttle_ramp_time`.
+- Manual thrust/turn input (W/A/S/D, arrows, RMB) disengages the autopilot with
+  `sounds/autopilot_off.wav`; X disengages it silently (`disengage_autopilot(false)`).
+- The speed gauge shows speed relative to the current SOI body (the sun out in deep
+  space), not relative to the sun.
+- **Trajectory line**: predictions carry per-point sim times and are redrawn every frame
+  from the ship (`refresh_trajectory_line`); when the whole prediction stays inside the
+  starting SOI it is stored and drawn relative to that planet (a clean ellipse). Points
+  are added every `PREDICTION_DRAW_INTERVAL` steps or sooner on turns
+  (`PREDICTION_DRAW_TURN`).
 
 ## Autopilot
 
@@ -521,6 +579,19 @@ Two families:
   TRANSFER_BURN -> TRANSFER_COAST -> ARRIVAL_COAST -> ARRIVAL_BURN`, then hands off to
   the local family. `ESCAPE_BURN / INTERPLANETARY_CRUISE / CAPTURE_BURN` are the older
   non-route path.
+
+- Engaging on an escape path (unbound, even from the sun) goes to `CAPTURE_BURN` first,
+  which brakes into orbit and hands over to the local plan.
+- F in free flight (outside every planet SOI) defaults the target to the **nearest
+  planet**, not the sun (Tab still reaches the sun). `engage_autopilot()` clamps the
+  target altitude to the body's range, so it never aims outside the SOI.
+- `INTERPLANETARY_CRUISE` from free flight flies a **Lambert intercept**
+  (`OrbitMath.lambert`, `plan_intercept()`): it samples `INTERCEPT_SAMPLES` flight times
+  in both directions, scores burn-now + arrival-speed + `INTERCEPT_TIME_COST` per second
+  (so it heads more or less straight in), then burns continuously onto the transfer and
+  re-solves it in flight. Inside `INTERPLANETARY_HOMING_SOI_FACTOR` x SOI the homing
+  branch takes over, then `CAPTURE_BURN`. Falls back to `_cruise_match_target_radius()`
+  when no transfer is found.
 
 Use `is_interplanetary_autopilot_phase()` / `is_route_phase()` rather than testing phases
 by hand. Route planning and trajectory prediction both run on `WorkerThreadPool` with a
@@ -541,7 +612,43 @@ must be a plain snapshot, never a live node.
 
 ## Verifying changes
 
-There is no test suite. Changes are checked by running the scene in Godot 4.7
-(`run/main_scene = res://solar_system.tscn`). Controls: `F` arm/disarm autopilot,
-`Tab` cycle target, mouse wheel zoom (or altitude while arming), middle-drag pan,
-`1`-`7` time warp, `.` toggle camera follow, `N` reroll the world seed (new planets).
+There is no test suite. Changes are checked by running the game in Godot 4.7
+(`run/main_scene` is the main menu; New Game shows the loading screen, then
+`solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
+zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
+follow, `N` reroll the world seed, `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `E` collect while landed
+(enemy menu in space), `ENTER` land / take off, plus the flight keys above.
+
+## Inventory
+
+Three layers, so the hold can move into a bigger interface later without
+touching the data or the drawing:
+
+- `inventory.gd` - `class_name Inventory` (RefCounted): item id -> count in
+  pickup order, plus id -> {source: count}; `add(id, n, source)`, `remove`,
+  `count`, `ids`, `sources`, `total`; emits `changed`. `solar_system.gd` owns one
+  (`inventory`). Ids are `ResourceDeposits.TYPES` keys for now.
+- `inventory_view.gd` - `class_name InventoryView` (Control), the component:
+  `bind(inventory)`, then give it any rect. Slots stretch to fill the width,
+  as many rows as fit (clips, no scrolling yet); the details column (`DETAIL_WIDTH`,
+  at most 42%) drops away under `DETAIL_MIN_TOTAL`. Each item held gets its own
+  small SubViewport with the showcase model spinning (rendered only while
+  visible), lit through the deposit shader's `sun_position` global - the host
+  sets `sun_position` and icons stand at `sun_position + ICON_OFFSET`.
+  `step(dx, dy)` for keys, `item_selected` signal, `item_info(id)` is the one
+  place that names an item.
+- `inventory_screen.gd` - the disposable full-screen frame ("CARGO HOLD") around
+  a view; `solar_system.gd` routes keys while open (arrows step, I/Esc close,
+  J switches to the log). New `class_name`s need a rescan (`--import`, or the
+  editor) before a headless run sees them.
+
+## Ship builder engines
+
+`ModuleCatalog.engines()` builds 5 families (Chemical, Nuclear Thermal, Ion, Plasma,
+Fusion) x 3 sizes S/M/L = square footprints 1x1/2x2/3x3, from star ratings
+(`_STAR_*` tables, `_ENGINE_SIZES` multipliers). Sprites are
+`textures/modules/engine_<type>_<1|2|3>.png` (nozzle pointing left, the aft side where
+the orange `ENGINE_MOUNT` tiles are); an optional `..._plan.png` (`plan_texture`) is
+drawn over the footprint while a module is held. The inventory shows one engine family
+per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates
+engine art with the module. There is no RCS / corrective engine any more.

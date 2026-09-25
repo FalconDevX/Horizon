@@ -10,6 +10,11 @@ const CORONA_SHADER := preload("res://planet_corona.gdshader")
 const CLOUDS_SHADER := preload("res://planet_clouds.gdshader")
 const ATMOSPHERE_SHADER := preload("res://planet_atmosphere.gdshader")
 const RINGS_SHADER := preload("res://planet_rings.gdshader")
+const BLACK_HOLE_SHADER := preload("res://black_hole.gdshader")
+
+## Half-size of a black hole's ray-traced quad, in horizon radii - far enough
+## out that the lensing has faded to nothing at its edge.
+const BLACK_HOLE_EXTENT := 16.0
 
 ## How far the atmosphere's glow reaches past the surface, in radii.
 const ATMOSPHERE_DEPTH := 0.12
@@ -101,6 +106,12 @@ var fov_contact: int = 0:
 ## Draws the body as a star: a churning photosphere and a corona around it
 ## (planet_star.gdshader, planet_corona.gdshader) instead of a flat ball.
 @export var is_star: bool = false
+
+## Draws the body as a black hole (black_hole.gdshader): `radius` is the event
+## horizon. The ball is hidden; a ray-traced quad shows the shadow, a lensed
+## accretion disk and the bent starfield behind. Gravity, SOI, prediction and
+## the autopilot treat it like any other body.
+@export var is_black_hole: bool = false
 
 @export var surface_blob_count: int = 0
 
@@ -295,6 +306,8 @@ func _ready() -> void:
 
 	if is_star and _sphere_3d != null:
 		build_star()
+	elif is_black_hole and _sphere_3d != null:
+		build_black_hole()
 	elif _uses_terrain():
 		build_terrain()
 	elif surface_blob_count > 0:
@@ -736,6 +749,34 @@ func make_preview() -> Node3D:
 	return root
 
 
+## Hides the ball and turns the glow plane into the ray-traced black hole.
+func build_black_hole() -> void:
+	surface_spin_speed = 0.0
+	var flat := _sphere_3d.material_override as StandardMaterial3D
+	if flat != null:
+		# The catalog preview reuses this material: a plain black ball.
+		flat.albedo_color = Color.BLACK
+	_sphere_3d.visible = false
+
+	var material := ShaderMaterial.new()
+	material.shader = BLACK_HOLE_SHADER
+	material.set_shader_parameter("extent", BLACK_HOLE_EXTENT)
+	_glow_3d.material_override = material
+	update_surface_scale()
+
+
+## Black holes bend the star image itself (not the map lines drawn over it):
+## hand them the Background texture and its current dimming.
+func set_starfield(texture: Texture2D, dim: float) -> void:
+	if not is_black_hole or _glow_3d == null:
+		return
+	var material := _glow_3d.material_override as ShaderMaterial
+	if material == null:
+		return
+	material.set_shader_parameter("starfield", texture)
+	material.set_shader_parameter("starfield_dim", dim)
+
+
 ## Swaps the flat ball and its glow sprite for the star shaders.
 func build_star() -> void:
 	var seed_offset: float = _seed_offset()
@@ -1107,6 +1148,11 @@ func update_surface_scale() -> void:
 	# when zoomed out.
 	if _sphere_3d != null:
 		_apply_sphere_transform()
+		if is_black_hole:
+			var span: float = get_draw_radius() * BLACK_HOLE_EXTENT * 2.0
+			_glow_3d.scale = Vector3(span, 1.0, span)
+			_glow_3d.position = Vector3.ZERO
+			return
 		var glow_diameter: float = get_draw_radius() * (CORONA_EXTENT if is_star else 2.0) * 2.0
 		_glow_3d.scale = Vector3(glow_diameter, 1.0, glow_diameter)
 		# Below everything the body draws, rings included.
@@ -1201,6 +1247,37 @@ func roll_surface(step: Vector2) -> void:
 ## landed ship is.
 func point_under_view() -> Vector3:
 	return surface_rotation.inverse() * Vector3.BACK
+
+
+## The collectible deposit under the middle of the view (where a landed ship
+## sits), or -1. "Under" means the point lies within the deposit's footprint -
+## half its size, both in unit-sphere radians - widened by `reach` world units
+## (the ship's own size). The nearest wins when footprints overlap.
+func deposit_under_view(reach: float) -> int:
+	var under: Vector3 = point_under_view()
+	var slack: float = reach / get_draw_radius()
+	var best: int = -1
+	var best_angle: float = INF
+	for i in range(resource_deposits.size()):
+		var deposit: Dictionary = resource_deposits[i]
+		if not deposit.get("collectible", true):
+			continue
+		var angle: float = under.angle_to(deposit["direction"])
+		if angle < float(deposit["size"]) * 0.5 + slack and angle < best_angle:
+			best = i
+			best_angle = angle
+	return best
+
+
+## Takes a deposit off the surface for good (until the world is rerolled) and
+## returns it.
+func collect_deposit(index: int) -> Dictionary:
+	var deposit: Dictionary = resource_deposits[index]
+	resource_deposits.remove_at(index)
+	var node: Node = deposit.get("node")
+	if node != null:
+		node.queue_free()
+	return deposit
 
 
 ## Whether a surface direction is on the hemisphere facing the camera. Far-side

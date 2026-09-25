@@ -3,7 +3,7 @@ extends Node2D
 signal ship_clicked
 
 @export var ship_mass: float = 10.0
-@export var thrust_force: float = 72.0
+@export var thrust_force: float = 144.0
 @export var throttle_ramp_time := 0.15
 @export var lock_adjust_rate := 0.5
 @export var rotation_speed: float = 2.5
@@ -17,14 +17,14 @@ signal ship_clicked
 
 ## Fallback when the shipyard has no modules yet (keeps the default orbital ship flyable).
 const DEFAULT_SHIP_MASS := 10.0
-const DEFAULT_THRUST_FORCE := 72.0
+const DEFAULT_THRUST_FORCE := 144.0
 const MIN_SHIP_MASS := 1.0
 
-## Main engine output relative to the modules' rated thrust. 3x so the ship
-## stays nimble on its main engine alone (no RCS), times 4 for the 4x world
+## Main engine output relative to the modules' rated thrust: 6x so the ship
+## stays punchy on its main engine alone (no RCS), times 4 for the 4x world
 ## scale (solar_system.gd G) - speeds and distances are both 4x, so
 ## accelerations must be too.
-const MAIN_ENGINE_BOOST := 12.0
+const MAIN_ENGINE_BOOST := 24.0
 ## Turning speed relative to the Turn Rate setting.
 const TURN_RATE_SCALE := 1.2
 
