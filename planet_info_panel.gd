@@ -843,7 +843,7 @@ func _draw_variant_tally(font: Font, body: Node2D, row: Rect2) -> void:
 	var total: int = PlanetLore.variants_of(body.get("terrain_kind")).size()
 	if total < 2:
 		return
-	var seen: int = Journal.seen_count(String(body.get("body_name")))
+	var seen: int = total if PlayerProgress.god_mode else Journal.seen_count(String(body.get("body_name")))
 	draw_string(
 		font, row.position + Vector2(0.0, 19.0), "%d/%d" % [seen, total], HORIZONTAL_ALIGNMENT_RIGHT,
 		row.size.x - 8.0, 10, HudPanelStyle.COLOR_EMERALD if seen == total else HudPanelStyle.COLOR_TEXT_MUTED
@@ -871,7 +871,7 @@ func _draw_variant_cards(font: Font) -> void:
 	var body_name: String = body.get("body_name")
 	var total: int = PlanetLore.variants_of(kind).size()
 	draw_string(
-		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen" % [Journal.seen_count(body_name), total],
+		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen" % [total if PlayerProgress.god_mode else Journal.seen_count(body_name), total],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
 	)
 	var width: float = minf(CARD_MAX_WIDTH, (strip.size.x - CARD_GAP * (cards.size() - 1)) / cards.size())

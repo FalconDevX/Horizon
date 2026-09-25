@@ -757,3 +757,20 @@ with a legend bottom right. Zoomed far out (`ZOOM_MIN` 0.06) the map shows
 `GalaxyMap.NEIGHBOURS` - spirals, ellipticals and irregular clouds drawn by
 `far_galaxy()` in `galaxy_map.gdshader` from the `nb_place` / `nb_shape` / `nb_tint`
 arrays; they can be picked for an info card but are out of hyperdrive range.
+
+## Galaxy map search, visited list; model plants; saves
+
+- `GalaxyMapWindow`: a header `LineEdit` searches `GalaxyMap.systems()` by name
+  (drop-down on the unclipped `_top` layer; Enter or click focuses the system), and a
+  fold-away VISITED SYSTEMS panel on the left (`_list_open` is static) lists visits in
+  order; clicking a row selects and flies to it.
+- Plants (`beanstalk`, `frozen_beanstalk`, `dried_beanstalk` ids, shown as Moonbloom)
+  use `ResourceDeposits.MODELS` `moonbloom`: `models/moonbloom.obj` (6k tris, decimated
+  in Blender from a Meshy GLB) + `models/moonbloom_albedo.png`. `make_node` gives them the
+  shared mesh and sets `use_texture` / `tex_adjust` (hue turn, saturation, value) on
+  `resource_deposit.gdshader`; the type's `tint` (spawns may override it) and `color`
+  make the variants (Slime worlds tint it green). The shader is `cull_disabled` and
+  flips back-face normals for the open petals.
+- Saves: `scripts/data/SaveGame.gd` (see its header); `solar_system.gd`
+  `build_save_data()` / `_apply_pending_save()`; `Journal`, `GalaxyMap`,
+  `PlayerProgress` each have `to_dict()` / `from_dict()`.

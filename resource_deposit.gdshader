@@ -1,12 +1,18 @@
 shader_type spatial;
 // Lit by hand like the planets: the scene has no 3D lights, only the
 // `sun_position` global solar_system.gd sets.
-render_mode unshaded, cull_back;
+// Both faces: model plants (resource_deposits.gd MODELS) have open petals.
+render_mode unshaded, cull_disabled;
 
 // A resource deposit (resource_deposits.gd, shapes from deposit_meshes.gd).
 // The mesh's vertex colours shade within it; `base_color` tints the lot.
+// A model deposit brings a colour texture instead, recoloured by
+// `tex_adjust` (x hue turn, y saturation and z value multipliers).
 
 uniform vec3 base_color : source_color = vec3(1.0);
+uniform bool use_texture = false;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic;
+uniform vec3 tex_adjust = vec3(0.0, 1.0, 1.0);
 // Same lift as the terrain, so deposit and ground share a terminator.
 uniform float light_lift : hint_range(0.0, 2.0) = 0.35;
 // Light of its own, so deposits can still be found on the night side.
@@ -30,6 +36,19 @@ uniform vec3 fixed_light = vec3(0.0);
 global uniform float planet_time;
 
 varying vec3 v_local;
+
+vec3 rgb_to_hsv(vec3 c) {
+	vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	vec4 p = mix(vec4(c.bg, k.wz), vec4(c.gb, k.xy), step(c.b, c.g));
+	vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+	float d = q.x - min(q.w, q.y);
+	return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-10)), d / (q.x + 1e-10), q.x);
+}
+
+vec3 hsv_to_rgb(vec3 c) {
+	vec3 p = abs(fract(c.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+	return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
 
 vec3 hash3(vec3 p) {
 	p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -74,6 +93,13 @@ void vertex() {
 
 void fragment() {
 	vec3 albedo = base_color * COLOR.rgb;
+	if (use_texture) {
+		vec3 hsv = rgb_to_hsv(texture(albedo_tex, UV).rgb);
+		hsv.x = fract(hsv.x + tex_adjust.x);
+		hsv.y = clamp(hsv.y * tex_adjust.y, 0.0, 1.0);
+		hsv.z = clamp(hsv.z * tex_adjust.z, 0.0, 1.0);
+		albedo *= hsv_to_rgb(hsv);
+	}
 	if (spots > 0.0) {
 		// Big, solid spots.
 		vec2 s = spots_at(v_local * 4.5);
@@ -85,7 +111,7 @@ void fragment() {
 		: normalize(sun_position - NODE_POSITION_WORLD);
 	vec3 L = normalize(to_sun + vec3(0.0, light_lift, 0.0));
 	vec3 V = normalize(INV_VIEW_MATRIX[2].xyz);
-	vec3 nw = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec3 nw = normalize((INV_VIEW_MATRIX * vec4(FRONT_FACING ? NORMAL : -NORMAL, 0.0)).xyz);
 
 	// Night on the ground below is night on the deposit too: its own up axis
 	// points straight out of the planet.

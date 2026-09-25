@@ -327,7 +327,7 @@ const VARIANT_NOTES := {
 		"terraced": "Its holes are stepped like quarries.",
 	},
 	PlanetTerrain.Kind.BLOOM: {
-		"winter": "Frost covers its fields, and its beanstalks stand half frozen.",
+		"winter": "Frost covers its fields, and its moonblooms stand half frozen.",
 		"dried": "Its flowers have withered, and its valleys are choked with dead stalks.",
 	},
 	PlanetTerrain.Kind.OASIS: {
