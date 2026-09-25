@@ -7,22 +7,15 @@ extends Control
 ## open), or opened on the current body by the (i) button in the left panel.
 ## Arrow keys step through the bodies.
 ##
-## A second tab lists the resources (ResourceDeposits.TYPES): each shown as a
-## model, with where it turns up - which kinds of planet, where on them and on
-## which variants - and how many this world has. Tab, or left / right, swaps.
-##
 ## Under a planet's view, a card per variant its kind can roll (and per trait -
-## blind, Julia sets, ringed): its name and note, and what it yields - found
-## items named, the rest redacted. Seen variants come from the Journal, so the
-## cards fill up across every system the player travels to; unseen ones stay
-## redacted. The one in front of the player now is marked HERE.
+## blind, Julia sets, ringed): its name and note. Seen variants come from the
+## Journal, so the cards fill up across every system the player travels to;
+## unseen ones stay redacted. The one in front of the player now is marked HERE.
 ##
 ## Only what the player knows is shown: a planet until the ship has charted it
-## (solar_system.gd is_charted - flying near it), a resource until it has been
-## found somewhere (is_resource_known), is a dark row, a silhouette and
-## redaction bars. A resource is named only on the planets it was found on
-## (is_resource_found_on): anything else on a planet is just "unidentified
-## signals", and a resource's page lists only the planets it was found on.
+## (solar_system.gd is_charted - flying near it) is a dark row, a silhouette
+## and redaction bars. Resources are not listed here - the player finds them
+## on the surface.
 
 const MARGIN := 36.0
 const LIST_WIDTH := 230.0
@@ -30,7 +23,7 @@ const ROW_HEIGHT := 46.0
 const TEXT_WIDTH := 400.0
 const GAP := 20.0
 ## The variant card strip under a planet's view.
-const CARDS_HEIGHT := 168.0
+const CARDS_HEIGHT := 120.0
 const CARD_MAX_WIDTH := 250.0
 const CARD_GAP := 10.0
 
@@ -46,10 +39,6 @@ const IDLE_SPIN := 0.12
 ## Where the preview planet sits relative to the sun's (global) position, so
 ## the planet shaders light it from the left, as the sun does in space.
 const PREVIEW_OFFSET := Vector3(100000.0, 0.0, 0.0)
-
-const TABS := ["PLANETS", "RESOURCES"]
-const TAB_PLANETS := 0
-const TAB_RESOURCES := 1
 
 var _system: Node = null
 var _bodies: Array[Node2D] = []
@@ -69,16 +58,6 @@ var _view_size: float = VIEW_DEFAULT
 var _dragging: bool = false
 var _idle_time: float = 0.0
 
-var _tab: int = TAB_PLANETS
-var _hovered_tab: int = -1
-## Resource types in the order the tab lists them.
-var _resources: Array = ResourceDeposits.TYPES.keys()
-## The planet row selected when the tab was left, to come back to.
-var _planet_selected: int = 0
-## View size that frames the selected resource's model.
-var _resource_view: float = 3.0
-
-
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -88,7 +67,6 @@ func _ready() -> void:
 		"Drag the planet: turn it",
 		"Mouse wheel over the planet: zoom",
 		"Up and Down arrows: previous and next entry",
-		"Tab, Left or Right: planets / resources",
 		"J or Esc: close the log",
 	]))
 	add_child(_help)
@@ -129,23 +107,8 @@ func step(offset: int) -> void:
 	_select(posmod(_selected + offset, _row_count()))
 
 
-## Swaps between the planets and the resources.
-func switch_tab() -> void:
-	_set_tab(TAB_RESOURCES if _tab == TAB_PLANETS else TAB_PLANETS)
-
-
-func _set_tab(tab: int) -> void:
-	if tab == _tab:
-		return
-	if _tab == TAB_PLANETS:
-		_planet_selected = _selected
-	_tab = tab
-	_select(_planet_selected if tab == TAB_PLANETS else 0)
-	_layout()
-
-
 func _row_count() -> int:
-	return _bodies.size() if _tab == TAB_PLANETS else _resources.size()
+	return _bodies.size()
 
 
 func hide_panel() -> void:
@@ -201,10 +164,6 @@ func _preview_origin() -> Vector3:
 func _select(index: int) -> void:
 	_selected = clampi(index, 0, _row_count() - 1)
 	_clear_preview()
-	if _tab == TAB_RESOURCES:
-		_select_resource()
-		return
-
 	var body: Node2D = _bodies[_selected]
 	if _known_body(body):
 		_preview = body.call("make_preview")
@@ -231,39 +190,10 @@ func _select(index: int) -> void:
 	queue_redraw()
 
 
-## The resource's model, stood at the preview spot and seen a little from
-## above and the side, as it would stand on a planet.
-func _select_resource() -> void:
-	var model: MeshInstance3D = ResourceDeposits.make_showcase(_resources[_selected])
-	if not _known_resource(_resources[_selected]):
-		model.material_override = _silhouette_material()
-	# Turned about the middle of its bounds, not its foot, so a cluster that
-	# sits off-centre does not swing out of view.
-	var bounds: AABB = model.mesh.get_aabb()
-	var pivot := Node3D.new()
-	model.position = -bounds.get_center()
-	pivot.add_child(model)
-	_preview = Node3D.new()
-	_preview.add_child(pivot)
-	_world_root.add_child(_preview)
-	_preview.position = _preview_origin()
-	_globe = pivot
-	_resource_view = maxf(bounds.size.y, maxf(bounds.size.x, bounds.size.z)) * 1.5
-	_view_size = _resource_view
-	_camera.size = _view_size
-	_aim_camera()
-	_idle_time = 0.0
-	queue_redraw()
-
-
-## Points the camera at the preview: straight down on a planet, like the
-## game's own camera; slightly above and to the side of a resource.
+## Points the camera straight down at the preview, like the game's own camera.
 func _aim_camera() -> void:
 	var origin: Vector3 = _preview.position
-	if _tab == TAB_RESOURCES:
-		_camera.look_at_from_position(origin + Vector3(0.0, 1.6, 4.0) * 10.0, origin, Vector3.UP)
-	else:
-		_camera.look_at_from_position(origin + Vector3(0.0, 50.0, 0.0), origin, Vector3(0.0, 0.0, -1.0))
+	_camera.look_at_from_position(origin + Vector3(0.0, 50.0, 0.0), origin, Vector3(0.0, 0.0, -1.0))
 
 
 ## Flat near-black, for things the player has not learned yet.
@@ -276,10 +206,6 @@ static func _silhouette_material() -> StandardMaterial3D:
 
 func _known_body(body: Node2D) -> bool:
 	return _system.call("is_charted", body)
-
-
-func _known_resource(type_name: StringName) -> bool:
-	return _system.call("is_resource_known", type_name)
 
 
 func _clear_preview() -> void:
@@ -297,10 +223,7 @@ func _process(delta: float) -> void:
 	# own until the player grabs it.
 	if _globe != null and not _dragging:
 		_idle_time += delta
-		# A resource turns on its upright, and quicker - it is small.
-		var axis := Vector3.UP if _tab == TAB_RESOURCES else Vector3(0.0, 0.0, 1.0)
-		var speed: float = IDLE_SPIN * (3.0 if _tab == TAB_RESOURCES else 1.0)
-		_turn(axis, speed * delta * smoothstep(0.0, 1.5, _idle_time))
+		_turn(Vector3(0.0, 0.0, 1.0), IDLE_SPIN * delta * smoothstep(0.0, 1.5, _idle_time))
 
 	# Keep lighting right even if the sun moved while the catalog was open.
 	if _preview != null:
@@ -338,19 +261,14 @@ func _view_rect() -> Rect2:
 	var list: Rect2 = _list_rect()
 	var text: Rect2 = _text_rect()
 	var left: float = list.end.x + GAP
-	var height: float = list.size.y - (CARDS_HEIGHT + GAP if _tab == TAB_PLANETS else 0.0)
+	var height: float = list.size.y - CARDS_HEIGHT - GAP
 	return Rect2(Vector2(left, list.position.y), Vector2(text.position.x - GAP - left, height))
 
 
-## Under the view on the planets tab: the variant cards.
+## Under the view: the variant cards.
 func _cards_rect() -> Rect2:
 	var view: Rect2 = _view_rect()
 	return Rect2(Vector2(view.position.x, view.end.y + GAP), Vector2(view.size.x, CARDS_HEIGHT))
-
-
-func _tab_rect(index: int) -> Rect2:
-	var panel: Rect2 = _panel_rect()
-	return Rect2(panel.position + Vector2(262.0 + index * 116.0, 16.0), Vector2(108.0, 26.0))
 
 
 func _close_rect() -> Rect2:
@@ -380,13 +298,6 @@ func _row_at(point: Vector2) -> int:
 	return index if index < _row_count() else -1
 
 
-func _tab_at(point: Vector2) -> int:
-	for i in range(TABS.size()):
-		if _tab_rect(i).has_point(point):
-			return i
-	return -1
-
-
 # ---- input ----------------------------------------------------------------
 
 func _gui_input(event: InputEvent) -> void:
@@ -396,24 +307,17 @@ func _gui_input(event: InputEvent) -> void:
 		var motion := event as InputEventMouseMotion
 		if _dragging and _globe != null:
 			# Drag sideways turns the globe about the screen's vertical, drag
-			# up and down about its horizontal. A resource only turns on its
-			# own upright, so it stays standing.
-			if _tab == TAB_RESOURCES:
-				_turn(Vector3.UP, motion.relative.x * DRAG_TURN)
-			else:
-				_turn(Vector3(0.0, 0.0, -1.0), motion.relative.x * DRAG_TURN)
-				_turn(Vector3(1.0, 0.0, 0.0), motion.relative.y * DRAG_TURN)
+			# up and down about its horizontal.
+			_turn(Vector3(0.0, 0.0, -1.0), motion.relative.x * DRAG_TURN)
+			_turn(Vector3(1.0, 0.0, 0.0), motion.relative.y * DRAG_TURN)
 		var hovered: int = _row_at(motion.position)
 		var hover_close: bool = _close_rect().has_point(motion.position)
-		var hovered_tab: int = _tab_at(motion.position)
 		var hover_help: bool = HelpPopup.button_rect(_close_rect()).has_point(motion.position)
 		if (
-			hovered != _hovered or hover_close != _hover_close or hovered_tab != _hovered_tab
-			or hover_help != _hover_help
+			hovered != _hovered or hover_close != _hover_close or hover_help != _hover_help
 		):
 			_hovered = hovered
 			_hover_close = hover_close
-			_hovered_tab = hovered_tab
 			_hover_help = hover_help
 			queue_redraw()
 
@@ -431,8 +335,6 @@ func _gui_input(event: InputEvent) -> void:
 				queue_redraw()
 				if _close_rect().has_point(button.position) or not _panel_rect().has_point(button.position):
 					hide_panel()
-				elif _tab_at(button.position) >= 0:
-					_set_tab(_tab_at(button.position))
 				elif _row_at(button.position) >= 0:
 					_select(_row_at(button.position))
 				elif view.has_point(button.position):
@@ -441,10 +343,9 @@ func _gui_input(event: InputEvent) -> void:
 				_dragging = false
 				_idle_time = 0.0
 		elif button.pressed and view.has_point(button.position):
-			var base: float = _resource_view if _tab == TAB_RESOURCES \
-				else (VIEW_STAR if _bodies[_selected].get("is_star") else VIEW_DEFAULT)
+			var base: float = VIEW_STAR if _bodies[_selected].get("is_star") else VIEW_DEFAULT
 			if button.button_index == MOUSE_BUTTON_WHEEL_UP:
-				_view_size = maxf(_view_size * 0.88, VIEW_CLOSEST * (_resource_view if _tab == TAB_RESOURCES else 1.0))
+				_view_size = maxf(_view_size * 0.88, VIEW_CLOSEST)
 			elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				_view_size = minf(_view_size / 0.88, base * 1.6)
 			_camera.size = _view_size
@@ -529,19 +430,8 @@ func _draw() -> void:
 		font, panel.position + Vector2(22.0, 36.0), "PLANETARY CATALOG",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 20, HudPanelStyle.COLOR_TEXT_PRIMARY
 	)
-	for i in range(TABS.size()):
-		var tab: Rect2 = _tab_rect(i)
-		if i == _tab:
-			draw_rect(tab, HudPanelStyle.COLOR_CYAN_GLOW)
-			draw_rect(Rect2(tab.position + Vector2(0.0, tab.size.y - 2.0), Vector2(tab.size.x, 2.0)), HudPanelStyle.COLOR_CYAN)
-		elif i == _hovered_tab:
-			draw_rect(tab, Color(1.0, 1.0, 1.0, 0.04))
-		draw_string(
-			font, tab.position + Vector2(0.0, 18.0), TABS[i], HORIZONTAL_ALIGNMENT_CENTER, tab.size.x, 12,
-			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _tab else HudPanelStyle.COLOR_TEXT_MUTED
-		)
 	draw_string(
-		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
+		font, panel.position + Vector2(262.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
@@ -558,14 +448,10 @@ func _draw() -> void:
 	_draw_list(font)
 	_draw_view_frame(font)
 	_draw_text(font)
-	if _tab == TAB_PLANETS:
-		_draw_variant_cards(font)
+	_draw_variant_cards(font)
 
 
 func _draw_list(font: Font) -> void:
-	if _tab == TAB_RESOURCES:
-		_draw_resource_list(font)
-		return
 	var list: Rect2 = _list_rect()
 	for i in range(_bodies.size()):
 		var body: Node2D = _bodies[i]
@@ -608,9 +494,6 @@ func _draw_view_frame(_font: Font) -> void:
 
 
 func _draw_text(font: Font) -> void:
-	if _tab == TAB_RESOURCES:
-		_draw_resource_text(font)
-		return
 	var text: Rect2 = _text_rect()
 	var body: Node2D = _bodies[_selected]
 	if not _known_body(body):
@@ -637,37 +520,6 @@ func _draw_text(font: Font) -> void:
 	y += 10.0
 	y = _draw_paragraph(font, lore.get("description", ""), x, y, text.size.x, 12, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
-	# What this world has, as far as the player has found it; the rest is
-	# only a count of signals.
-	var tally: Dictionary = {}
-	var signals: int = 0
-	for deposit: Dictionary in body.get("resource_deposits"):
-		if _system.call("is_resource_found_on", body, deposit["type"]):
-			tally[deposit["type"]] = tally.get(deposit["type"], 0) + 1
-		else:
-			signals += 1
-	if not tally.is_empty() or signals > 0:
-		y += 14.0
-		draw_string(font, Vector2(x, y), "RESOURCES", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_AMBER)
-		y += 18.0
-		for type_name: StringName in tally:
-			var type: Dictionary = ResourceDeposits.TYPES[type_name]
-			var scenery: bool = not type.get("collectible", true)
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, type["color"])
-			draw_string(
-				font, Vector2(x + 14.0, y), "%s  ×%d%s" % [type["name"], tally[type_name], "  (scenery)" if scenery else ""],
-				HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 14.0, 11,
-				HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_SECONDARY
-			)
-			y += 17.0
-		if signals > 0:
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, Color(0.1, 0.1, 0.12))
-			draw_string(
-				font, Vector2(x + 14.0, y), "Unidentified signals  ×%d" % signals,
-				HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_MUTED
-			)
-			y += 17.0
-
 	var facts: Array = lore.get("facts", [])
 	if not facts.is_empty():
 		y += 14.0
@@ -677,156 +529,6 @@ func _draw_text(font: Font) -> void:
 			draw_string(font, Vector2(x, y), "›", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, HudPanelStyle.COLOR_EMERALD)
 			y = _draw_paragraph(font, fact, x + 14.0, y, text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
 			y += 6.0
-
-
-func _draw_resource_list(font: Font) -> void:
-	var list: Rect2 = _list_rect()
-	for i in range(_resources.size()):
-		var type: Dictionary = ResourceDeposits.TYPES[_resources[i]]
-		var row := Rect2(list.position + Vector2(0.0, i * _row_height()), Vector2(list.size.x, _row_height() - 4.0))
-		if i == _selected:
-			draw_rect(row, HudPanelStyle.COLOR_CYAN_GLOW)
-			draw_rect(Rect2(row.position, Vector2(3.0, row.size.y)), HudPanelStyle.COLOR_CYAN)
-		elif i == _hovered:
-			draw_rect(row, Color(1.0, 1.0, 1.0, 0.04))
-		if not _known_resource(_resources[i]):
-			if i != _selected:
-				draw_rect(row, Color(0.0, 0.0, 0.0, 0.35))
-			draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, Color(0.1, 0.1, 0.12))
-			_draw_redacted(row.position.x + 38.0, row.position.y + 19.0, String(type["name"]).length() * 10.0, 14)
-			draw_string(
-				font, row.position + Vector2(38.0, row.size.y - 7.0), "Not yet found", HORIZONTAL_ALIGNMENT_LEFT,
-				row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
-			)
-			continue
-		draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, type["color"])
-		draw_string(
-			font, row.position + Vector2(38.0, 19.0), String(type["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
-			row.size.x - 42.0, 14,
-			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _selected else HudPanelStyle.COLOR_TEXT_SECONDARY
-		)
-		draw_string(
-			font, row.position + Vector2(38.0, row.size.y - 7.0), "Collectible" if type.get("collectible", true) else "Scenery",
-			HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
-		)
-
-
-## A resource: what it is, and every planet and variant it can turn up on -
-## where on it, how it differs there and how many - in full only where the
-## player has found it on that variant.
-func _draw_resource_text(font: Font) -> void:
-	var text: Rect2 = _text_rect()
-	var type_name: StringName = _resources[_selected]
-	var type: Dictionary = ResourceDeposits.TYPES[type_name]
-	var x: float = text.position.x
-	var y: float = text.position.y + 18.0
-	if _known_resource(type_name):
-		draw_string(font, Vector2(x, y), String(type["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 22, HudPanelStyle.COLOR_CYAN)
-		y += 22.0
-		var kind_line: String = "Resource - can be collected" if type.get("collectible", true) else "Scenery - cannot be collected"
-		draw_string(font, Vector2(x, y), kind_line, HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_AMBER)
-	else:
-		_draw_redacted(x, y, String(type["name"]).length() * 15.0, 22)
-		y += 22.0
-		draw_string(
-			font, Vector2(x, y), "Not yet found - gather one to learn about it",
-			HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_TEXT_MUTED
-		)
-	y += 22.0
-
-	# Every planet whose kind grows it, and on which of its variants (and
-	# traits): in full where the player has found it on that variant, in any
-	# system; the rest redacted - so the log says how many places it can turn
-	# up, but not which, until each is found there.
-	var groups: Array = []
-	var variant_total: int = 0
-	for body: Node2D in _bodies:
-		if not _has_variants(body):
-			continue
-		var rows: Array = _occurrences(body, type_name)
-		if not rows.is_empty():
-			groups.append({"body": body, "rows": rows})
-			variant_total += rows.size()
-	draw_string(
-		font, Vector2(x, y), "OCCURS ON  %d %s  ·  %d %s" % [
-			groups.size(), "planet" if groups.size() == 1 else "planets",
-			variant_total, "variant" if variant_total == 1 else "variants",
-		],
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
-	)
-	y += 18.0
-	var bottom: float = text.end.y - 16.0
-	for group: Dictionary in groups:
-		if y > bottom:
-			draw_string(font, Vector2(x, y), "…", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, HudPanelStyle.COLOR_TEXT_MUTED)
-			return
-		var body: Node2D = group["body"]
-		var kind: int = body.get("terrain_kind")
-		var found_rows: Array = group["rows"].filter(func(row: Dictionary) -> bool: return row["found"])
-		var hidden: int = group["rows"].size() - found_rows.size()
-		if found_rows.is_empty():
-			# Not found there on any variant: a planet and a line, blacked out.
-			_draw_redacted(x, y, text.size.x * (0.45 + 0.25 * fposmod(String(body.get("body_name")).hash() * 0.618, 1.0)), 12)
-			y += 16.0
-			_draw_redacted(x + 10.0, y, (text.size.x - 10.0) * 0.7, 11)
-			draw_string(
-				font, Vector2(x + 10.0, y), "%d %s" % [hidden, "variant" if hidden == 1 else "variants"],
-				HORIZONTAL_ALIGNMENT_RIGHT, text.size.x - 10.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
-			)
-			y += 22.0
-			continue
-		var heading: String = "%s  -  %s" % [body.get("body_name"), PlanetLore.KINDS.get(kind, {}).get("class", "Unknown world")]
-		draw_string(font, Vector2(x, y), heading, HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_TEXT_PRIMARY)
-		y += 16.0
-		for row: Dictionary in found_rows:
-			var notes: Dictionary = ResourceDeposits.spawn_notes(kind, row["rule"])
-			var line: String = "%s: %s." % [PlanetLore.variant_name(kind, row["name"]), notes["where"]]
-			if notes["note"] != "":
-				line += " %s." % notes["note"]
-			line += " %s." % notes["count"]
-			draw_string(font, Vector2(x + 10.0, y), "›", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD)
-			y = _draw_paragraph(font, line, x + 22.0, y, text.size.x - 22.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
-		if hidden > 0:
-			_draw_redacted(x + 22.0, y, 70.0, 10)
-			draw_string(
-				font, Vector2(x + 100.0, y), "+%d more %s" % [hidden, "variant" if hidden == 1 else "variants"],
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
-			)
-			y += 14.0
-		y += 8.0
-
-
-## Where on `body` a type turns up: a row per variant (then per trait) of its
-## kind whose spawn entries can place it - {name, trait, rule, found}. A
-## &"random" entry counts for every collectible type it does not exclude.
-func _occurrences(body: Node2D, type_name: StringName) -> Array:
-	var kind: int = body.get("terrain_kind")
-	var body_name: String = body.get("body_name")
-	var rows: Array = []
-	var places := func(entry: Dictionary) -> bool:
-		if entry["type"] == type_name:
-			return true
-		return (
-			entry["type"] == &"random" and ResourceDeposits.TYPES[type_name].get("collectible", true)
-			and not (entry["rule"].get("except_types", []) as Array).has(type_name)
-		)
-	for variant: String in PlanetLore.variants_of(kind):
-		for entry: Dictionary in ResourceDeposits.yields(kind, variant):
-			if places.call(entry):
-				rows.append({
-					"name": variant, "trait": false, "rule": entry["rule"],
-					"found": Journal.is_found(body_name, variant, type_name),
-				})
-				break
-	for flag: String in PlanetLore.traits_of(kind):
-		for entry: Dictionary in ResourceDeposits.yields(kind, PlanetLore.variants_of(kind)[0], flag):
-			if places.call(entry):
-				rows.append({
-					"name": flag, "trait": true, "rule": entry["rule"],
-					"found": Journal.is_found_with_trait(body_name, flag, type_name),
-				})
-				break
-	return rows
 
 
 # ---- variants -------------------------------------------------------------
@@ -901,7 +603,7 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 	var y: float = card.position.y + 30.0
 	var tag: String = "HERE" if here else ("SEEN" if seen else "UNSEEN")
 	if is_trait:
-		tag = "TRAIT  ·  " + tag
+		tag = "TRAIT   " + tag
 	draw_string(
 		font, Vector2(x, card.position.y + 14.0), tag, HORIZONTAL_ALIGNMENT_LEFT, inner, 9,
 		HudPanelStyle.COLOR_CYAN if here else (HudPanelStyle.COLOR_TEXT_MUTED if seen else HudPanelStyle.COLOR_TEXT_FAINT)
@@ -917,54 +619,6 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 		)
 		y += 16.0
 		_draw_paragraph(font, PlanetLore.variant_note(kind, name), x, y, inner, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
-	y = card.position.y + 96.0
-
-	# What it yields, one line per resource type. A trait only adds to the
-	# variant it rolls with: judged with the variant in front of the player.
-	var yields: Array
-	if is_trait:
-		yields = ResourceDeposits.yields(kind, params.get("variant", PlanetLore.variants_of(kind)[0]), name)
-	else:
-		yields = ResourceDeposits.yields(kind, name)
-	var types: Array = []
-	for entry: Dictionary in yields:
-		if not types.has(entry["type"]):
-			types.append(entry["type"])
-	draw_string(font, Vector2(x, y), "YIELDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, HudPanelStyle.COLOR_AMBER)
-	y += 15.0
-	if types.is_empty():
-		if seen:
-			draw_string(font, Vector2(x, y), "Nothing to collect", HORIZONTAL_ALIGNMENT_LEFT, inner, 10, HudPanelStyle.COLOR_TEXT_MUTED)
-		else:
-			_draw_redacted(x, y, inner * 0.5, 10)
-		return
-	for type_name: StringName in types:
-		if y > card.end.y - 4.0:
-			break
-		if type_name == &"random":
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, HudPanelStyle.COLOR_TEXT_MUTED if seen else Color(0.1, 0.1, 0.12))
-			if seen:
-				draw_string(font, Vector2(x + 12.0, y), "Assorted rare finds", HORIZONTAL_ALIGNMENT_LEFT, inner - 12.0, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
-			else:
-				_draw_redacted(x + 12.0, y, inner * 0.55, 10)
-			y += 14.0
-			continue
-		var type: Dictionary = ResourceDeposits.TYPES[type_name]
-		var scenery: bool = not type.get("collectible", true)
-		var found: bool = seen and (
-			scenery
-			or (Journal.is_found_with_trait(body_name, name, type_name) if is_trait else Journal.is_found(body_name, name, type_name))
-		)
-		if found:
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, type["color"])
-			draw_string(
-				font, Vector2(x + 12.0, y), type["name"] + ("  (scenery)" if scenery else ""), HORIZONTAL_ALIGNMENT_LEFT,
-				inner - 12.0, 10, HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_SECONDARY
-			)
-		else:
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, Color(0.1, 0.1, 0.12))
-			_draw_redacted(x + 12.0, y, (inner - 12.0) * (0.45 + 0.3 * fposmod(String(type_name).hash() * 0.618, 1.0)), 10)
-		y += 14.0
 
 
 ## A planet the ship has not charted: the headings are there, the data is not.

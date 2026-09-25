@@ -4,7 +4,7 @@ extends Control
 ## InventoryView. Only the frame lives here - the view is the component, and
 ## moves on its own if the hold becomes part of a bigger interface. Toggled
 ## with I; solar_system.gd routes the keys while it is open (arrows move the
-## selection, I or Esc close it).
+## selection, I or Esc close it). The (i) button next to the X lists the keys.
 
 const PANEL_SIZE := Vector2(980.0, 600.0)
 const MARGIN := 36.0
@@ -15,6 +15,8 @@ var view: InventoryView
 var _system: Node = null
 var _inventory: Inventory = null
 var _hover_close := false
+var _hover_help := false
+var _help: HelpPopup
 
 
 func _ready() -> void:
@@ -23,6 +25,13 @@ func _ready() -> void:
 	visible = false
 	view = InventoryView.new()
 	add_child(view)
+	_help = HelpPopup.new(PackedStringArray([
+		"Arrows: select an item",
+		"J: switch to the planetary log",
+		"I or Esc: close the cargo hold",
+	]))
+	# Last child, so it draws over the view.
+	add_child(_help)
 	resized.connect(_layout)
 	move_to_front.call_deferred()
 
@@ -49,6 +58,7 @@ func open() -> void:
 
 func hide_panel() -> void:
 	visible = false
+	_help.close()
 
 
 func _panel_rect() -> Rect2:
@@ -71,12 +81,20 @@ func _layout() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var hover: bool = _close_rect().has_point(event.position)
-		if hover != _hover_close:
+		var hover_help: bool = HelpPopup.button_rect(_close_rect()).has_point(event.position)
+		if hover != _hover_close or hover_help != _hover_help:
 			_hover_close = hover
+			_hover_help = hover_help
 			queue_redraw()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if _close_rect().has_point(event.position) or not _panel_rect().has_point(event.position):
-			hide_panel()
+		var close: Rect2 = _close_rect()
+		if HelpPopup.button_rect(close).has_point(event.position):
+			_help.toggle_at(Vector2(close.end.x, close.end.y + 10.0))
+			queue_redraw()
+		else:
+			_help.close()
+			if close.has_point(event.position) or not _panel_rect().has_point(event.position):
+				hide_panel()
 		accept_event()
 
 
@@ -95,10 +113,11 @@ func _draw() -> void:
 	var total: int = _inventory.total() if _inventory != null else 0
 	draw_string(
 		font, panel.position + Vector2(200.0, 34.0),
-		"%d %s   ·   Arrows to select   ·   I or Esc to close" % [total, "item" if total == 1 else "items"],
+		"%d %s" % [total, "ITEM" if total == 1 else "ITEMS"],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
+	HelpPopup.draw_button(self, HelpPopup.button_rect(close), _hover_help, _help.visible)
 	draw_string(
 		font, close.position + Vector2(5.0, 18.0), "X", HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
 		HudPanelStyle.COLOR_TEXT_PRIMARY if _hover_close else HudPanelStyle.COLOR_TEXT_MUTED

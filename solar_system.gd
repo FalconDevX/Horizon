@@ -125,6 +125,15 @@ const LANDING_RANGE_RADII := 1.0
 ## by ZOOM_MAX, so the ship can be seen at true scale over the surface.
 const LANDED_VIEW_RADII := 1.1
 const LANDED_VIEW_MAX_RADII := 3.0
+## Driving over a surface: no inertia. WASD / arrows move in screen
+## directions, RMB heads for the cursor, Shift is slow. Top speed in planet
+## radii per second; how fast the ship reaches it or stops (seconds, a short
+## ease so starts and stops are smooth, not jerky); how fast the nose turns
+## to face the way it goes; how sharply it slows as it nears the cursor.
+const GROUND_SPEED_RADII := 0.5
+const GROUND_RESPONSE := 0.08
+const GROUND_TURN_RESPONSE := 14.0
+const GROUND_FOLLOW_GAIN := 3.0
 ## Taking off drops the ship into a circular orbit at least this many radii
 ## out, and inside the SOI.
 const TAKE_OFF_MIN_RADII := 1.3
@@ -417,11 +426,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif event is InputEventKey and event.pressed and (event.keycode == KEY_DOWN or event.keycode == KEY_UP):
 			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
-			get_viewport().set_input_as_handled()
-		elif event is InputEventKey and event.pressed and not event.echo and (
-			event.keycode == KEY_TAB or event.keycode == KEY_LEFT or event.keycode == KEY_RIGHT
-		):
-			planet_info_panel.switch_tab()
 			get_viewport().set_input_as_handled()
 		return
 
@@ -4097,7 +4101,7 @@ func _find_landing_candidate() -> Node2D:
 func _update_landing_prompt() -> void:
 	if landed_body != null:
 		landing_prompt.show_prompt(
-			"TAKE OFF", "Surface of %s   ·   W thrust   ·   RMB / A D steer" % landed_body.get("body_name")
+			"TAKE OFF", "Surface of %s     WASD move     RMB go to cursor     Shift slow" % landed_body.get("body_name")
 		)
 		var index: int = landed_body.call("deposit_under_view", ship.get("collision_radius"))
 		if index < 0:
@@ -4107,7 +4111,7 @@ func _update_landing_prompt() -> void:
 			if is_resource_found_on(landed_body, type_name):
 				collect_prompt.show_prompt(
 					"COLLECT %s" % String(ResourceDeposits.TYPES[type_name]["name"]).to_upper(),
-					"In the hold: %d   ·   I to open" % inventory.count(type_name)
+					"In the hold: %d     I to open" % inventory.count(type_name)
 				)
 			else:
 				collect_prompt.show_prompt("COLLECT UNIDENTIFIED SAMPLE", "Unknown signal right under the ship")
@@ -4150,6 +4154,7 @@ func land_on(body: Node2D) -> void:
 
 	landed_body = body
 	ground_velocity = Vector2.ZERO
+	ship.disengage_manual_main_engine()
 	set_time_scale(1.0)
 	body.set("surface_driven", true)
 	_pin_ship_to(body)
@@ -4178,6 +4183,7 @@ func take_off() -> void:
 	body.set("surface_driven", false)
 	landed_body = null
 	ground_velocity = Vector2.ZERO
+	ship.disengage_manual_main_engine()
 	var body_xy: PackedFloat64Array = get_precise_xy(body)
 	set_ship_state(
 		Vector2(body_xy[0], body_xy[1]) + outward * distance,
@@ -4220,11 +4226,40 @@ func collect_under_ship() -> void:
 	mark_resource_found(landed_body, type_name)
 	var label: String = String(ResourceDeposits.TYPES[type_name]["name"]).to_upper()
 	music_toast.show_message(
-		("NEW RESOURCE: %s   ·   J to view" if first_find else "COLLECTED: %s") % label
-		+ "   ·   ×%d" % inventory.count(type_name)
+		("NEW RESOURCE: %s     J to view" if first_find else "COLLECTED: %s") % label
+		+ "     ×%d" % inventory.count(type_name)
 	)
 	if planet_info_panel.visible:
 		planet_info_panel.queue_redraw()
+
+
+## One step of driving over the surface: ground_velocity eases toward where
+## the keys (or the cursor) say to go - no drift, it stops when they let go -
+## and the nose turns smoothly to face the way the ship moves. The engine
+## flame follows the speed, so it still reads as flying.
+func _drive_on_ground(dt: float) -> void:
+	var top_speed: float = float(landed_body.get("radius")) * GROUND_SPEED_RADII * ship.precision_scale()
+	var target := Vector2.ZERO
+	var keys := Vector2(
+		float(Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT))
+			- float(Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)),
+		float(Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN))
+			- float(Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP))
+	)
+	if keys != Vector2.ZERO:
+		target = keys.normalized() * top_speed
+	elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		var to_cursor: Vector2 = ship.get_global_mouse_position() - ship.global_position
+		var distance: float = to_cursor.length()
+		if distance > 1.0:
+			target = to_cursor / distance * minf(top_speed, distance * GROUND_FOLLOW_GAIN)
+	ground_velocity = ground_velocity.lerp(target, 1.0 - exp(-dt / GROUND_RESPONSE))
+	if ground_velocity.length() < top_speed * 0.002 and target == Vector2.ZERO:
+		ground_velocity = Vector2.ZERO
+	var speed: float = ground_velocity.length()
+	if speed > top_speed * 0.05:
+		ship.rotation = lerp_angle(ship.rotation, ground_velocity.angle(), 1.0 - exp(-dt * GROUND_TURN_RESPONSE))
+	ship.throttle = clampf(speed / maxf(top_speed, 1e-6), 0.0, 1.0)
 
 
 ## Holds the ship on the planet's centre, moving with it.
@@ -4331,9 +4366,9 @@ func _chart_nearby_bodies() -> void:
 			var new_variant: bool = _chart(planet)
 			var variant: String = PlanetLore.variant_label(planet.get("terrain_kind"), planet.get("terrain_params"))
 			if new_variant and variant != "":
-				music_toast.show_message("NEW VARIANT: %s - %s   ·   J to view" % [label, variant.to_upper()])
+				music_toast.show_message("NEW VARIANT: %s - %s     J to view" % [label, variant.to_upper()])
 			else:
-				music_toast.show_message("SURVEYED: %s   ·   J to view" % label)
+				music_toast.show_message("SURVEYED: %s     J to view" % label)
 			if planet_info_panel.visible:
 				planet_info_panel.queue_redraw()
 
@@ -4398,14 +4433,18 @@ func simulation_step(dt: float) -> void:
 			# Flight assist and the holds work against the ground.
 			ship.hold_reference_velocity = ground_velocity
 
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		if landed_body != null:
+			pass # Ground driving steers the ship itself (below).
+		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			ship.update_rotation(dt)
 		elif autopilot_on_main_engine:
 			ship.update_autopilot_rotation(dt)
 		else:
 			ship.update_rotation(dt)
 
-		if autopilot_thrusting:
+		if landed_body != null:
+			pass
+		elif autopilot_thrusting:
 			ship.disengage_manual_main_engine()
 		else:
 			ship.update_throttle(dt, time_scale <= 1.0)
@@ -4444,7 +4483,7 @@ func simulation_step(dt: float) -> void:
 		# surface rolls the other way under it, while the ship itself rides
 		# the planet's centre round the sun. _pin_ship_to reads the precise
 		# state, so it does not need the planets' nodes pushed this step.
-		ground_velocity += ship.get_manual_acceleration() * dt
+		_drive_on_ground(dt)
 		landed_body.roll_surface(ground_velocity * dt)
 		_pin_ship_to(landed_body)
 		return

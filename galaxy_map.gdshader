@@ -193,7 +193,7 @@ void fragment() {
 	int extra = int(clamp(log2(px_per_unit / 350.0) + 0.5, 0.0, 4.0));
 	float clumps = fbm(g * 11.0, 6 + extra);
 	float young = arm_tight * env * smoothstep(0.3, 0.8, clumps);
-	col += vec3(0.62, 0.78, 1.0) * young * 1.5;
+	col += vec3(0.62, 0.78, 1.0) * young * 1.1;
 	// Faint blue haze round the arms.
 	col += vec3(0.35, 0.5, 0.9) * arm_broad * env * 0.18;
 
@@ -228,6 +228,10 @@ void fragment() {
 	float dust = lane * smoothstep(0.35, 0.72, dust_noise) * env * 1.8;
 	dust += smoothstep(0.62, 0.85, fbm(g * 30.0 + 9.0, 5 + extra)) * disk * 1.2 * env;
 	col *= exp(-dust * vec3(0.9, 1.25, 1.7));
+	// The galaxy's diffuse light is a backdrop, not the subject: kept soft,
+	// and fading further as the view zooms in, so the white star clouds
+	// never swamp the system markers. Point stars below are not dimmed.
+	col *= 0.72 * mix(1.0, 0.45, smoothstep(500.0, 2000.0, px_per_unit));
 
 	// Luminosity decides how crowded the resolved stars are.
 	float lum = clamp(disk * 1.5 + young * 1.2 + bulge * 0.4, 0.0, 1.0) * exp(-dust * 0.7);

@@ -277,7 +277,7 @@ static func variant_label(kind: int, params: Dictionary) -> String:
 	for flag: String in FLAG_LABELS:
 		if params.get(flag, false) == true:
 			parts.append(FLAG_LABELS[flag])
-	return " · ".join(parts)
+	return ", ".join(parts)
 
 
 ## One line added to a kind's description for the variant it rolled

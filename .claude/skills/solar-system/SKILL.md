@@ -774,3 +774,9 @@ arrays; they can be picked for an info card but are out of hyperdrive range.
 - Saves: `scripts/data/SaveGame.gd` (see its header); `solar_system.gd`
   `build_save_data()` / `_apply_pending_save()`; `Journal`, `GalaxyMap`,
   `PlayerProgress` each have `to_dict()` / `from_dict()`.
+- The planet catalog (J) no longer has a RESOURCES tab, a resource tally or YIELDS on
+  the variant cards: resources are found on the surface, not read about. (Older notes
+  above describing those are out of date.)
+- Landed driving has no inertia: `_drive_on_ground()` eases `ground_velocity` toward
+  WASD (screen directions) or the RMB cursor (`GROUND_*` constants), turns the nose
+  to the motion and sets `ship.throttle` from the speed for the flame.
