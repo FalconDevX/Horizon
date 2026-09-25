@@ -317,6 +317,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event is InputEventKey and event.pressed and (event.keycode == KEY_DOWN or event.keycode == KEY_UP):
 			planet_info_panel.step(1 if event.keycode == KEY_DOWN else -1)
 			get_viewport().set_input_as_handled()
+		elif event is InputEventKey and event.pressed and not event.echo and (
+			event.keycode == KEY_TAB or event.keycode == KEY_LEFT or event.keycode == KEY_RIGHT
+		):
+			planet_info_panel.switch_tab()
+			get_viewport().set_input_as_handled()
 		return
 
 	# Taking the controls: any manual thrust or turn hands the ship back to the

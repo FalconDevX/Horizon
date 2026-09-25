@@ -47,8 +47,8 @@ vec2 spots_at(vec3 p) {
 					continue;
 				}
 				float d = length(p - c - hash3(c + 17.0));
-				float r = mix(0.18, 0.34, h.y);
-				float on = 1.0 - smoothstep(r - 0.04, r, d);
+				float r = mix(0.26, 0.42, h.y);
+				float on = 1.0 - smoothstep(r - 0.03, r, d);
 				if (on > best.x) {
 					best = vec2(on, step(0.5, h.z));
 				}
@@ -72,7 +72,8 @@ void vertex() {
 void fragment() {
 	vec3 albedo = base_color * COLOR.rgb;
 	if (spots > 0.0) {
-		vec2 s = spots_at(v_local * 7.0);
+		// Big, solid spots.
+		vec2 s = spots_at(v_local * 4.5);
 		albedo = mix(albedo, mix(spot_color_a, spot_color_b, s.y), s.x * spots);
 	}
 

@@ -268,20 +268,36 @@ still shows the blob preview.
   lava/cryo crust over, acid does not (a crust on acid reads as polka dots).
   Liquid kinds: Terran (water), Volcanic (lava or cryo, emissive), Ice, Toxic (acid).
   `terrain_liquid_coverage` overrides the share (0 = dry).
-- **Per-kind variants** (rolled in `_roll_*()`, name in `params.variant` where it
-  matters, described by `PlanetLore.describe()`): Gloom cracks gold → crimson; Bloom
-  fields mix two hues from navy–purple–crimson by height band; Slime green / yellow /
-  teal / blue; Oasis sand → orange, 50% long muddy rivers (`channels()` as deep as
-  the puddles, coverage raised); Desert 25% `lava` (canyons via `channels()` in
-  `detail` c, lava liquid); Barren 35% `spiked` (`crater_layer_spiked()` teeth, top of
-  the gradient metallic green/blue), 50% dark drawn cracks, 30% red mist + red
-  clouds; Quake cast steel / metallic green / metallic blue, and every scar is a
-  carved hole (`quake_holes()` in the bake mirrors `quakes_at()` via `hash3_plain()`
-  and the shared `quake_shift`); Rings `green` / `sandy` (dry biome sand + dune
-  patches) / `volcanic` (`peak_layer()` cones with calderas, dark slope rock), 40% of
-  ring sets are islands (`extra.z`; plateau + moat per `ISLAND_MOAT`, sea coverage
-  = 0.27·size² per island, blue ocean), violet bushes round every set (buds with
-  `bud_near_features` → `feature_surroundings()`).
+- **Per-kind variants** (rolled in `_roll_*()`, named in `params.variant` - plus the
+  flags `blind`, `julia`, `rings` - and described by `PlanetLore.VARIANT_NOTES` /
+  `FLAG_NOTES`): Terran temperate/autumn (autumn grass + forests, more sand);
+  Rings green/sandy/volcanic/autumn/flooded (flooded = every ring set an island;
+  islands = plateau + moat per `ISLAND_MOAT`, sea coverage 0.27·size² each; violet
+  bushes round every set via `bud_near_features`); Occult dust/obsidian_purple/
+  obsidian_yellow + `blind` (eye `style.y` 3 = closed lid, both shaders' `eye_parts`);
+  Lotus open/night (petals folded to buds via bake `b.x` openness, pads glow via
+  `land_glow`)/giant (one continent-sized flower from `sigils[0]`, `flower_shape()`);
+  Fractal palettes classic/ember/verdigris/orchid/frozen + `julia` (Julia sets:
+  `extra.x` 1, constant in `extra.yz`); Meridian pink/inverted (white seas, dark
+  land); Quake settled/active (`quake_glow`, orange)/terraced (bake `c.x` steps) and
+  every scar a carved hole (`quake_holes()` mirrors `quakes_at()` via `hash3_plain()`
+  and `quake_shift`); Bloom fields/winter/dried; Oasis dry season/monsoon (+50% muddy
+  rivers); Barren spiked/cracks/red mist + `rings` (master's `_build_rings()`, the roll
+  tips the axis with `spin_axis` - see below); Toxic still/crystal (`crust_color`)/
+  boiling (`boil*`, `bubbles_at()`); Desert open/lava/glass (`rock_patches`)/sandstorm
+  (`cloud_speed`); Slime slick/bubbling/petrified (solid: liquid off, chalky low
+  ground, cracks); Gloom single/twin (`crack_twin`, second `cracks_at()` pass); Frozen
+  white/pink; Ice sheet/geysers.
+- **Forcing a variant**: `terrain_variant` on a planet (comma-separated, e.g.
+  `"julia,frozen"`, `"rings,spiked"`) reaches `resolve()` as `forced_variant`; the
+  rolls pick through `Roller.variant()` / `Roller.flag()`, which still draw their
+  random numbers and then return the forced name, so the rest of the look stays as
+  the world seed made it. Empty = rolled. The scene currently forces a showcase
+  variant on 16 planets (temporary - clear the fields to go back to rolling).
+- **A roll can tilt the spin axis**: `params.spin_axis` replaces the scene's
+  `surface_spin_axis` for that world (restored from `_scene_spin_axis` otherwise), set
+  in `build_terrain()` before anything reads the pole; `surface_rotation` resets when
+  the axis changes, or the spin would wobble.
 - **Bake recipe per planet.** `recipe` (continent warp, mountain-belt thresholds,
   ridge sharpness) is shared by every rocky kind; `detail` is 16 kind-specific floats
   sent as `detail[4]` in the bake's `Params` - their meaning is commented per branch
@@ -359,13 +375,18 @@ still shows the blob preview.
   optional `wiggle` / `spots`) and `SPAWNS` (per `PlanetTerrain.Kind`: entries with
   `type`, `count`, `on` land/liquid/any, `land` height band in colour-gradient units,
   `lowest` (the planet's lowest share of land, via `Ground.land_below()` - use it for
-  valleys, since a roll's heights may never reach a fixed band), `slope`, `feature` (e.g. `&"swirl_ridge"`, a CPU mirror of `swirl_parts()`),
-  `motion`). Kinds missing from `SPAWNS` get nothing (gas giants, Volcanic, Ice,
-  Frozen, Gloom, Quake, Meridian for now). `place()` runs once the bake lands
+  valleys, since a roll's heights may never reach a fixed band), `above`, `slope`,
+  `only` / `except` (variant names or true flags), `chance`, `cluster`, `color` /
+  `glow` overrides, type `&"random"` (any collectible but `except_types`),
+  `feature` (`&"swirl_ridge"` - CPU mirror of `swirl_parts()`; `&"ring_centre"`;
+  `&"quake_hole"` - snaps to hole centres via `_shader_hash()`, a GDScript PCG3D),
+  `motion`). Kinds missing from `SPAWNS` get nothing (gas giants, Volcanic and
+  Gloom for now). `place()` runs once the bake lands
   (`_apply_terrain()` → `_place_deposits()`), rolled from `generation_seed`, using
   `PlanetTerrain.height_at()`; liquid spawns sit at the unit sphere (the sea surface).
   Shapes are built per deposit from its seed in `deposit_meshes.gd` (`DepositMeshes`:
-  crystals, tiles, scrap, beanstalk, pillars, egg, pebbles, bones, slabs; +Y up,
+  crystals, tiles, scrap, beanstalk (green/frozen/dried), pillars, egg, pebbles,
+  bones, slabs, spikes, jelly, tumbleweed, geyser; +Y up,
   ~1 unit across, feet sunk; vertex colours for inner shading); add a look there and
   in `build()`. Lit by `resource_deposit.gdshader` (`sun_position` global, wiggle
   driven by the pausable `planet_time` global, procedural spots). Data per deposit in
@@ -377,10 +398,23 @@ still shows the blob preview.
   `turn()`, which follow the sphere in ≤ `MAX_STEP` substeps and refuse any spot the
   deposit's own `SPAWNS` rule would not allow), `pose(time)` (bob / waddle / spin in
   the deposit's frame: +Y up, -Z heading, cluster units) and `animates()`; register
-  it in `ResourceDeposits.MOTIONS`. A spawn's `motion` defaults to still; nothing
-  uses `DepositDrift` (slow meandering slide) right now. The beanstalks' sway is
+  it in `ResourceDeposits.MOTIONS`. A spawn's `motion` defaults to still;
+  `DepositRoll` (tumbleweeds) and `DepositHop` (slime jellies) are in use,
+  `DepositDrift` (slow meandering slide) is not. Types with `collectible` false
+  (tumbleweed, dried beanstalk, geyser) are scenery: deposits carry `collectible`. The beanstalks' sway is
   shader-only (`wiggle`), not a motion.
   `celestial_body._process()` calls `ResourceDeposits.advance()` with game time.
+- **Catalog (I key, `planet_info_panel.gd`)** has two tabs (click, Tab or Left/Right):
+  PLANETS - stats now start with a "Variant" row (`PlanetLore.variant_label()`, names
+  from `VARIANT_LABELS` / `FLAG_LABELS`), a RESOURCES tally of the body's
+  `resource_deposits` (scenery marked), and the globe preview (`make_preview()`)
+  carries a copy of the deposits; RESOURCES - one row per `ResourceDeposits.TYPES`
+  entry, a turning model (`ResourceDeposits.make_showcase()`, side-on camera), this
+  world's counts per planet, and FOUND ON: every kind that spawns it
+  (`spawns_of()`, random entries included) with the system's planets of that kind
+  and `spawn_notes()` - where, which variants, how many. List rows shrink to fit.
+  A new variant needs a label in `PlanetLore.VARIANT_LABELS`; a new spawn key needs
+  words in `spawn_notes()`.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a

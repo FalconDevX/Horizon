@@ -18,7 +18,9 @@ extends RefCounted
 const SHADER := preload("res://resource_deposit.gdshader")
 
 ## What each resource is. `size` is the cluster's footprint in planet radii;
-## the rest are resource_deposit.gdshader's uniforms.
+## `collectible` false marks scenery the player cannot pick up (default true);
+## `color_param` takes the colour from a terrain param instead (a slime's own
+## green); the rest are resource_deposit.gdshader's uniforms.
 const TYPES := {
 	&"silver_ore": {
 		"name": "Silver ore", "mesh": &"crystals", "size": Vector2(0.03, 0.045),
@@ -36,6 +38,14 @@ const TYPES := {
 		"name": "Beanstalk", "mesh": &"beanstalk", "size": Vector2(0.045, 0.065),
 		"color": Color.WHITE, "shine": 0.2, "glow": 0.05, "wiggle": 0.035,
 	},
+	&"frozen_beanstalk": {
+		"name": "Frozen beanstalk", "mesh": &"beanstalk_frozen", "size": Vector2(0.045, 0.065),
+		"color": Color.WHITE, "shine": 0.6, "glow": 0.08, "wiggle": 0.012,
+	},
+	&"dried_beanstalk": {
+		"name": "Dried beanstalk", "mesh": &"beanstalk_dried", "size": Vector2(0.04, 0.06),
+		"color": Color.WHITE, "shine": 0.1, "glow": 0.02, "wiggle": 0.02, "collectible": false,
+	},
 	&"gold_pillar": {
 		"name": "Gold pillar", "mesh": &"pillars", "size": Vector2(0.06, 0.09),
 		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15,
@@ -43,7 +53,7 @@ const TYPES := {
 	&"egg": {
 		"name": "Egg", "mesh": &"egg", "size": Vector2(0.08, 0.11),
 		"color": Color(0.97, 0.96, 0.93), "shine": 0.35, "glow": 0.08,
-		"spots": 1.0, "spot_color_a": Color(0.3, 0.55, 1.0), "spot_color_b": Color(1.0, 0.5, 0.75),
+		"spots": 1.0, "spot_color_a": Color(0.12, 0.38, 1.0), "spot_color_b": Color(1.0, 0.3, 0.62),
 	},
 	&"sky_stone": {
 		"name": "Sky stone", "mesh": &"pebbles", "size": Vector2(0.022, 0.032),
@@ -57,21 +67,50 @@ const TYPES := {
 		"name": "Toxic ore", "mesh": &"slabs", "size": Vector2(0.05, 0.07),
 		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1,
 	},
+	&"pink_crystal": {
+		"name": "Pink crystal", "mesh": &"crystals", "size": Vector2(0.035, 0.05),
+		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18,
+	},
+	&"ice_crystal": {
+		"name": "Ice crystal", "mesh": &"spikes", "size": Vector2(0.04, 0.06),
+		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12,
+	},
+	&"slime_jelly": {
+		"name": "Slime jelly", "mesh": &"jelly", "size": Vector2(0.03, 0.045),
+		"color": Color(0.5, 1.0, 0.5), "color_param": "shallow", "shine": 0.9, "glow": 0.35,
+	},
+	&"tumbleweed": {
+		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
+		"color": Color(0.64, 0.5, 0.32), "shine": 0.1, "glow": 0.02, "collectible": false,
+	},
+	&"geyser": {
+		"name": "Geyser", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
+		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04, "collectible": false,
+	},
 }
 
 ## What each planet kind spawns: a list of entries, each
-##   type    - a key of TYPES
+##   type    - a key of TYPES, or &"random": each one any collectible type
+##             except those in `except_types`
 ##   count   - how many, rolled per world (fewer if the ground runs out)
+##   chance  - chance the entry spawns at all on a world (default 1)
+##   only    - variants it spawns on: a name matches the roll's `variant`,
+##             or a param of that name that is true ("blind"); default all
+##   except  - variants it does not spawn on, the same way
+##   color   - its colour here instead of the type's; `glow` likewise
 ##   on      - "land" (default), "liquid" (out on the sea, lava or acid) or
 ##             "any"
 ##   land    - height band on land, in the terrain's colour-gradient units
 ##             (0 = shore or lowest ground, 1 = highest); default all of it
 ##   lowest  - only the lowest this share of the planet's land (0.1 = its
 ##             lowest tenth): valley floors, whatever the roll's heights
+##   above   - only above the lowest this share: off the valley floors
 ##   slope   - steepest ground allowed (rise over run; default MAX_SLOPE)
 ##   feature - a landmark it must stand on: &"swirl_ridge" (a Swirl's raised
-##             arm)
-##   motion  - &"still" (default) or &"drift" (see MOTIONS)
+##             arm), &"ring_centre" (a Rings ring set's middle),
+##             &"quake_hole" (the middle of a Quake scar's hole)
+##   cluster - all within this many radians of the first one (a field)
+##   motion  - &"still" (default), &"drift", &"roll" or &"hop" (see MOTIONS)
 ## Kinds missing here get no deposits.
 const SPAWNS := {
 	PlanetTerrain.Kind.TERRAN: [
@@ -81,6 +120,8 @@ const SPAWNS := {
 	PlanetTerrain.Kind.DESERT: [
 		{"type": &"gold_ore", "count": Vector2i(14, 20)},
 		{"type": &"scrap", "count": Vector2i(2, 4)},
+		{"type": &"bone", "count": Vector2i(1, 1), "chance": 0.25},
+		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll"},
 	],
 	PlanetTerrain.Kind.BARREN: [
 		{"type": &"gold_ore", "count": Vector2i(2, 4)},
@@ -91,35 +132,66 @@ const SPAWNS := {
 		{"type": &"toxic_ore", "count": Vector2i(6, 10)},
 	],
 	PlanetTerrain.Kind.SLIME: [
-		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5},
-		{"type": &"toxic_ore", "count": Vector2i(5, 8)},
+		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"]},
+		{"type": &"toxic_ore", "count": Vector2i(5, 8), "except": ["petrified"]},
+		{"type": &"toxic_ore", "count": Vector2i(11, 16), "only": ["petrified"]},
+		{"type": &"slime_jelly", "count": Vector2i(4, 7), "on": "any", "except": ["petrified"], "motion": &"hop"},
 	],
 	PlanetTerrain.Kind.OCCULT: [
 		{"type": &"gold_ore", "count": Vector2i(8, 14)},
-		{"type": &"bone", "count": Vector2i(5, 9)},
+		{"type": &"bone", "count": Vector2i(5, 9), "except": ["blind"]},
+		# Blind worlds hide their bones: near-black, no glow.
+		{"type": &"bone", "count": Vector2i(5, 9), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0},
 	],
 	PlanetTerrain.Kind.BLOOM: [
-		# The brown valley floors only - the flower fields stay bare.
-		{"type": &"beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7},
+		# The valley floors only - the flower fields stay bare, bar some
+		# silver on dried worlds.
+		{"type": &"beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["fields"]},
+		{"type": &"frozen_beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
+		{"type": &"dried_beanstalk", "count": Vector2i(18, 26), "lowest": 0.14, "slope": 0.8, "only": ["dried"]},
+		{"type": &"beanstalk", "count": Vector2i(2, 4), "lowest": 0.14, "slope": 0.8, "only": ["dried"]},
+		{"type": &"silver_ore", "count": Vector2i(8, 12), "above": 0.3, "only": ["dried"]},
 	],
 	PlanetTerrain.Kind.OASIS: [
 		{"type": &"silver_ore", "count": Vector2i(14, 20)},
 		{"type": &"scrap", "count": Vector2i(5, 8)},
+		{"type": &"tumbleweed", "count": Vector2i(3, 6), "motion": &"roll"},
 	],
 	PlanetTerrain.Kind.LOTUS: [
 		{"type": &"gold_pillar", "count": Vector2i(5, 9), "on": "liquid"},
+		{"type": &"toxic_ore", "count": Vector2i(1, 3), "slope": 0.9, "only": ["night", "giant"]},
 	],
 	PlanetTerrain.Kind.SWIRL: [
 		{"type": &"sky_stone", "count": Vector2i(8, 14), "feature": &"swirl_ridge"},
 		{"type": &"silver_ore", "count": Vector2i(6, 10)},
 	],
 	PlanetTerrain.Kind.RINGS: [
+		{"type": &"bone", "count": Vector2i(2, 4), "feature": &"ring_centre", "slope": 0.8},
 		{"type": &"gold_ore", "count": Vector2i(6, 10)},
+		{"type": &"scrap", "count": Vector2i(3, 6)},
 	],
 	PlanetTerrain.Kind.FRACTAL: [
 		# On the massifs: the plains stay below ~0.25.
 		{"type": &"egg", "count": Vector2i(1, 3), "land": Vector2(0.45, 1.0), "slope": 0.45},
 		{"type": &"silver_ore", "count": Vector2i(8, 14), "land": Vector2(0.0, 0.25)},
+	],
+	PlanetTerrain.Kind.MERIDIAN: [
+		# Pink crystals along the shores, gold anywhere.
+		{"type": &"pink_crystal", "count": Vector2i(6, 10), "land": Vector2(0.0, 0.07), "slope": 0.6},
+		{"type": &"gold_ore", "count": Vector2i(5, 8)},
+	],
+	PlanetTerrain.Kind.QUAKE: [
+		# Scarce: a few finds, each in the middle of a hole, of any kind.
+		{"type": &"random", "count": Vector2i(2, 4), "except_types": [&"egg"], "feature": &"quake_hole", "slope": 2.0},
+	],
+	PlanetTerrain.Kind.FROZEN: [
+		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
+		{"type": &"silver_ore", "count": Vector2i(4, 7)},
+	],
+	PlanetTerrain.Kind.ICE: [
+		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
+		{"type": &"scrap", "count": Vector2i(3, 5)},
+		{"type": &"geyser", "count": Vector2i(8, 14), "only": ["geysers"], "cluster": 0.35, "slope": 0.5},
 	],
 }
 
@@ -138,6 +210,8 @@ const SLOPE_STEP := 0.012
 const MOTIONS := {
 	&"still": preload("res://deposit_motion.gd"),
 	&"drift": preload("res://deposit_drift.gd"),
+	&"roll": preload("res://deposit_roll.gd"),
+	&"hop": preload("res://deposit_hop.gd"),
 }
 
 
@@ -182,8 +256,9 @@ class Ground:
 
 ## Where the deposits go, as dictionaries: `type` (a key of TYPES),
 ## `direction` (planet space, unit; kept current as it moves), `lift`, `size`
-## (radii), `seed` (for its shape) and `motion`. Empty for kinds with nothing
-## in SPAWNS, or before the bake has landed.
+## (radii), `seed` (for its shape), `color`, `glow`, `collectible` and
+## `motion`. Empty for kinds with nothing in SPAWNS, or before the bake has
+## landed.
 static func place(kind: PlanetTerrain.Kind, ground: Ground, body_seed: int) -> Array:
 	var deposits: Array = []
 	if ground.data.is_empty() or not SPAWNS.has(kind):
@@ -192,28 +267,147 @@ static func place(kind: PlanetTerrain.Kind, ground: Ground, body_seed: int) -> A
 	var rng := RandomNumberGenerator.new()
 	rng.seed = body_seed ^ 0x5EEDDE9051
 	for rule: Dictionary in SPAWNS[kind]:
-		var type: Dictionary = TYPES[rule["type"]]
+		if not _applies(rule, ground.params) or rng.randf() > rule.get("chance", 1.0):
+			continue
 		var count: int = rng.randi_range(rule["count"].x, rule["count"].y)
 		var placed: int = 0
+		var cluster_centre := Vector3.ZERO
 		for _attempt in range(ATTEMPTS):
 			if placed >= count:
 				break
+			var type_name: StringName = _pick_type(rule, rng)
+			var type: Dictionary = TYPES[type_name]
 			var dir := _random_direction(rng)
+			if rule.get("feature", &"") == &"quake_hole":
+				# Straight into the middle of the nearest hole.
+				dir = _quake_hole_centre(ground.params, dir)
+				if dir == Vector3.ZERO:
+					continue
+			if cluster_centre != Vector3.ZERO and dir.angle_to(cluster_centre) > rule["cluster"]:
+				continue
 			var size: float = rng.randf_range(type["size"].x, type["size"].y)
 			if not _is_clear(deposits, dir, size) or not ground.allows(rule, dir):
 				continue
+			if rule.has("cluster") and cluster_centre == Vector3.ZERO:
+				cluster_centre = dir
 			var motion: DepositMotion = _motion_for(rule).new()
 			motion.setup(dir, rule, rng.randi())
+			var color: Color = rule.get("color", type["color"])
+			if type.has("color_param") and not rule.has("color") and ground.params.get("liquid", false):
+				# The planet's own colour, but well lighter, or it vanishes
+				# against the very liquid it came from.
+				var own: Color = ground.params[type["color_param"]]
+				color = Color.from_hsv(own.h, clampf(own.s + 0.15, 0.0, 1.0), clampf(own.v + 0.4, 0.0, 1.0))
 			deposits.append({
-				"type": rule["type"],
+				"type": type_name,
 				"direction": dir,
 				"lift": ground.lift(dir),
 				"size": size,
 				"seed": rng.randi(),
+				"color": color,
+				"glow": rule.get("glow", type.get("glow", 0.15)),
+				"collectible": type.get("collectible", true),
 				"motion": motion,
 			})
 			placed += 1
 	return deposits
+
+
+## Every spawn entry that can place `type_name`, as [kind, rule] pairs - a
+## &"random" entry counts for every type it may pick.
+static func spawns_of(type_name: StringName) -> Array:
+	var found: Array = []
+	for kind in SPAWNS:
+		for rule: Dictionary in SPAWNS[kind]:
+			var random_pick: bool = rule["type"] == &"random" and TYPES[type_name].get("collectible", true) \
+				and not rule.get("except_types", []).has(type_name)
+			if rule["type"] == type_name or random_pick:
+				found.append([kind, rule])
+	return found
+
+
+## A spawn entry in words, for the catalog: `where` it stands, on which
+## `variants`, and how many (`count`).
+static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
+	var where: PackedStringArray = []
+	match rule.get("feature", &""):
+		&"swirl_ridge":
+			where.append("on the raised spiral ridges")
+		&"ring_centre":
+			where.append("at the centres of the ring sets")
+		&"quake_hole":
+			where.append("at the bottom of the quake holes")
+	match rule.get("on", "land"):
+		"liquid":
+			where.append("out on the sea")
+		"any":
+			where.append("on land or out on the liquid")
+	if rule.has("lowest"):
+		where.append("in the valley floors")
+	if rule.has("above"):
+		where.append("on the higher ground, off the valley floors")
+	if rule.has("land"):
+		var band: Vector2 = rule["land"]
+		if band.y <= 0.1:
+			where.append("along the shores")
+		elif band.x >= 0.4:
+			where.append("on the high ground")
+		elif band.y <= 0.3:
+			where.append("on the low plains")
+	if rule.has("cluster"):
+		where.append("gathered in one field")
+	if where.is_empty():
+		where.append("anywhere on land")
+	match rule.get("motion", &"still"):
+		&"roll":
+			where.append("rolling with the wind")
+		&"hop":
+			where.append("hopping about")
+		&"drift":
+			where.append("drifting slowly")
+
+	var variants := "Every variant"
+	if rule.has("only"):
+		variants = "Only " + ", ".join((rule["only"] as Array).map(
+			func(name: String) -> String: return PlanetLore.variant_name(kind, name)
+		))
+	elif rule.has("except"):
+		variants = "All but " + ", ".join((rule["except"] as Array).map(
+			func(name: String) -> String: return PlanetLore.variant_name(kind, name)
+		))
+
+	var low: int = rule["count"].x
+	var high: int = rule["count"].y
+	var count: String = ("%d" % low if low == high else "%d-%d" % [low, high]) + " per world"
+	if rule["type"] == &"random":
+		count += ", as one of several finds"
+	if rule.get("chance", 1.0) < 1.0:
+		count += " (on %d%% of worlds)" % roundi(rule["chance"] * 100.0)
+	var place: String = ", ".join(where)
+	return {"where": place.left(1).to_upper() + place.substr(1), "variants": variants, "count": count}
+
+
+## Whether a spawn entry applies to this world's roll (its `only` / `except`).
+static func _applies(rule: Dictionary, params: Dictionary) -> bool:
+	var matches := func(name: String) -> bool:
+		return params.get("variant", "") == name or params.get(name, false) == true
+	if rule.has("only") and not (rule["only"] as Array).any(matches):
+		return false
+	if rule.has("except") and (rule["except"] as Array).any(matches):
+		return false
+	return true
+
+
+## The type an entry spawns this time: its own, or for &"random" any
+## collectible type but those it excludes.
+static func _pick_type(rule: Dictionary, rng: RandomNumberGenerator) -> StringName:
+	if rule["type"] != &"random":
+		return rule["type"]
+	var pool: Array = TYPES.keys().filter(
+		func(name: StringName) -> bool:
+			return TYPES[name].get("collectible", true) and not rule.get("except_types", []).has(name)
+	)
+	return pool[rng.randi_range(0, pool.size() - 1)]
 
 
 ## Moves every deposit that animates on by `delta` of game time and puts its
@@ -245,14 +439,27 @@ static func transform_of(deposit: Dictionary, time: float) -> Transform3D:
 	return frame * motion.pose(time)
 
 
+## One of a type standing on its own at the origin, one cluster unit across -
+## for the catalog to show.
+static func make_showcase(type_name: StringName) -> MeshInstance3D:
+	var type: Dictionary = TYPES[type_name]
+	var node: MeshInstance3D = make_node({
+		"type": type_name, "seed": 7, "size": 1.0, "lift": 0.0,
+		"color": type["color"], "glow": type.get("glow", 0.15),
+		"motion": DepositMotion.new(),
+	})
+	node.transform = Transform3D.IDENTITY
+	return node
+
+
 ## The deposit as a node, its look from TYPES.
 static func make_node(deposit: Dictionary) -> MeshInstance3D:
 	var type: Dictionary = TYPES[deposit["type"]]
 	var material := ShaderMaterial.new()
 	material.shader = SHADER
-	material.set_shader_parameter("base_color", type["color"])
+	material.set_shader_parameter("base_color", deposit.get("color", type["color"]))
 	material.set_shader_parameter("shine", type.get("shine", 0.3))
-	material.set_shader_parameter("glow", type.get("glow", 0.15))
+	material.set_shader_parameter("glow", deposit.get("glow", type.get("glow", 0.15)))
 	material.set_shader_parameter("wiggle", type.get("wiggle", 0.0))
 	material.set_shader_parameter("phase", float(deposit["seed"] % 1000) * 0.37)
 	material.set_shader_parameter("spots", type.get("spots", 0.0))
@@ -297,6 +504,8 @@ static func _allows(ground: Ground, rule: Dictionary, dir: Vector3) -> bool:
 		return false
 	if rule.has("lowest") and land > ground.land_below(rule["lowest"]):
 		return false
+	if rule.has("above") and land < ground.land_below(rule["above"]):
+		return false
 
 	# Rise over run across the spot, both ways, on the surface as displaced.
 	var helper := Vector3.UP if absf(dir.y) < 0.9 else Vector3.RIGHT
@@ -315,7 +524,73 @@ static func _allows(ground: Ground, rule: Dictionary, dir: Vector3) -> bool:
 	match rule.get("feature", &""):
 		&"swirl_ridge":
 			return _on_swirl_ridge(ground, dir)
+		&"ring_centre":
+			return _in_ring_centre(ground, dir)
+		&"quake_hole":
+			var centre: Vector3 = _quake_hole_centre(ground.params, dir)
+			return centre != Vector3.ZERO and dir.angle_to(centre) < 0.01
 	return true
+
+
+## In the middle of a Rings ring set - its innermost quarter.
+static func _in_ring_centre(ground: Ground, dir: Vector3) -> bool:
+	for sigil: Dictionary in ground.params.get("sigils", []):
+		if dir.angle_to(sigil["direction"]) < sigil["size"] * 0.25:
+			return true
+	return false
+
+
+## The middle of the Quake scar nearest `dir` whose hole the surface really
+## cuts (not one that only grazes it), or Vector3.ZERO. Mirrors quakes_at() in
+## the planet shader and quake_holes() in the bake, hash and all.
+static func _quake_hole_centre(params: Dictionary, dir: Vector3) -> Vector3:
+	var scale: float = params["quake_scale"]
+	var shift := Vector3.ONE * float(params["quake_shift"])
+	var p: Vector3 = dir * scale + shift
+	var cell := p.floor()
+	var best := Vector3.ZERO
+	var best_angle := INF
+	for z in range(-1, 2):
+		for y in range(-1, 2):
+			for x in range(-1, 2):
+				var o := Vector3(x, y, z)
+				var h: Vector3 = _shader_hash(cell + o + Vector3(0.0, 0.0, 577.0))
+				if h.x > params["quake_density"]:
+					continue
+				var point: Vector3 = cell + o + Vector3(0.5, 0.5, 0.5) + (_shader_hash(cell + o + Vector3(0.0, 57.0, 0.0)) - Vector3(0.5, 0.5, 0.5)) * 0.7
+				var size: float = params["quake_size"] * lerpf(0.7, 1.2, h.y)
+				var out: Vector3 = point - shift
+				# How far the lattice point sits off the sphere: well off and
+				# the hole is only a shallow graze.
+				if absf(out.length() - scale) > size * 0.5:
+					continue
+				var angle: float = dir.angle_to(out)
+				if angle < best_angle:
+					best_angle = angle
+					best = out.normalized()
+	return best
+
+
+## hash3() of the planet shader (planet_noise.gdshaderinc): PCG3D on the
+## cell's integer coordinates, in 32-bit unsigned maths.
+static func _shader_hash(cell: Vector3) -> Vector3:
+	const MASK := 0xFFFFFFFF
+	var v := [int(cell.x) & MASK, int(cell.y) & MASK, int(cell.z) & MASK]
+	for i in range(3):
+		v[i] = (_mul32(v[i], 1664525) + 1013904223) & MASK
+	for pass_index in range(2):
+		v[0] = (v[0] + _mul32(v[1], v[2])) & MASK
+		v[1] = (v[1] + _mul32(v[2], v[0])) & MASK
+		v[2] = (v[2] + _mul32(v[0], v[1])) & MASK
+		if pass_index == 0:
+			for i in range(3):
+				v[i] = v[i] ^ (v[i] >> 16)
+	return Vector3(v[0], v[1], v[2]) / 4294967295.0
+
+
+## a * b modulo 2^32, without overflowing a 64-bit int.
+static func _mul32(a: int, b: int) -> int:
+	return (a * (b & 0xFFFF) + (((a * (b >> 16)) & 0xFFFF) << 16)) & 0xFFFFFFFF
 
 
 ## Height above the liquid (or above zero on a dry world), as the terrain

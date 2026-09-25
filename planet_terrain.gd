@@ -68,6 +68,8 @@ static var _gpu_mutex := Mutex.new()
 class Roller:
 	var rng := RandomNumberGenerator.new()
 	var chaos := 1.0
+	## Variants and flags the scene forces (celestial_body terrain_variant).
+	var forced := PackedStringArray()
 
 	func _init(seed_value: int, chaos_value: float) -> void:
 		rng.seed = seed_value
@@ -81,6 +83,20 @@ class Roller:
 
 	func chance(probability: float) -> bool:
 		return rng.randf() < probability
+
+	## One of `names`, chosen in proportion to `weights` - or whichever of
+	## them is forced. Rolls either way, so forcing leaves the rest of the
+	## planet as it would have been.
+	func variant(names: Array, weights: Array) -> String:
+		var rolled: String = names[pick(weights)]
+		for name in names:
+			if forced.has(name):
+				return name
+		return rolled
+
+	## A chance roll that a forced flag of this name turns on.
+	func flag(name: String, probability: float) -> bool:
+		return chance(probability) or forced.has(name)
 
 	## An index into `weights`, chosen in proportion to them.
 	func pick(weights: Array) -> int:
@@ -125,9 +141,12 @@ static func is_gas(kind: Kind) -> bool:
 ## `detail` slot does is spelled out per kind in raw_height() in
 ## planet_terrain_bake.glsl. `coverage_override` >= 0 pins the liquid share.
 static func resolve(
-	kind: Kind, terrain_seed: int, coverage_override: float = -1.0, chaos: float = 1.0
+	kind: Kind, terrain_seed: int, coverage_override: float = -1.0, chaos: float = 1.0,
+	forced_variant: String = ""
 ) -> Dictionary:
 	var r := Roller.new(hash(terrain_seed ^ PALETTE_SALT), chaos)
+	for token in forced_variant.split(",", false):
+		r.forced.append(token.strip_edges())
 	var params: Dictionary
 
 	match kind:
@@ -193,7 +212,12 @@ static func _base(r: Roller) -> Dictionary:
 		"atmo": Color.BLACK, "atmo_strength": 0.0, "haze": 0.0,
 		# The cloud deck's height, as a share of `relief`: over the plains, not
 		# the summits, unless the kind's high ground is everywhere.
-		"clouds": 0.0, "cloud_color": Color.WHITE, "cloud_height": 0.45,
+		"clouds": 0.0, "cloud_color": Color.WHITE, "cloud_height": 0.45, "cloud_speed": 0.01,
+		"rings": false,
+		"boil": 0.0, "boil_color": Color(0.6, 1.0, 0.4), "boil_scale": 60.0,
+		"land_glow": 0.0, "land_glow_band": 0.2,
+		"crack_twin": 0.0, "crack_color_b": Color(0.8, 0.05, 0.1), "crack_scale_b": 10.0,
+		"quake_glow": 0.12,
 		"relief": 0.0, "bump": 0.0, "frequency": 1.5, "bands": 0,
 		"recipe": [r.between(0.6, 1.3), r.between(-0.2, 0.0), r.between(0.15, 0.35), r.between(1.2, 1.7)],
 		"detail": _detail([]),
@@ -259,12 +283,18 @@ static func _roll_terran(r: Roller) -> Dictionary:
 
 	# Land keeps the idea - sand, grass, forest, highland, rock, snow - but each
 	# is its own roll, so grass runs yellow-green to blue-green, light to dark.
+	# Autumn worlds turn the grass gold and orange and the forests red, with
+	# more of the land gone to sand.
+	p["variant"] = "autumn" if r.flag("autumn", 0.35) else "temperate"
 	var grass: Color = r.hsv(Vector2(0.22, 0.36), Vector2(0.45, 0.75), Vector2(0.35, 0.6))
 	var forest := Color.from_hsv(
 		fposmod(grass.h + r.between(-0.02, 0.05), 1.0),
 		clampf(grass.s + r.between(0.0, 0.15), 0.0, 1.0),
 		r.between(0.18, 0.33)
 	)
+	if p["variant"] == "autumn":
+		grass = r.hsv(Vector2(0.07, 0.13), Vector2(0.55, 0.8), Vector2(0.5, 0.68))
+		forest = r.hsv(Vector2(0.0, 0.06), Vector2(0.6, 0.85), Vector2(0.3, 0.45))
 	var rock: Color = r.hsv(Vector2(0.04, 0.12), Vector2(0.03, 0.15), Vector2(0.42, 0.6))
 	var snow: Color = r.hsv(Vector2(0.55, 0.62), Vector2(0.0, 0.08), Vector2(0.92, 1.0))
 	p["land"] = [
@@ -284,6 +314,9 @@ static func _roll_terran(r: Roller) -> Dictionary:
 	p["strata"] = r.between(0.0, 0.25)
 	p["dry"] = r.hsv(Vector2(0.08, 0.13), Vector2(0.3, 0.5), Vector2(0.5, 0.7))
 	p["dry_amount"] = r.between(0.4, 0.95)
+	if p["variant"] == "autumn":
+		p["dry"] = r.hsv(Vector2(0.1, 0.13), Vector2(0.3, 0.45), Vector2(0.72, 0.85))
+		p["dry_amount"] = r.between(0.9, 1.0)
 	p["cap"] = snow
 	p["cap_latitude"] = r.between(0.68, 0.92)
 	p["atmo"] = r.hsv(Vector2(0.55, 0.62), Vector2(0.45, 0.7), Vector2(0.9, 1.0))
@@ -315,6 +348,18 @@ static func _roll_toxic(r: Roller) -> Dictionary:
 	p["deep"] = Color.from_hsv(
 		fposmod(acid.h + r.between(0.0, 0.05), 1.0), r.between(0.7, 0.95), r.between(0.2, 0.4)
 	)
+	# Crystal: the acid crusted over with pale crystal plates. Boiling:
+	# bubbles swelling and popping all over it.
+	p["variant"] = r.variant(["still", "crystal", "boiling"], [0.4, 0.3, 0.3])
+	if p["variant"] == "crystal":
+		p["emission"] = r.between(0.04, 0.08)
+		p["crust"] = r.between(0.55, 0.8)
+		p["crust_color"] = Color.from_hsv(fposmod(acid.h + 0.05, 1.0), r.between(0.15, 0.3), r.between(0.8, 0.95))
+	elif p["variant"] == "boiling":
+		p["emission"] = r.between(0.2, 0.4)
+		p["boil"] = r.between(0.8, 1.0)
+		p["boil_color"] = acid.lightened(0.35)
+		p["boil_scale"] = r.between(50.0, 80.0)
 
 	var hue: float = r.between(0.72, 0.88)
 	var saturation: float = r.between(0.25, 0.5)
@@ -407,10 +452,26 @@ static func _roll_desert(r: Roller) -> Dictionary:
 	p["bump"] = r.between(2.5, 4.0)
 	p["frequency"] = r.between(1.3, 2.3)
 	# c: canyon scale, width, depth (0 = none), wander. A few worlds are cut
-	# by deep valleys running with lava.
-	var lava: bool = r.chance(0.25)
+	# by deep valleys running with lava. Glass: patches of the sand fused to
+	# dark glass by lightning. Sandstorm: heavy dust racing round the planet.
+	p["variant"] = r.variant(["open", "lava", "glass", "sandstorm"], [0.4, 0.2, 0.2, 0.2])
+	var lava: bool = p["variant"] == "lava"
+	if p["variant"] == "glass":
+		# Bottle-green glass - light enough not to pass for shadow.
+		p["rock"] = r.hsv(Vector2(0.42, 0.5), Vector2(0.45, 0.6), Vector2(0.45, 0.6))
+		p["rock_patches"] = r.between(0.8, 0.95)
+		# Glass is smooth: no sediment bands through it.
+		p["strata"] = 0.0
+		p["slope_rock"] = r.between(0.15, 0.3)
+	elif p["variant"] == "sandstorm":
+		var dust: Color = (p["dry"] as Color).lightened(0.1)
+		p["clouds"] = r.between(0.55, 0.85)
+		p["cloud_color"] = dust
+		p["cloud_speed"] = r.between(0.04, 0.07)
+		p["haze"] = r.between(0.15, 0.3)
+		p["atmo"] = dust
+		p["atmo_strength"] = r.between(0.6, 1.0)
 	if lava:
-		p["variant"] = "lava"
 		p["liquid"] = true
 		p["coverage"] = r.between(0.05, 0.09)
 		var glow: Color = r.hsv(Vector2(0.02, 0.1), Vector2(0.85, 1.0), Vector2(0.9, 1.0))
@@ -439,7 +500,7 @@ static func _roll_volcanic(r: Roller) -> Dictionary:
 
 	# A third of volcanic worlds are cryovolcanic: brine erupts instead of rock
 	# melt, glowing a deep light blue through frost.
-	if r.chance(0.35):
+	if r.flag("cryo", 0.35):
 		p["variant"] = "cryo"
 		p["shallow"] = r.hsv(Vector2(0.5, 0.57), Vector2(0.3, 0.55), Vector2(0.9, 1.0))
 		p["deep"] = r.hsv(Vector2(0.55, 0.62), Vector2(0.6, 0.85), Vector2(0.6, 0.85))
@@ -506,6 +567,9 @@ static func _roll_volcanic(r: Roller) -> Dictionary:
 
 static func _roll_ice(r: Roller) -> Dictionary:
 	var p: Dictionary = _base(r)
+	# Geysers: a field of steaming vents (placed as objects, see
+	# ResourceDeposits' "geyser").
+	p["variant"] = "geysers" if r.flag("geysers", 0.4) else "sheet"
 	p["liquid"] = true
 	p["coverage"] = r.between(0.1, 0.4)
 	p["gloss"] = r.between(0.75, 0.95)
@@ -607,7 +671,7 @@ static func _roll_barren(r: Roller) -> Dictionary:
 	# Spiked worlds: crater rims thrown up into jagged teeth, turning from the
 	# rock's brown to a metallic green or blue as they climb.
 	var spikes := 0.0
-	if r.chance(0.35):
+	if r.flag("spiked", 0.35):
 		p["variant"] = "spiked"
 		spikes = r.between(2.5, 4.0)
 		var metal: Color = r.hsv(Vector2(0.38, 0.6), Vector2(0.45, 0.65), Vector2(0.55, 0.72))
@@ -622,6 +686,12 @@ static func _roll_barren(r: Roller) -> Dictionary:
 		r.between(1.5, 3.5), r.between(0.03, 0.08), r.between(0.0, 0.3), r.between(0.0, 0.7),
 		r.between(0.6, 2.0), r.between(0.1, 0.3), r.between(0.8, 1.25), spikes,
 	])
+
+	# A ringed moon now and then (the planet's own rings, planet_rings.gdshader),
+	# its axis tipped toward the viewer or the rings are seen edge-on.
+	p["rings"] = r.flag("rings", 0.3)
+	if p["rings"]:
+		p["spin_axis"] = Vector3(r.between(-0.3, 0.3), r.between(0.8, 0.9), r.between(0.3, 0.5)).normalized()
 
 	# Half the worlds are split by fine dark cracks.
 	if r.chance(0.5):
@@ -701,7 +771,9 @@ static func _roll_giant(r: Roller, icy: bool) -> Dictionary:
 ## like Ice - with aurorae round the poles, as Ganymede has.
 static func _roll_frozen(r: Roller) -> Dictionary:
 	var p: Dictionary = _base(r)
-	var ice: float = r.between(0.52, 0.6)
+	# Pink: methane frost instead of water ice.
+	p["variant"] = "pink" if r.flag("pink", 0.35) else "white"
+	var ice: float = r.between(0.9, 0.97) if p["variant"] == "pink" else r.between(0.52, 0.6)
 	p["land"] = [
 		r.hsv(Vector2(0.05, 0.12), Vector2(0.05, 0.2), Vector2(0.18, 0.28)),
 		r.hsv(Vector2(0.04, 0.12), Vector2(0.04, 0.15), Vector2(0.3, 0.4)),
@@ -721,6 +793,14 @@ static func _roll_frozen(r: Roller) -> Dictionary:
 	p["dry_amount"] = r.between(0.2, 0.5)
 	p["cap"] = r.hsv(Vector2(ice, ice), Vector2(0.0, 0.05), Vector2(0.95, 1.0))
 	p["cap_latitude"] = r.between(0.6, 0.85)
+	if p["variant"] == "pink":
+		# Ice is nearly white, so pink needs more colour than the hue alone.
+		var land: Array = p["land"]
+		for i in range(2, land.size()):
+			var c: Color = land[i]
+			land[i] = Color.from_hsv(c.h, clampf(c.s + r.between(0.15, 0.25), 0.0, 1.0), c.v)
+		var cap: Color = p["cap"]
+		p["cap"] = Color.from_hsv(cap.h, r.between(0.1, 0.18), cap.v)
 	# Too thin to be called an atmosphere; just enough glow for the aurora.
 	p["atmo"] = r.hsv(Vector2(ice, ice), Vector2(0.3, 0.5), Vector2(0.9, 1.0))
 	p["atmo_strength"] = r.between(0.1, 0.3)
@@ -754,6 +834,23 @@ static func _roll_slime(r: Roller) -> Dictionary:
 	p["emission"] = r.between(0.03, 0.12)
 	p["crust"] = r.between(0.3, 0.6)
 	p["gloss"] = r.between(0.2, 0.45)
+	# Bubbling: glowing bubbles all over the slime. Petrified: the slime dried
+	# to a dull, cracked crust.
+	p["variant"] = r.variant(["slick", "bubbling", "petrified"], [0.4, 0.3, 0.3])
+	if p["variant"] == "bubbling":
+		p["emission"] = r.between(0.15, 0.3)
+		p["boil"] = r.between(0.8, 1.0)
+		p["boil_color"] = (p["shallow"] as Color).lightened(0.4)
+		p["boil_scale"] = r.between(40.0, 70.0)
+	elif p["variant"] == "petrified":
+		# Solid now: the old slime basins are dry, cracked ground (the lowest
+		# land colours, set below), so there is no liquid left at all.
+		p["liquid"] = false
+		p["cracks"] = 1.0
+		p["crack_color"] = Color.from_hsv(slime, 0.4, r.between(0.05, 0.1))
+		p["crack_scale"] = r.between(5.0, 9.0)
+		p["crack_width"] = r.between(0.006, 0.012)
+		p["crack_coverage"] = r.between(-0.3, 0.0)
 
 	# Marsh stays low and murky; the peaks run near-black.
 	var peak_hue: float = r.between(0.6, 0.8)
@@ -769,6 +866,15 @@ static func _roll_slime(r: Roller) -> Dictionary:
 		Vector2(0.03, 0.08), Vector2(0.12, 0.2), Vector2(0.3, 0.42),
 		Vector2(0.55, 0.7), Vector2(0.85, 0.95),
 	])
+	if p["variant"] == "petrified":
+		# The dried slime: its colour gone dull and chalky, pale where it
+		# crusted thickest. It fills the low ground the slime used to.
+		var land: Array = p["land"]
+		land[0] = Color.from_hsv(slime, r.between(0.1, 0.18), r.between(0.45, 0.55))
+		land[1] = Color.from_hsv(slime, r.between(0.05, 0.12), r.between(0.62, 0.72))
+		p["stops"][1] = r.between(0.35, 0.45)
+		p["stops"][2] = r.between(0.5, 0.58)
+		p["stops"][3] = r.between(0.66, 0.75)
 	p["rock"] = r.hsv(Vector2(peak_hue, peak_hue), Vector2(0.05, 0.15), Vector2(0.06, 0.1))
 	p["slope_rock"] = r.between(0.6, 0.9)
 	p["strata"] = r.between(0.0, 0.3)
@@ -779,6 +885,11 @@ static func _roll_slime(r: Roller) -> Dictionary:
 	p["haze"] = r.between(0.12, 0.3)
 	p["clouds"] = r.between(0.1, 0.35)
 	p["cloud_color"] = r.hsv(Vector2(slime, slime), Vector2(0.1, 0.25), Vector2(0.6, 0.8))
+	if p["variant"] == "petrified":
+		# With the slime gone, so is most of its haze.
+		p["haze"] = r.between(0.02, 0.06)
+		p["atmo_strength"] = r.between(0.2, 0.35)
+		p["clouds"] = r.between(0.0, 0.12)
 	p["relief"] = r.between(0.09, 0.15)
 	p["bump"] = r.between(4.0, 6.0)
 	p["frequency"] = r.between(1.2, 2.0)
@@ -796,7 +907,7 @@ static func _roll_occult(r: Roller) -> Dictionary:
 	var p: Dictionary = _base(r)
 	# Black dust with red eyes, or glassy obsidian - a violet-black sheen, the
 	# crests catching the light - with deep purple or deep yellow eyes.
-	p["variant"] = ["dust", "obsidian_purple", "obsidian_yellow"][r.pick([0.4, 0.3, 0.3])]
+	p["variant"] = r.variant(["dust", "obsidian_purple", "obsidian_yellow"], [0.4, 0.3, 0.3])
 	var obsidian: bool = p["variant"] != "dust"
 	var hue: float = r.between(0.7, 0.76) if obsidian else r.between(0.95, 1.05)
 	var saturation: float = r.between(0.12, 0.25) if obsidian else r.between(0.0, 0.08)
@@ -845,6 +956,8 @@ static func _roll_occult(r: Roller) -> Dictionary:
 	# rather than on top of it.
 	p["sigil_color"] = r.hsv(eye_hue, Vector2(0.85, 1.0), Vector2(0.6, 0.85))
 	p["sigil_glow"] = r.between(0.35, 0.8)
+	# Blind worlds: every eye closed - a bulging lid with a seam, no glow.
+	p["blind"] = r.flag("blind", 0.3)
 	var sigils: Array = []
 	var eyes: int = r.whole(3, 5)
 	for i in range(eyes + r.whole(1, 2)):
@@ -862,7 +975,7 @@ static func _roll_occult(r: Roller) -> Dictionary:
 			"reach": reach,
 			"style": Vector4(
 				r.between(-0.4, 0.4),
-				float(r.pick([0.5, 0.3, 0.2])) if i < eyes else -1.0,
+				(3.0 if p["blind"] else float(r.pick([0.5, 0.3, 0.2]))) if i < eyes else -1.0,
 				float(r.whole(3, 5)),
 				r.between(0.5, 0.9)
 			),
@@ -974,6 +1087,13 @@ static func _roll_gloom(r: Roller) -> Dictionary:
 	# Below 0 the seams reach over most of the planet; a little above, about
 	# half. The gold on black is the whole look, so never much less.
 	p["crack_coverage"] = r.between(-0.25, 0.1)
+	# Twin: a gold network and a finer crimson one run through each other.
+	p["variant"] = "twin" if r.flag("twin", 0.35) else "single"
+	if p["variant"] == "twin":
+		p["crack_color"] = r.hsv(Vector2(0.1, 0.14), Vector2(0.65, 0.85), Vector2(0.9, 1.0))
+		p["crack_twin"] = 1.0
+		p["crack_color_b"] = r.hsv(Vector2(0.97, 1.0), Vector2(0.75, 0.9), Vector2(0.85, 1.0))
+		p["crack_scale_b"] = p["crack_scale"] * r.between(1.6, 2.2)
 	p["ambient"] = 0.0
 	p["light_wrap"] = 0.0
 	p["terminator"] = r.between(0.1, 0.25)
@@ -1029,6 +1149,29 @@ static func _roll_bloom(r: Roller) -> Dictionary:
 	p["relief"] = r.between(0.04, 0.08)
 	p["bump"] = r.between(2.5, 4.0)
 	p["frequency"] = r.between(1.5, 2.5)
+
+	# Winter: the fields frosted over under a white mist and snowy poles.
+	# Dried: the flowers withered to dusty browns and mauves, the valleys
+	# choked with dead stalks.
+	p["variant"] = r.variant(["fields", "winter", "dried"], [0.4, 0.3, 0.3])
+	var land: Array = p["land"]
+	if p["variant"] == "winter":
+		var frost: Color = r.hsv(Vector2(0.55, 0.62), Vector2(0.05, 0.15), Vector2(0.88, 0.97))
+		for i in range(2, land.size()):
+			land[i] = (land[i] as Color).lerp(frost, r.between(0.45, 0.65))
+		p["mist_color"] = r.hsv(Vector2(0.55, 0.62), Vector2(0.03, 0.1), Vector2(0.9, 1.0))
+		p["cap"] = frost.lightened(0.3)
+		p["cap_latitude"] = r.between(0.7, 0.85)
+		p["atmo"] = r.hsv(Vector2(0.55, 0.62), Vector2(0.15, 0.3), Vector2(0.9, 1.0))
+	elif p["variant"] == "dried":
+		var dust: Color = r.hsv(Vector2(0.03, 0.09), Vector2(0.2, 0.35), Vector2(0.35, 0.5))
+		for i in range(2, land.size()):
+			land[i] = (land[i] as Color).lerp(dust, r.between(0.55, 0.75))
+		p["dry"] = dust.darkened(0.2)
+		p["mist_color"] = r.hsv(Vector2(0.06, 0.1), Vector2(0.2, 0.35), Vector2(0.7, 0.82))
+		p["mist"] = r.between(0.15, 0.3)
+		p["atmo"] = r.hsv(Vector2(0.06, 0.1), Vector2(0.25, 0.4), Vector2(0.85, 0.95))
+	p["land"] = land
 	# Valleys sparse and narrow enough that the fields stay the main thing.
 	p["detail"] = _detail([
 		r.between(0.3, 0.5), r.between(0.1, 0.25), r.between(1.0, 2.0), r.between(0.04, 0.09),
@@ -1086,9 +1229,15 @@ static func _roll_oasis(r: Roller) -> Dictionary:
 	# as black holes.
 	# c: river scale, width, depth (0 = none), wander. Half the worlds have
 	# long muddy rivers winding between the puddles.
-	var rivers: bool = r.chance(0.5)
+	var rivers: bool = r.flag("rivers", 0.5)
 	if rivers:
 		p["coverage"] += r.between(0.04, 0.07)
+	# Monsoon: the pools swollen into lakes that run together, under heavy
+	# cloud.
+	p["variant"] = "monsoon" if r.flag("monsoon", 0.3) else "dry season"
+	if p["variant"] == "monsoon":
+		p["coverage"] = r.between(0.15, 0.25)
+		p["clouds"] = r.between(0.35, 0.55)
 	p["detail"] = _detail([
 		r.between(0.25, 0.45), r.between(0.15, 0.35), r.between(0.05, 0.12), r.between(2.5, 5.0),
 		r.between(0.2, 0.4), r.between(0.35, 0.6), r.between(4.0, 8.0), 0.0,
@@ -1147,10 +1296,29 @@ static func _roll_lotus(r: Roller) -> Dictionary:
 	p["relief"] = r.between(0.02, 0.04)
 	p["bump"] = r.between(2.0, 3.5)
 	p["frequency"] = r.between(1.0, 1.6)
+
+	# Night bloom: the petals folded shut into buds, the pads glowing.
+	# Giant: one flower the size of a continent among the small ones.
+	p["variant"] = r.variant(["open", "night", "giant"], [0.5, 0.25, 0.25])
+	var openness := 1.0
+	if p["variant"] == "night":
+		openness = r.between(0.2, 0.35)
+		p["land_glow"] = r.between(0.6, 1.0)
+		p["land_glow_band"] = p["stops"][1] + 0.05
+		p["atmo_strength"] = r.between(0.25, 0.45)
+	elif p["variant"] == "giant":
+		# style: rotation, petal roundness.
+		p["sigil_mode"] = FeatureMode.BAKE_ONLY
+		p["sigils"] = _place_features(r, 1, Vector2(0.55, 0.8), 1.2,
+			func(_i: int) -> Array:
+				return [Vector4(r.between(0.0, TAU), r.between(0.4, 0.8), 0.0, 0.0), Vector4.ZERO]
+		)
 	# a: ocean-floor roughness, flower scale (higher = more, smaller flowers),
 	#    share of cells holding a flower, petal roundness (lower = pointier)
+	# b.x: how open the petals are (1 open .. lower a closed bud)
 	p["detail"] = _detail([
 		r.between(0.05, 0.15), r.between(1.4, 2.2), r.between(0.4, 0.65), r.between(0.4, 0.8),
+		openness,
 	])
 	return p
 
@@ -1215,11 +1383,13 @@ static func _roll_swirl(r: Roller) -> Dictionary:
 ## ring of sea. Variants: traces of sand and sand hills, or a few volcanoes.
 static func _roll_rings(r: Roller) -> Dictionary:
 	var p: Dictionary = _base(r)
-	p["variant"] = ["green", "sandy", "volcanic"][r.pick([0.5, 0.25, 0.25])]
+	p["variant"] = r.variant(["green", "sandy", "volcanic", "autumn", "flooded"], [0.3, 0.15, 0.15, 0.2, 0.2])
+	# The grass in greens - or, on an autumn world, golds, oranges and reds.
+	var grass_hues := Vector2(0.03, 0.13) if p["variant"] == "autumn" else Vector2(0.2, 0.42)
 	var land: Array = []
 	var values: Array = [0.35, 0.45, 0.55, 0.62, 0.7, 0.8]
 	for value in values:
-		land.append(r.hsv(Vector2(0.2, 0.42), Vector2(0.45, 0.8), Vector2(value - 0.05, value + 0.05)))
+		land.append(r.hsv(grass_hues, Vector2(0.45, 0.8), Vector2(value - 0.05, value + 0.05)))
 	p["land"] = land
 	p["stops"] = _stops(r, [
 		Vector2(0.12, 0.22), Vector2(0.3, 0.42), Vector2(0.5, 0.62),
@@ -1230,6 +1400,10 @@ static func _roll_rings(r: Roller) -> Dictionary:
 	p["dry"] = r.hsv(Vector2(0.17, 0.24), Vector2(0.5, 0.75), Vector2(0.6, 0.75))
 	p["dry_amount"] = r.between(0.3, 0.6)
 	p["atmo"] = r.hsv(Vector2(0.35, 0.5), Vector2(0.3, 0.5), Vector2(0.9, 1.0))
+	if p["variant"] == "autumn":
+		p["rock"] = r.hsv(Vector2(0.03, 0.08), Vector2(0.4, 0.6), Vector2(0.2, 0.3))
+		p["dry"] = r.hsv(Vector2(0.1, 0.14), Vector2(0.5, 0.75), Vector2(0.65, 0.8))
+		p["atmo"] = r.hsv(Vector2(0.06, 0.1), Vector2(0.3, 0.5), Vector2(0.9, 1.0))
 	p["atmo_strength"] = r.between(0.4, 0.7)
 	p["haze"] = r.between(0.0, 0.05)
 	p["clouds"] = r.between(0.0, 0.15)
@@ -1265,12 +1439,14 @@ static func _roll_rings(r: Roller) -> Dictionary:
 	# style: rotation, ring count, ring width (share of each ring's spacing),
 	# gaps per ring. extra: gap width (share of each segment), ridge height,
 	# island (1 = raised in a ring of sea), island plateau height.
-	# Spaced for their moats (see ISLAND_MOAT in the bake).
+	# Spaced for their moats (see ISLAND_MOAT in the bake). On a flooded world
+	# every ring set is an island.
+	var flooded: bool = p["variant"] == "flooded"
 	p["sigils"] = _place_features(r, r.whole(3, 5), Vector2(0.28, 0.45), 1.9,
 		func(_i: int) -> Array:
 			return [
 				Vector4(r.between(0.0, TAU), float(r.whole(3, 6)), r.between(0.4, 0.6), float(r.whole(2, 4))),
-				Vector4(r.between(0.08, 0.2), r.between(0.3, 0.6), 1.0 if r.chance(0.4) else 0.0, r.between(0.3, 0.5)),
+				Vector4(r.between(0.08, 0.2), r.between(0.3, 0.6), 1.0 if flooded or r.chance(0.4) else 0.0, r.between(0.3, 0.5)),
 			]
 	)
 
@@ -1341,12 +1517,25 @@ static func _roll_quake(r: Roller) -> Dictionary:
 	p["quake_rings"] = float(r.whole(1, 3))
 	p["quake_spokes"] = float(r.whole(5, 9))
 	p["quake_shift"] = r.between(0.0, 500.0)
+	# Active: the scars glow hot orange. Terraced: each hole stepped like a
+	# quarry, and deeper.
+	p["variant"] = r.variant(["settled", "active", "terraced"], [0.4, 0.3, 0.3])
+	var hole_depth: float = r.between(0.3, 0.5)
+	var terraces := 0.0
+	if p["variant"] == "active":
+		p["quake_color"] = r.hsv(Vector2(0.05, 0.09), Vector2(0.8, 0.95), Vector2(0.92, 1.0))
+		p["quake_glow"] = r.between(1.2, 2.0)
+	elif p["variant"] == "terraced":
+		hole_depth = r.between(0.5, 0.8)
+		terraces = float(r.whole(3, 5))
 	# a: continent, peak and erosion weights, hole depth
 	# b: the scars' scale, density, size and shift, so the bake carves a hole
 	#    under each one the shader draws
+	# c.x: terraces per hole (0 = smooth bowls)
 	p["detail"] = _detail([
-		r.between(0.4, 0.7), r.between(0.3, 0.6), r.between(0.1, 0.2), r.between(0.3, 0.5),
+		r.between(0.4, 0.7), r.between(0.3, 0.6), r.between(0.1, 0.2), hole_depth,
 		p["quake_scale"], p["quake_density"], p["quake_size"], p["quake_shift"],
+		terraces,
 	])
 	return p
 
@@ -1362,10 +1551,19 @@ static func _roll_fractal(r: Roller) -> Dictionary:
 		r.tone(hue, 0.01, saturation, r.between(0.25, 0.32)),
 		r.tone(hue, 0.01, saturation, r.between(0.32, 0.4)),
 		r.tone(hue, 0.01, saturation, r.between(0.4, 0.48)),
-		r.hsv(Vector2(0.62, 0.66), Vector2(0.7, 0.9), Vector2(0.28, 0.42)),
-		r.hsv(Vector2(0.74, 0.8), Vector2(0.55, 0.8), Vector2(0.5, 0.65)),
-		r.hsv(Vector2(0.12, 0.16), Vector2(0.6, 0.85), Vector2(0.85, 0.95)),
 	]
+	# The massifs' palette, filaments to crowns: navy-purple-yellow, or ember,
+	# verdigris, orchid - or frozen, ice-white on top.
+	p["variant"] = r.variant(["classic", "ember", "verdigris", "orchid", "frozen"], [0.3, 0.15, 0.15, 0.15, 0.25])
+	var palettes := {
+		"classic": [[0.62, 0.66, 0.7, 0.9, 0.28, 0.42], [0.74, 0.8, 0.55, 0.8, 0.5, 0.65], [0.12, 0.16, 0.6, 0.85, 0.85, 0.95]],
+		"ember": [[0.97, 1.0, 0.75, 0.9, 0.3, 0.42], [0.04, 0.08, 0.8, 0.95, 0.6, 0.75], [0.11, 0.14, 0.35, 0.55, 0.9, 1.0]],
+		"verdigris": [[0.5, 0.54, 0.7, 0.9, 0.22, 0.35], [0.42, 0.46, 0.45, 0.65, 0.5, 0.65], [0.3, 0.36, 0.2, 0.35, 0.85, 0.95]],
+		"orchid": [[0.7, 0.74, 0.6, 0.8, 0.25, 0.38], [0.85, 0.9, 0.55, 0.75, 0.55, 0.7], [0.93, 0.97, 0.15, 0.3, 0.9, 1.0]],
+		"frozen": [[0.58, 0.62, 0.35, 0.55, 0.35, 0.48], [0.53, 0.57, 0.15, 0.3, 0.7, 0.82], [0.55, 0.6, 0.0, 0.06, 0.95, 1.0]],
+	}
+	for band: Array in palettes[p["variant"]]:
+		p["land"].append(r.hsv(Vector2(band[0], band[1]), Vector2(band[2], band[3]), Vector2(band[4], band[5])))
 	# The massifs take the top of the range: filaments navy, dome flanks
 	# purple, crowns yellow. The plains stay below ~0.25.
 	p["stops"] = _stops(r, [
@@ -1390,9 +1588,21 @@ static func _roll_fractal(r: Roller) -> Dictionary:
 	# style: rotation, zoom (how much of the set spans the massif), view offset
 	# x and y from the set's usual centre.
 	# style.y is kept above ~1.2 so the whole set, filaments and all, fits
-	# inside the massif's fade.
+	# inside the massif's fade. extra: Julia (1) and its constant - some worlds
+	# grow Julia sets instead, from a handful of constants that make good ones.
+	p["julia"] = r.flag("julia", 0.4)
+	var julia_constants: Array = [
+		Vector2(-0.8, 0.156), Vector2(0.285, 0.01), Vector2(-0.4, 0.6), Vector2(-0.70176, -0.3842),
+		Vector2(0.355, 0.355), Vector2(-0.123, 0.745), Vector2(-0.391, -0.587),
+	]
 	p["sigils"] = _place_features(r, r.whole(2, 4), Vector2(0.65, 0.9), 1.0,
 		func(_i: int) -> Array:
+			if p["julia"]:
+				var k: Vector2 = julia_constants[r.whole(0, julia_constants.size() - 1)]
+				return [
+					Vector4(r.between(0.0, TAU), r.between(1.3, 1.6), r.between(-0.05, 0.05), r.between(-0.05, 0.05)),
+					Vector4(1.0, k.x, k.y, 0.0),
+				]
 			return [
 				Vector4(r.between(0.0, TAU), r.between(1.2, 1.35), r.between(-0.05, 0.1), r.between(-0.08, 0.08)),
 				Vector4.ZERO,
@@ -1428,6 +1638,12 @@ static func _roll_meridian(r: Roller) -> Dictionary:
 	p["deep"] = Color.from_hsv(sea_hue, r.between(0.45, 0.65), r.between(0.55, 0.72))
 	p["shallow"] = Color.from_hsv(sea_hue, r.between(0.08, 0.2), r.between(0.93, 1.0))
 	p["gloss"] = r.between(0.5, 0.8)
+	# Inverted: milk-white seas, and the land sunk to its darkest shades.
+	p["variant"] = "inverted" if r.flag("inverted", 0.35) else "pink"
+	if p["variant"] == "inverted":
+		p["deep"] = Color.from_hsv(base.h, r.between(0.05, 0.12), r.between(0.8, 0.88))
+		p["shallow"] = Color.from_hsv(base.h, r.between(0.0, 0.05), r.between(0.95, 1.0))
+		p["land"] = [dark, dark.lerp(base, 0.2), base.darkened(0.55), base.darkened(0.45), base.darkened(0.25), base]
 	p["rock"] = base.darkened(0.45)
 	p["slope_rock"] = r.between(0.15, 0.3)
 	p["atmo"] = Color.from_hsv(base.h, base.s * 0.5, 1.0)

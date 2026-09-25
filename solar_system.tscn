@@ -202,6 +202,7 @@ surface_style = 2
 surface_spin_speed = 0.25
 surface_spin_axis = Vector3(0.391, 0.921, 0.0)
 terrain_kind = 1
+terrain_variant = "autumn"
 
 [node name="Duskveil" type="Node2D" parent="Planets" unique_id=178670958]
 position = Vector2(129200, 0)
@@ -218,6 +219,7 @@ surface_blob_count = 48
 surface_spin_speed = -0.03
 surface_spin_axis = Vector3(0.0, 0.999, 0.052)
 terrain_kind = 17
+terrain_variant = "flooded"
 
 [node name="Thornix" type="Node2D" parent="Planets" unique_id=1453289413]
 position = Vector2(231200, 0)
@@ -234,6 +236,7 @@ surface_blob_count = 80
 surface_spin_speed = 0.24
 surface_spin_axis = Vector3(-0.423, 0.906, 0.0)
 terrain_kind = 11
+terrain_variant = "blind"
 
 [node name="Glacenna" type="Node2D" parent="Planets" unique_id=653822219]
 position = Vector2(409200, 0)
@@ -250,6 +253,7 @@ surface_blob_count = 56
 surface_spin_speed = 0.10
 surface_spin_axis = Vector3(0.0, -0.139, 0.990)
 terrain_kind = 15
+terrain_variant = "giant"
 
 [node name="Marrow" type="Node2D" parent="Planets" unique_id=1986236916]
 position = Vector2(655200, 0)
@@ -267,6 +271,7 @@ surface_style = 1
 surface_spin_speed = 0.04
 surface_spin_axis = Vector3(0.017, 0.9998, 0.0)
 terrain_kind = 19
+terrain_variant = "julia,frozen"
 
 [node name="Vantauri" type="Node2D" parent="Planets" unique_id=198402686]
 position = Vector2(1180000, 0)
@@ -284,6 +289,7 @@ surface_style = 3
 surface_spin_speed = 0.55
 surface_spin_axis = Vector3(0.0, 0.999, -0.052)
 terrain_kind = 20
+terrain_variant = "inverted"
 
 [node name="Nyxholm" type="Node2D" parent="Planets" unique_id=552086342]
 position = Vector2(2194000, 0)
@@ -300,6 +306,7 @@ surface_blob_count = 88
 surface_spin_speed = 0.50
 surface_spin_axis = Vector3(0.332, 0.883, 0.332)
 terrain_kind = 18
+terrain_variant = "active"
 
 [node name="Anthea" type="Node2D" parent="Planets"]
 position = Vector2(20000, 0)
@@ -316,6 +323,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.45
 surface_spin_axis = Vector3(0.1, 0.995, 0.0)
 terrain_kind = 13
+terrain_variant = "winter"
 
 [node name="Dunmere" type="Node2D" parent="Planets"]
 position = Vector2(527000, 0)
@@ -332,6 +340,7 @@ surface_blob_count = 48
 surface_spin_speed = 0.2
 surface_spin_axis = Vector3(-0.08, 0.997, 0.0)
 terrain_kind = 14
+terrain_variant = "monsoon"
 
 [node name="Cindral" type="Node2D" parent="Planets"]
 position = Vector2(-21142.8, 17740.8)
@@ -348,6 +357,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.1
 surface_spin_axis = Vector3(0.05, 0.998, 0.0)
 terrain_kind = 5
+terrain_variant = "rings,spiked"
 terrain_resolution = 512
 
 [node name="Vesk" type="Node2D" parent="Planets"]
@@ -365,6 +375,7 @@ surface_blob_count = 40
 surface_spin_speed = -0.18
 surface_spin_axis = Vector3(0.0, 0.99, 0.12)
 terrain_kind = 6
+terrain_variant = "boiling"
 terrain_resolution = 512
 
 [node name="Ashkar" type="Node2D" parent="Planets"]
@@ -382,6 +393,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.3
 surface_spin_axis = Vector3(-0.2, 0.98, 0.0)
 terrain_kind = 2
+terrain_variant = "glass"
 terrain_resolution = 512
 
 [node name="Oruvel" type="Node2D" parent="Planets"]
@@ -415,6 +427,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.14
 surface_spin_axis = Vector3(-0.06, 0.997, 0.04)
 terrain_kind = 10
+terrain_variant = "bubbling"
 terrain_resolution = 512
 
 [node name="Cinderhal" type="Node2D" parent="Planets"]
@@ -448,6 +461,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.1
 surface_spin_axis = Vector3(-0.1, 0.99, 0.05)
 terrain_kind = 12
+terrain_variant = "twin"
 
 [node name="Hoarveil" type="Node2D" parent="Planets"]
 position = Vector2(1293083.0, 1085025.5)
@@ -464,6 +478,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.22
 surface_spin_axis = Vector3(0.08, 0.996, 0.0)
 terrain_kind = 4
+terrain_variant = "geysers"
 
 [node name="Rimebeck" type="Node2D" parent="Planets"]
 position = Vector2(1350000.0, -2338268.6)
@@ -480,6 +495,7 @@ surface_blob_count = 40
 surface_spin_speed = 0.12
 surface_spin_axis = Vector3(0.0, 0.999, -0.04)
 terrain_kind = 9
+terrain_variant = "pink"
 terrain_resolution = 512
 
 [node name="Taurvane" type="Node2D" parent="Planets"]

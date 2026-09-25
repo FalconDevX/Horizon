@@ -201,6 +201,11 @@ var terrain_kind: int = 0
 @export_range(1.05, 5.0, 0.01) var ring_inner_radius: float = 1.35
 @export_range(1.1, 6.0, 0.01) var ring_outer_radius: float = 2.35
 
+## Variant (and flags) this planet always rolls, instead of leaving it to the
+## world seed: e.g. "autumn", "giant", "julia,frozen", "rings,spiked". Names are
+## each kind's variants and flags in planet_terrain.gd. Empty = rolled.
+@export var terrain_variant: String = ""
+
 ## Texels along one edge of each of the six heightmap faces.
 @export_range(32, 1024, 16) var terrain_resolution: int = 1024
 
@@ -261,6 +266,11 @@ var _terrain_key: String = ""
 # reaped in _process once done and their results thrown away.
 var _stale_terrain_tasks: Array[int] = []
 
+## surface_spin_axis as the scene set it. A roll may tilt the axis for one
+## world (a ringed moon, so its rings are not seen edge-on); the next world
+## starts from this again.
+var _scene_spin_axis := Vector3.UP
+
 ## Resource deposits standing on the surface (ResourceDeposits.place), each
 ## with its node under `"node"`. Placed once the heightmap lands.
 var resource_deposits: Array = []
@@ -272,6 +282,7 @@ var _deposit_time := 0.0
 
 
 func _ready() -> void:
+	_scene_spin_axis = surface_spin_axis
 	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
 
 	if not Engine.is_editor_hint():
@@ -575,6 +586,7 @@ func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
 	material.set_shader_parameter("seed_offset", _seed_offset())
 	material.set_shader_parameter("cloud_color", p["cloud_color"])
 	material.set_shader_parameter("cloud_coverage", p["clouds"])
+	material.set_shader_parameter("cloud_speed", p["cloud_speed"])
 	material.set_shader_parameter("cyclones", cyclones)
 	material.set_shader_parameter("atmo_color", p["atmo"])
 	material.set_shader_parameter("atmo_strength", p["atmo_strength"])
@@ -695,6 +707,11 @@ func make_preview() -> Node3D:
 		copy.custom_aabb = bounds
 		sphere.add_child(copy)
 
+	# The deposits too, where they stand now (they share the sphere's unit
+	# space, so they fit the preview as they are).
+	if _deposits_3d != null:
+		sphere.add_child(_deposits_3d.duplicate())
+
 	if _rings_3d != null:
 		var rings := MeshInstance3D.new()
 		rings.mesh = _rings_3d.mesh
@@ -744,9 +761,16 @@ func build_terrain() -> void:
 
 	var kind := terrain_kind as PlanetTerrain.Kind
 	terrain_params = PlanetTerrain.resolve(
-		kind, generation_seed, terrain_liquid_coverage, get_world_chaos()
+		kind, generation_seed, terrain_liquid_coverage, get_world_chaos(), terrain_variant
 	)
 	var p: Dictionary = terrain_params
+	# Before anything reads the pole: the bake, clouds, rings and deposits.
+	# The spin so far turned about the old axis; about a new one it would
+	# wobble, so it starts over.
+	var axis: Vector3 = p.get("spin_axis", _scene_spin_axis)
+	if not axis.normalized().is_equal_approx(surface_spin_axis):
+		surface_spin_axis = axis
+		surface_rotation = Quaternion.IDENTITY
 
 	terrain_material = ShaderMaterial.new()
 	terrain_material.shader = TERRAIN_SHADER
@@ -761,6 +785,7 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("liquid_deep", p["deep"])
 	terrain_material.set_shader_parameter("liquid_emission", p["emission"])
 	terrain_material.set_shader_parameter("liquid_crust", p["crust"])
+	terrain_material.set_shader_parameter("crust_color", p.get("crust_color", (p["rock"] as Color) * 0.5))
 	terrain_material.set_shader_parameter("liquid_gloss", p["gloss"])
 	terrain_material.set_shader_parameter("rock_color", p["rock"])
 	terrain_material.set_shader_parameter("dry_color", p["dry"])
@@ -780,12 +805,14 @@ func build_terrain() -> void:
 	)
 	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
 	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
+	terrain_material.set_shader_parameter("cloud_speed", p["cloud_speed"])
 	terrain_material.set_shader_parameter("cyclones", cyclones)
 	if p["clouds"] > 0.0:
 		_build_clouds(p, cyclones)
 	if p["clouds"] > 0.0 or PlanetTerrain.is_gas(kind):
 		_build_atmosphere(p)
-	if has_rings:
+	# Rings are the scene's to give (has_rings) or the roll's (a ringed moon).
+	if has_rings or p.get("rings", false):
 		_build_rings(p)
 	terrain_material.set_shader_parameter("seed_offset", _seed_offset())
 	_push_terrain_effects(p)
@@ -831,6 +858,14 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("crack_scale", p["crack_scale"])
 	m.set_shader_parameter("crack_width", p["crack_width"])
 	m.set_shader_parameter("crack_coverage", p["crack_coverage"])
+	m.set_shader_parameter("crack_twin", p["crack_twin"])
+	m.set_shader_parameter("crack_color_b", p["crack_color_b"])
+	m.set_shader_parameter("crack_scale_b", p["crack_scale_b"])
+	m.set_shader_parameter("boil", p["boil"])
+	m.set_shader_parameter("boil_color", p["boil_color"])
+	m.set_shader_parameter("boil_scale", p["boil_scale"])
+	m.set_shader_parameter("land_glow", p["land_glow"])
+	m.set_shader_parameter("land_glow_band", p["land_glow_band"])
 
 	var sigils: Dictionary = PlanetTerrain.sigil_arrays(p)
 	m.set_shader_parameter("sigil_count", sigils["count"])
@@ -850,6 +885,7 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("quake_rings", p["quake_rings"])
 	m.set_shader_parameter("quake_spokes", p["quake_spokes"])
 	m.set_shader_parameter("quake_shift", p["quake_shift"])
+	m.set_shader_parameter("quake_glow", p["quake_glow"])
 
 	m.set_shader_parameter("bud_strength", p["buds"])
 	m.set_shader_parameter("bud_color", p["bud_color"])
