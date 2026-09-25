@@ -11,6 +11,12 @@ extends Control
 ## model, with where it turns up - which kinds of planet, where on them and on
 ## which variants - and how many this world has. Tab, or left / right, swaps.
 ##
+## Under a planet's view, a card per variant its kind can roll (and per trait -
+## blind, Julia sets, ringed): its name and note, and what it yields - found
+## items named, the rest redacted. Seen variants come from the Journal, so the
+## cards fill up across every system the player travels to; unseen ones stay
+## redacted. The one in front of the player now is marked HERE.
+##
 ## Only what the player knows is shown: a planet until the ship has charted it
 ## (solar_system.gd is_charted - flying near it), a resource until it has been
 ## found somewhere (is_resource_known), is a dark row, a silhouette and
@@ -23,6 +29,10 @@ const LIST_WIDTH := 230.0
 const ROW_HEIGHT := 46.0
 const TEXT_WIDTH := 400.0
 const GAP := 20.0
+## The variant card strip under a planet's view.
+const CARDS_HEIGHT := 168.0
+const CARD_MAX_WIDTH := 250.0
+const CARD_GAP := 10.0
 
 ## Orthographic view sizes, in body radii across the shorter side.
 const VIEW_DEFAULT := 2.4
@@ -131,6 +141,7 @@ func _set_tab(tab: int) -> void:
 		_planet_selected = _selected
 	_tab = tab
 	_select(_planet_selected if tab == TAB_PLANETS else 0)
+	_layout()
 
 
 func _row_count() -> int:
@@ -327,7 +338,14 @@ func _view_rect() -> Rect2:
 	var list: Rect2 = _list_rect()
 	var text: Rect2 = _text_rect()
 	var left: float = list.end.x + GAP
-	return Rect2(Vector2(left, list.position.y), Vector2(text.position.x - GAP - left, list.size.y))
+	var height: float = list.size.y - (CARDS_HEIGHT + GAP if _tab == TAB_PLANETS else 0.0)
+	return Rect2(Vector2(left, list.position.y), Vector2(text.position.x - GAP - left, height))
+
+
+## Under the view on the planets tab: the variant cards.
+func _cards_rect() -> Rect2:
+	var view: Rect2 = _view_rect()
+	return Rect2(Vector2(view.position.x, view.end.y + GAP), Vector2(view.size.x, CARDS_HEIGHT))
 
 
 func _tab_rect(index: int) -> Rect2:
@@ -540,6 +558,8 @@ func _draw() -> void:
 	_draw_list(font)
 	_draw_view_frame(font)
 	_draw_text(font)
+	if _tab == TAB_PLANETS:
+		_draw_variant_cards(font)
 
 
 func _draw_list(font: Font) -> void:
@@ -564,6 +584,7 @@ func _draw_list(font: Font) -> void:
 				font, row.position + Vector2(38.0, row.size.y - 7.0), "Uncharted", HORIZONTAL_ALIGNMENT_LEFT,
 				row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
 			)
+			_draw_variant_tally(font, body, row)
 			continue
 		var swatch: Color = body.get("color")
 		draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, swatch)
@@ -578,6 +599,7 @@ func _draw_list(font: Font) -> void:
 			font, row.position + Vector2(38.0, row.size.y - 7.0), lore.get("class", ""), HORIZONTAL_ALIGNMENT_LEFT,
 			row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
 		)
+		_draw_variant_tally(font, body, row)
 
 
 func _draw_view_frame(_font: Font) -> void:
@@ -689,9 +711,9 @@ func _draw_resource_list(font: Font) -> void:
 		)
 
 
-## A resource: what it is, and the planets the player has found it on - how
-## many each has now, and where on that kind of planet it turns up, on which
-## variants and how many.
+## A resource: what it is, and every planet and variant it can turn up on -
+## where on it, how it differs there and how many - in full only where the
+## player has found it on that variant.
 func _draw_resource_text(font: Font) -> void:
 	var text: Rect2 = _text_rect()
 	var type_name: StringName = _resources[_selected]
@@ -712,49 +734,237 @@ func _draw_resource_text(font: Font) -> void:
 		)
 	y += 22.0
 
-	# Every planet in the system that holds some right now: in full where the
-	# player has found it, redacted everywhere else - so the log says how many
-	# places it is on, but not which, until each is found.
-	var found: Array = _system.call("bodies_where_found", type_name)
-	var holders: Array[Node2D] = []
+	# Every planet whose kind grows it, and on which of its variants (and
+	# traits): in full where the player has found it on that variant, in any
+	# system; the rest redacted - so the log says how many places it can turn
+	# up, but not which, until each is found there.
+	var groups: Array = []
+	var variant_total: int = 0
 	for body: Node2D in _bodies:
-		if _deposit_count(body, type_name) > 0 and not found.has(body):
-			holders.append(body)
+		if not _has_variants(body):
+			continue
+		var rows: Array = _occurrences(body, type_name)
+		if not rows.is_empty():
+			groups.append({"body": body, "rows": rows})
+			variant_total += rows.size()
 	draw_string(
-		font, Vector2(x, y), "OCCURS ON  %d %s" % [found.size() + holders.size(), "planet" if found.size() + holders.size() == 1 else "planets"],
+		font, Vector2(x, y), "OCCURS ON  %d %s  ·  %d %s" % [
+			groups.size(), "planet" if groups.size() == 1 else "planets",
+			variant_total, "variant" if variant_total == 1 else "variants",
+		],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
 	)
 	y += 18.0
-	for body: Node2D in found:
+	var bottom: float = text.end.y - 16.0
+	for group: Dictionary in groups:
+		if y > bottom:
+			draw_string(font, Vector2(x, y), "…", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, HudPanelStyle.COLOR_TEXT_MUTED)
+			return
+		var body: Node2D = group["body"]
 		var kind: int = body.get("terrain_kind")
-		var heading: String = "%s  -  %s  ×%d" % [
-			body.get("body_name"), PlanetLore.KINDS.get(kind, {}).get("class", "Unknown world"), _deposit_count(body, type_name),
-		]
+		var found_rows: Array = group["rows"].filter(func(row: Dictionary) -> bool: return row["found"])
+		var hidden: int = group["rows"].size() - found_rows.size()
+		if found_rows.is_empty():
+			# Not found there on any variant: a planet and a line, blacked out.
+			_draw_redacted(x, y, text.size.x * (0.45 + 0.25 * fposmod(String(body.get("body_name")).hash() * 0.618, 1.0)), 12)
+			y += 16.0
+			_draw_redacted(x + 10.0, y, (text.size.x - 10.0) * 0.7, 11)
+			draw_string(
+				font, Vector2(x + 10.0, y), "%d %s" % [hidden, "variant" if hidden == 1 else "variants"],
+				HORIZONTAL_ALIGNMENT_RIGHT, text.size.x - 10.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
+			)
+			y += 22.0
+			continue
+		var heading: String = "%s  -  %s" % [body.get("body_name"), PlanetLore.KINDS.get(kind, {}).get("class", "Unknown world")]
 		draw_string(font, Vector2(x, y), heading, HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_TEXT_PRIMARY)
 		y += 16.0
-		for spawn: Array in ResourceDeposits.spawns_of(type_name):
-			if spawn[0] != kind:
-				continue
-			var notes: Dictionary = ResourceDeposits.spawn_notes(kind, spawn[1])
-			y = _draw_paragraph(
-				font, "%s. %s. %s." % [notes["where"], notes["variants"], notes["count"]], x + 10.0, y,
-				text.size.x - 10.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY
+		for row: Dictionary in found_rows:
+			var notes: Dictionary = ResourceDeposits.spawn_notes(kind, row["rule"])
+			var line: String = "%s: %s." % [PlanetLore.variant_name(kind, row["name"]), notes["where"]]
+			if notes["note"] != "":
+				line += " %s." % notes["note"]
+			line += " %s." % notes["count"]
+			draw_string(font, Vector2(x + 10.0, y), "›", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD)
+			y = _draw_paragraph(font, line, x + 22.0, y, text.size.x - 22.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
+		if hidden > 0:
+			_draw_redacted(x + 22.0, y, 70.0, 10)
+			draw_string(
+				font, Vector2(x + 100.0, y), "+%d more %s" % [hidden, "variant" if hidden == 1 else "variants"],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
 			)
+			y += 14.0
 		y += 8.0
-	for body: Node2D in holders:
-		# Not found there yet: a planet, a count and a note, all blacked out.
-		_draw_redacted(x, y, text.size.x * (0.45 + 0.25 * fposmod(String(body.get("body_name")).hash() * 0.618, 1.0)), 12)
+
+
+## Where on `body` a type turns up: a row per variant (then per trait) of its
+## kind whose spawn entries can place it - {name, trait, rule, found}. A
+## &"random" entry counts for every collectible type it does not exclude.
+func _occurrences(body: Node2D, type_name: StringName) -> Array:
+	var kind: int = body.get("terrain_kind")
+	var body_name: String = body.get("body_name")
+	var rows: Array = []
+	var places := func(entry: Dictionary) -> bool:
+		if entry["type"] == type_name:
+			return true
+		return (
+			entry["type"] == &"random" and ResourceDeposits.TYPES[type_name].get("collectible", true)
+			and not (entry["rule"].get("except_types", []) as Array).has(type_name)
+		)
+	for variant: String in PlanetLore.variants_of(kind):
+		for entry: Dictionary in ResourceDeposits.yields(kind, variant):
+			if places.call(entry):
+				rows.append({
+					"name": variant, "trait": false, "rule": entry["rule"],
+					"found": Journal.is_found(body_name, variant, type_name),
+				})
+				break
+	for flag: String in PlanetLore.traits_of(kind):
+		for entry: Dictionary in ResourceDeposits.yields(kind, PlanetLore.variants_of(kind)[0], flag):
+			if places.call(entry):
+				rows.append({
+					"name": flag, "trait": true, "rule": entry["rule"],
+					"found": Journal.is_found_with_trait(body_name, flag, type_name),
+				})
+				break
+	return rows
+
+
+# ---- variants -------------------------------------------------------------
+
+## Whether `body` has variant cards: not the sun or an anomaly.
+func _has_variants(body: Node2D) -> bool:
+	return not body.get("is_star") and not body.get("is_anomaly") and body.get("terrain_kind") != 0
+
+
+## "2/3" variants seen, at the right of a planet's list row.
+func _draw_variant_tally(font: Font, body: Node2D, row: Rect2) -> void:
+	if not _has_variants(body):
+		return
+	var total: int = PlanetLore.variants_of(body.get("terrain_kind")).size()
+	if total < 2:
+		return
+	var seen: int = Journal.seen_count(String(body.get("body_name")))
+	draw_string(
+		font, row.position + Vector2(0.0, 19.0), "%d/%d" % [seen, total], HORIZONTAL_ALIGNMENT_RIGHT,
+		row.size.x - 8.0, 10, HudPanelStyle.COLOR_EMERALD if seen == total else HudPanelStyle.COLOR_TEXT_MUTED
+	)
+
+
+## A card per variant (then per trait) of the selected planet's kind.
+func _draw_variant_cards(font: Font) -> void:
+	var strip: Rect2 = _cards_rect()
+	var body: Node2D = _bodies[_selected]
+	if not _has_variants(body):
+		draw_string(
+			font, strip.position + Vector2(0.0, 16.0),
+			"No variants - a %s is always the same." % ("star" if body.get("is_star") else "anomaly"),
+			HORIZONTAL_ALIGNMENT_LEFT, strip.size.x, 11, HudPanelStyle.COLOR_TEXT_MUTED
+		)
+		return
+	var kind: int = body.get("terrain_kind")
+	var cards: Array = []
+	for variant: String in PlanetLore.variants_of(kind):
+		cards.append({"name": variant, "trait": false})
+	for flag: String in PlanetLore.traits_of(kind):
+		cards.append({"name": flag, "trait": true})
+
+	var body_name: String = body.get("body_name")
+	var total: int = PlanetLore.variants_of(kind).size()
+	draw_string(
+		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen" % [Journal.seen_count(body_name), total],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
+	)
+	var width: float = minf(CARD_MAX_WIDTH, (strip.size.x - CARD_GAP * (cards.size() - 1)) / cards.size())
+	for i in range(cards.size()):
+		var card := Rect2(strip.position + Vector2(i * (width + CARD_GAP), 4.0), Vector2(width, strip.size.y - 4.0))
+		_draw_variant_card(font, body, card, cards[i]["name"], cards[i]["trait"])
+
+
+func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_trait: bool) -> void:
+	var body_name: String = body.get("body_name")
+	var kind: int = body.get("terrain_kind")
+	var params: Dictionary = body.get("terrain_params")
+	var seen: bool = Journal.has_seen_trait(body_name, name) if is_trait else Journal.has_seen(body_name, name)
+	# HERE: the world in front of the player now is this variant (or has it).
+	var here: bool = _known_body(body) and (
+		params.get(name, false) == true if is_trait else params.get("variant", "") == name
+	)
+
+	draw_rect(card, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.9 if seen else 0.4))
+	var border: Color = HudPanelStyle.COLOR_CYAN if here else Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 1.0 if seen else 0.4)
+	draw_rect(card, border, false, 1.0)
+	if here:
+		draw_rect(Rect2(card.position, Vector2(card.size.x, 3.0)), HudPanelStyle.COLOR_CYAN)
+
+	var x: float = card.position.x + 10.0
+	var inner: float = card.size.x - 20.0
+	var y: float = card.position.y + 30.0
+	var tag: String = "HERE" if here else ("SEEN" if seen else "UNSEEN")
+	if is_trait:
+		tag = "TRAIT  ·  " + tag
+	draw_string(
+		font, Vector2(x, card.position.y + 14.0), tag, HORIZONTAL_ALIGNMENT_LEFT, inner, 9,
+		HudPanelStyle.COLOR_CYAN if here else (HudPanelStyle.COLOR_TEXT_MUTED if seen else HudPanelStyle.COLOR_TEXT_FAINT)
+	)
+	if not seen:
+		_draw_redacted(x, y, inner * 0.6, 12)
+		y += 18.0
+		_draw_redacted_block(x, y, inner, 2)
+	else:
+		draw_string(
+			font, Vector2(x, y), PlanetLore.variant_name(kind, name).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
+			inner, 12, HudPanelStyle.COLOR_TEXT_PRIMARY
+		)
 		y += 16.0
-		_draw_redacted(x + 10.0, y, (text.size.x - 10.0) * 0.85, 11)
-		y += 22.0
+		_draw_paragraph(font, PlanetLore.variant_note(kind, name), x, y, inner, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
+	y = card.position.y + 96.0
 
-
-func _deposit_count(body: Node2D, type_name: StringName) -> int:
-	var count: int = 0
-	for deposit: Dictionary in body.get("resource_deposits"):
-		if deposit["type"] == type_name:
-			count += 1
-	return count
+	# What it yields, one line per resource type. A trait only adds to the
+	# variant it rolls with: judged with the variant in front of the player.
+	var yields: Array
+	if is_trait:
+		yields = ResourceDeposits.yields(kind, params.get("variant", PlanetLore.variants_of(kind)[0]), name)
+	else:
+		yields = ResourceDeposits.yields(kind, name)
+	var types: Array = []
+	for entry: Dictionary in yields:
+		if not types.has(entry["type"]):
+			types.append(entry["type"])
+	draw_string(font, Vector2(x, y), "YIELDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, HudPanelStyle.COLOR_AMBER)
+	y += 15.0
+	if types.is_empty():
+		if seen:
+			draw_string(font, Vector2(x, y), "Nothing to collect", HORIZONTAL_ALIGNMENT_LEFT, inner, 10, HudPanelStyle.COLOR_TEXT_MUTED)
+		else:
+			_draw_redacted(x, y, inner * 0.5, 10)
+		return
+	for type_name: StringName in types:
+		if y > card.end.y - 4.0:
+			break
+		if type_name == &"random":
+			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, HudPanelStyle.COLOR_TEXT_MUTED if seen else Color(0.1, 0.1, 0.12))
+			if seen:
+				draw_string(font, Vector2(x + 12.0, y), "Assorted rare finds", HORIZONTAL_ALIGNMENT_LEFT, inner - 12.0, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
+			else:
+				_draw_redacted(x + 12.0, y, inner * 0.55, 10)
+			y += 14.0
+			continue
+		var type: Dictionary = ResourceDeposits.TYPES[type_name]
+		var scenery: bool = not type.get("collectible", true)
+		var found: bool = seen and (
+			scenery
+			or (Journal.is_found_with_trait(body_name, name, type_name) if is_trait else Journal.is_found(body_name, name, type_name))
+		)
+		if found:
+			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, type["color"])
+			draw_string(
+				font, Vector2(x + 12.0, y), type["name"] + ("  (scenery)" if scenery else ""), HORIZONTAL_ALIGNMENT_LEFT,
+				inner - 12.0, 10, HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_SECONDARY
+			)
+		else:
+			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, Color(0.1, 0.1, 0.12))
+			_draw_redacted(x + 12.0, y, (inner - 12.0) * (0.45 + 0.3 * fposmod(String(type_name).hash() * 0.618, 1.0)), 10)
+		y += 14.0
 
 
 ## A planet the ship has not charted: the headings are there, the data is not.

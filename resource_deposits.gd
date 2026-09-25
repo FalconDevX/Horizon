@@ -111,6 +111,8 @@ const TYPES := {
 ##             &"quake_hole" (the middle of a Quake scar's hole)
 ##   cluster - all within this many radians of the first one (a field)
 ##   motion  - &"still" (default), &"drift", &"roll" or &"hop" (see MOTIONS)
+##   note    - how it differs on the variants this entry is for, for the
+##             journal ("near-black here")
 ## Kinds missing here get no deposits.
 const SPAWNS := {
 	PlanetTerrain.Kind.TERRAN: [
@@ -121,7 +123,8 @@ const SPAWNS := {
 		{"type": &"gold_ore", "count": Vector2i(14, 20)},
 		{"type": &"scrap", "count": Vector2i(2, 4)},
 		{"type": &"bone", "count": Vector2i(1, 1), "chance": 0.25},
-		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll"},
+		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll",
+			"note": "Only on the open sands - the other deserts are too wild or too still"},
 	],
 	PlanetTerrain.Kind.BARREN: [
 		{"type": &"gold_ore", "count": Vector2i(2, 4)},
@@ -134,14 +137,16 @@ const SPAWNS := {
 	PlanetTerrain.Kind.SLIME: [
 		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"]},
 		{"type": &"toxic_ore", "count": Vector2i(5, 8), "except": ["petrified"]},
-		{"type": &"toxic_ore", "count": Vector2i(11, 16), "only": ["petrified"]},
+		{"type": &"toxic_ore", "count": Vector2i(11, 16), "only": ["petrified"],
+			"note": "Twice as common once the slime has dried off it"},
 		{"type": &"slime_jelly", "count": Vector2i(4, 7), "on": "any", "except": ["petrified"], "motion": &"hop"},
 	],
 	PlanetTerrain.Kind.OCCULT: [
 		{"type": &"gold_ore", "count": Vector2i(8, 14)},
 		{"type": &"bone", "count": Vector2i(5, 9), "except": ["blind"]},
 		# Blind worlds hide their bones: near-black, no glow.
-		{"type": &"bone", "count": Vector2i(5, 9), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0},
+		{"type": &"bone", "count": Vector2i(5, 9), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0,
+			"note": "Near-black and dull here - hard to tell from the dust"},
 	],
 	PlanetTerrain.Kind.BLOOM: [
 		# The valley floors only - the flower fields stay bare, bar some
@@ -149,8 +154,10 @@ const SPAWNS := {
 		{"type": &"beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["fields"]},
 		{"type": &"frozen_beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
 		{"type": &"dried_beanstalk", "count": Vector2i(18, 26), "lowest": 0.14, "slope": 0.8, "only": ["dried"]},
-		{"type": &"beanstalk", "count": Vector2i(2, 4), "lowest": 0.14, "slope": 0.8, "only": ["dried"]},
-		{"type": &"silver_ore", "count": Vector2i(8, 12), "above": 0.3, "only": ["dried"]},
+		{"type": &"beanstalk", "count": Vector2i(2, 4), "lowest": 0.14, "slope": 0.8, "only": ["dried"],
+			"note": "The last few still alive among the dead stalks"},
+		{"type": &"silver_ore", "count": Vector2i(8, 12), "above": 0.3, "only": ["dried"],
+			"note": "Laid bare where the flowers withered"},
 	],
 	PlanetTerrain.Kind.OASIS: [
 		{"type": &"silver_ore", "count": Vector2i(14, 20)},
@@ -159,7 +166,8 @@ const SPAWNS := {
 	],
 	PlanetTerrain.Kind.LOTUS: [
 		{"type": &"gold_pillar", "count": Vector2i(5, 9), "on": "liquid"},
-		{"type": &"toxic_ore", "count": Vector2i(1, 3), "slope": 0.9, "only": ["night", "giant"]},
+		{"type": &"toxic_ore", "count": Vector2i(1, 3), "slope": 0.9, "only": ["night", "giant"],
+			"note": "Only where the flowers have closed or grown giant"},
 	],
 	PlanetTerrain.Kind.SWIRL: [
 		{"type": &"sky_stone", "count": Vector2i(8, 14), "feature": &"swirl_ridge"},
@@ -384,7 +392,29 @@ static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
 	if rule.get("chance", 1.0) < 1.0:
 		count += " (on %d%% of worlds)" % roundi(rule["chance"] * 100.0)
 	var place: String = ", ".join(where)
-	return {"where": place.left(1).to_upper() + place.substr(1), "variants": variants, "count": count}
+	return {
+		"where": place.left(1).to_upper() + place.substr(1), "variants": variants, "count": count,
+		"note": rule.get("note", ""),
+	}
+
+
+## What a world of `kind` rolled as `variant` (plus the trait `flag`, if
+## given) yields: [{type, rule}] for every spawn entry that applies to it.
+## With `flag`, only what the trait adds - entries that would not apply
+## without it.
+static func yields(kind: int, variant: String, flag: String = "") -> Array:
+	var plain := {"variant": variant}
+	var with_flag := {"variant": variant}
+	if flag != "":
+		with_flag[flag] = true
+	var result: Array = []
+	for rule: Dictionary in SPAWNS.get(kind, []):
+		if flag != "" and (not _applies(rule, with_flag) or _applies(rule, plain)):
+			continue
+		if flag == "" and not _applies(rule, plain):
+			continue
+		result.append({"type": rule["type"], "rule": rule})
+	return result
 
 
 ## Whether a spawn entry applies to this world's roll (its `only` / `except`).

@@ -663,9 +663,34 @@ icons and a per-planet yield table) was removed: the game's resources are the
 `Inventory` (no starting stock - tier-1 nodes are free) and `TechTree` recipes
 name deposit types; the board's materials were mapped onto them (listed in
 `TechTree.gd`'s header). `TechTree.TIER_NAMES` / `TIER_COLORS` are the tree's own
-tiers. `set_world_seed` (galaxy-map travel, `N`) takes off if landed and resets
-`charted_bodies` / `found_resources`; `known_resources` (types ever found)
-survives.
+tiers. `set_world_seed` (galaxy-map travel, `N`) takes off if landed and clears
+`charted_bodies` (then charts the sun and home again); the Journal survives.
+
+## Journal (variant discovery)
+
+`journal.gd` - `class_name Journal`, static (survives travel and reloads, no
+save yet): per planet **name** (travel re-rolls the same 20 planets) the
+variants seen (`terrain_params.variant`, "" for kinds without one), the traits
+seen (flags in `PlanetLore.FLAG_LABELS`: blind, julia, rings), what was found on
+each variant (trait finds also under `"#<trait>"`), and the resource types known.
+`solar_system.gd` `_chart(body)` records the world when the ship charts a body
+(toast "NEW VARIANT: X - Y" when it is new) and `mark_resource_found` calls
+`Journal.record_find`; `is_resource_found_on(body, type)` asks the Journal for
+the body's current variant, so finds carry across systems per variant.
+
+- `PlanetLore.variants_of(kind)` / `traits_of(kind)` / `variant_note(kind, name)`
+  list a kind's variants and traits for the cards.
+- `ResourceDeposits.yields(kind, variant, flag = "")` - the spawn entries that
+  apply to a variant (with `flag`: only what the trait adds). Spawn entries may
+  carry a `note` (how the item differs on that variant); `spawn_notes()` returns it.
+- The log's planet tab has a card strip under the view (`_draw_variant_cards`,
+  `CARDS_HEIGHT`): a card per variant then per trait - HERE / SEEN / UNSEEN,
+  name and note once seen, and YIELDS with found types named, the rest redacted.
+  List rows show "seen/total". The resource tab's OCCURS ON lists every planet +
+  variant a type can spawn on (`_occurrences`, &"random" entries count for every
+  collectible type they allow), in full only where found on that variant.
+- The scene still forces a showcase `terrain_variant` on 16 planets: those never
+  change variant on travel until the field is cleared.
 
 ## Ship builder engines
 
