@@ -72,17 +72,17 @@ func _on_node_unlocked(_node_id: StringName) -> void:
 	refresh()
 
 
-## Stock of every resource: icon + amount, tinted by tier.
+## What the hold has of every resource the tree asks for: icon + amount,
+## tinted with the resource's own colour.
 func _refresh_resource_bar() -> void:
 	for child in _resource_bar.get_children():
 		child.queue_free()
-	for res: Dictionary in ResourceCatalog.RESOURCES:
-		var id: StringName = res["id"]
+	for id: StringName in _recipe_resources():
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
-		item.tooltip_text = "%s (%s)" % [res["name"], ResourceCatalog.TIER_NAMES.get(int(res["tier"]), "")]
+		item.tooltip_text = ResourceIcons.display_name(id)
 		var icon := TextureRect.new()
-		icon.texture = ResourceCatalog.icon(id)
+		icon.texture = ResourceIcons.icon(id)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.custom_minimum_size = Vector2(22, 22)
@@ -92,7 +92,17 @@ func _refresh_resource_bar() -> void:
 		label.text = str(PlayerProgress.amount(id))
 		label.add_theme_font_override("font", HudPanelStyle.get_font())
 		label.add_theme_font_size_override("font_size", 13)
-		label.add_theme_color_override("font_color", ResourceCatalog.tier_color(id))
+		label.add_theme_color_override("font_color", ResourceIcons.color(id))
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		item.add_child(label)
 		_resource_bar.add_child(item)
+
+
+## Every resource some recipe names, in the order the tree first uses them.
+static func _recipe_resources() -> Array[StringName]:
+	var ids: Array[StringName] = []
+	for node: Dictionary in TechTree.NODES:
+		for id: StringName in node["recipe"]:
+			if not ids.has(id):
+				ids.append(id)
+	return ids

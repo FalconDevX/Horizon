@@ -1,17 +1,14 @@
 class_name PlayerProgress
 extends RefCounted
-## What the player owns across the session: resource stock and unlocked
-## tech-tree nodes (TechTree). Static, so the shipyard and the flight scene
-## share it. There is no save system yet, so it resets when the game restarts.
-##
-## Nothing collects resources in flight yet - the player starts with a stock
-## of common and uncommon ones (enough for a few tier-2 unlocks); rare ones
-## (tier 3) have to come from gathering once that exists.
+## What the player owns across the session: the cargo hold (an Inventory of
+## resources gathered on planets - ResourceDeposits types - which the flight
+## scene fills and shows) and unlocked tech-tree nodes (TechTree). Static, so
+## the shipyard and the flight scene share it and it survives scene reloads
+## (galaxy-map travel). There is no save system yet, so it resets when the
+## game restarts. The hold starts empty: tier-1 nodes are free, the rest are
+## paid for with what the player collects.
 
-## Starting stock by resource tier.
-const START_STOCK := {1: 50, 2: 20, 3: 0}
-
-static var _resources: Dictionary = {}
+static var inventory := Inventory.new()
 static var _unlocked: Dictionary = {}
 static var _initialized := false
 
@@ -20,21 +17,20 @@ static func ensure_initialized() -> void:
 	if _initialized:
 		return
 	_initialized = true
-	for r: Dictionary in ResourceCatalog.RESOURCES:
-		_resources[r["id"]] = START_STOCK.get(int(r["tier"]), 0)
 	for node: Dictionary in TechTree.NODES:
 		if int(node["tier"]) <= 1:
 			_unlocked[node["id"]] = true
 
 
 static func amount(id: StringName) -> int:
-	ensure_initialized()
-	return int(_resources.get(id, 0))
+	return inventory.count(id)
 
 
 static func add(id: StringName, count: int) -> void:
-	ensure_initialized()
-	_resources[id] = maxi(amount(id) + count, 0)
+	if count > 0:
+		inventory.add(id, count)
+	elif count < 0:
+		inventory.remove(id, mini(-count, amount(id)))
 
 
 static func is_unlocked(node_id: StringName) -> bool:
@@ -75,6 +71,6 @@ static func unlock(node: Dictionary) -> bool:
 		return false
 	var cost: Dictionary = TechTree.unlock_cost(node)
 	for id: StringName in cost:
-		_resources[id] = amount(id) - int(cost[id])
+		inventory.remove(id, int(cost[id]))
 	_unlocked[node["id"]] = true
 	return true

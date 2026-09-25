@@ -56,8 +56,8 @@ func _build() -> void:
 		column.custom_minimum_size.x = CARD_WIDTH
 		_columns.add_child(column)
 		column.add_child(_label(
-			"TIER %d  %s" % [tier, ResourceCatalog.TIER_NAMES.get(tier, "")],
-			12, ResourceCatalog.TIER_COLORS.get(tier, Color.WHITE)
+			"TIER %d  %s" % [tier, TechTree.TIER_NAMES.get(tier, "")],
+			12, TechTree.TIER_COLORS.get(tier, Color.WHITE)
 		))
 		for node: Dictionary in in_tier:
 			_cards[node["id"]] = _make_card(node, column)
@@ -99,7 +99,7 @@ func _make_card(node: Dictionary, parent: Control) -> PanelContainer:
 	card.custom_minimum_size.x = CARD_WIDTH
 	var style := StyleBoxFlat.new()
 	style.bg_color = HudPanelStyle.COLOR_BG_SURFACE if unlocked else HudPanelStyle.COLOR_BG_SURFACE.darkened(0.25)
-	style.border_color = ResourceCatalog.TIER_COLORS.get(tier, Color.WHITE) if unlocked else HudPanelStyle.COLOR_BORDER_DEFAULT
+	style.border_color = TechTree.TIER_COLORS.get(tier, Color.WHITE) if unlocked else HudPanelStyle.COLOR_BORDER_DEFAULT
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(6)
 	style.set_content_margin_all(10)
@@ -117,7 +117,7 @@ func _make_card(node: Dictionary, parent: Control) -> PanelContainer:
 	header.add_child(title)
 	header.add_child(_label(
 		("T%d" % tier) if unlocked else ("T%d  LOCKED" % tier), 11,
-		ResourceCatalog.TIER_COLORS.get(tier, Color.WHITE) if unlocked else HudPanelStyle.COLOR_TEXT_MUTED
+		TechTree.TIER_COLORS.get(tier, Color.WHITE) if unlocked else HudPanelStyle.COLOR_TEXT_MUTED
 	))
 
 	if node.has("note"):
@@ -185,20 +185,18 @@ func _resource_row(caption: String, ids: Array, amounts: Dictionary) -> HBoxCont
 	row.add_child(cap)
 	for id: StringName in ids:
 		var icon := TextureRect.new()
-		icon.texture = ResourceCatalog.icon(id)
+		icon.texture = ResourceIcons.icon(id)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.custom_minimum_size = Vector2(ICON, ICON)
-		icon.tooltip_text = "%s (%s)" % [
-			ResourceCatalog.display_name(id), ResourceCatalog.TIER_NAMES.get(ResourceCatalog.tier_of(id), "")
-		]
+		icon.tooltip_text = ResourceIcons.display_name(id)
 		row.add_child(icon)
 		if amounts.has(id):
 			var need: int = amounts[id]
 			var have: int = PlayerProgress.amount(id)
-			row.add_child(_label("%d/%d" % [have, need], 11, ResourceCatalog.tier_color(id) if have >= need else MISSING_COLOR))
+			row.add_child(_label("%d/%d" % [have, need], 11, ResourceIcons.color(id) if have >= need else MISSING_COLOR))
 		else:
-			row.add_child(_label(ResourceCatalog.display_name(id), 11, ResourceCatalog.tier_color(id)))
+			row.add_child(_label(ResourceIcons.display_name(id), 11, ResourceIcons.color(id)))
 	return row
 
 

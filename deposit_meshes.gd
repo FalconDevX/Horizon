@@ -24,7 +24,19 @@ static func build(style: StringName, mesh_seed: int) -> ArrayMesh:
 		&"scrap":
 			_scrap(st, rng)
 		&"beanstalk":
-			_beanstalk(st, rng)
+			_beanstalk(st, rng, &"green")
+		&"beanstalk_frozen":
+			_beanstalk(st, rng, &"frozen")
+		&"beanstalk_dried":
+			_beanstalk(st, rng, &"dried")
+		&"spikes":
+			_spikes(st, rng)
+		&"jelly":
+			_jelly(st, rng)
+		&"tumbleweed":
+			_tumbleweed(st, rng)
+		&"geyser":
+			_geyser(st, rng)
 		&"pillars":
 			_pillars(st, rng)
 		&"egg":
@@ -103,15 +115,89 @@ static func _scrap(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
 
 
 ## A long, tapering beanstalk sprout curling over at the tip like a fiddlehead,
-## with a few leaves along it and sometimes a small sprout beside it.
-static func _beanstalk(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+## with a few leaves along it and sometimes a small sprout beside it. `state`:
+## &"green"; &"frozen" - still green at the foot, iced over further up;
+## &"dried" - withered brown and wilting over.
+static func _beanstalk(st: SurfaceTool, rng: RandomNumberGenerator, state: StringName) -> void:
 	var stem := Color(0.22, 0.55, 0.18)
 	var leaf := Color(0.45, 0.8, 0.28)
-	_sprout(st, rng, Vector3.ZERO, rng.randf_range(2.6, 3.6), 0.13, stem, leaf, rng.randi_range(3, 5))
+	var tip := stem
+	var wilt := 0.0
+	if state == &"frozen":
+		var ice := Color(0.82, 0.93, 1.0)
+		tip = ice
+		leaf = leaf.lerp(ice, rng.randf_range(0.5, 0.8))
+	elif state == &"dried":
+		stem = Color(0.45, 0.33, 0.18)
+		tip = Color(0.6, 0.5, 0.32)
+		leaf = Color(0.55, 0.42, 0.24)
+		wilt = rng.randf_range(0.8, 1.6)
+	_sprout(st, rng, Vector3.ZERO, rng.randf_range(2.6, 3.6), 0.13, stem, leaf, rng.randi_range(3, 5), tip, wilt)
 	for i in range(rng.randi_range(0, 2)):
 		var around: float = rng.randf_range(0.0, TAU)
 		var at := Vector3(cos(around), 0.0, sin(around)) * rng.randf_range(0.25, 0.4)
-		_sprout(st, rng, at, rng.randf_range(0.9, 1.5), 0.07, stem, leaf, rng.randi_range(1, 2))
+		_sprout(st, rng, at, rng.randf_range(0.9, 1.5), 0.07, stem, leaf, rng.randi_range(1, 2), tip, wilt)
+
+
+## Ice crystals: a sheaf of long, thin, four-sided spikes leaning out from one
+## foot.
+static func _spikes(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	for i in range(rng.randi_range(4, 7)):
+		var around: float = rng.randf_range(0.0, TAU)
+		var out := Vector3(cos(around), 0.0, sin(around))
+		var axis: Vector3 = (Vector3.UP * 2.5 + out * (0.0 if i == 0 else rng.randf_range(0.5, 1.4))).normalized()
+		var length: float = rng.randf_range(1.3, 1.9) if i == 0 else rng.randf_range(0.7, 1.4)
+		var tone: float = rng.randf_range(0.85, 1.0)
+		_spike(st, out * rng.randf_range(0.0, 0.15) - axis * 0.3, axis, rng.randf_range(0.06, 0.1), length + 0.3,
+			rng.randf_range(0.0, TAU), Color(tone, tone, tone))
+
+
+## A slime jelly: a glossy, wobbly dome with a couple of bubbles trapped on top.
+static func _jelly(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	_dome(st, Vector3(0.0, -0.08, 0.0), Vector3(0.48, 0.55, 0.48), Color.WHITE, rng, 0.05)
+	for i in range(rng.randi_range(1, 3)):
+		var around: float = rng.randf_range(0.0, TAU)
+		var at := Vector3(cos(around) * 0.2, 0.3 + rng.randf_range(0.0, 0.1), sin(around) * 0.2)
+		_dome(st, at, Vector3.ONE * rng.randf_range(0.07, 0.11), Color.WHITE, rng, 0.0)
+
+
+## A tumbleweed: a ball of dry, tangled twigs.
+static func _tumbleweed(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	var centre := Vector3(0.0, 0.42, 0.0)
+	for i in range(rng.randi_range(12, 16)):
+		# Each twig an arc round the ball, on its own tilted circle.
+		var axis := Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)).normalized()
+		var start: Vector3 = axis.cross(Vector3.UP if absf(axis.y) < 0.9 else Vector3.RIGHT).normalized()
+		var radius: float = rng.randf_range(0.34, 0.46)
+		var arc: float = rng.randf_range(1.5, 3.5)
+		var from: float = rng.randf_range(0.0, TAU)
+		var path := PackedVector3Array()
+		var radii := PackedFloat32Array()
+		for k in range(9):
+			var t: float = from + arc * float(k) / 8.0
+			path.append(centre + start.rotated(axis, t) * radius)
+			radii.append(0.025)
+		var tone: float = rng.randf_range(0.8, 1.1)
+		_tube(st, path, radii, 4, Color(tone, tone, tone))
+
+
+## A geyser: a low vent of pale sinter with a plume of steam standing out of it,
+## widening as it climbs.
+static func _geyser(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	var corners := PackedVector2Array()
+	for k in range(9):
+		var a: float = TAU * float(k) / 9.0
+		corners.append(Vector2(cos(a), sin(a)) * 0.42 * rng.randf_range(0.85, 1.1))
+	_slab(st, Transform3D(Basis(), Vector3(0.0, -0.2, 0.0)), corners, 0.35, 0.45, Color(0.72, 0.74, 0.78))
+	var height: float = rng.randf_range(2.5, 4.0)
+	var path := PackedVector3Array()
+	var radii := PackedFloat32Array()
+	var lean := Vector3(rng.randf_range(-0.15, 0.15), 0.0, rng.randf_range(-0.15, 0.15))
+	for k in range(13):
+		var t: float = float(k) / 12.0
+		path.append(Vector3(0.0, 0.1 + t * height, 0.0) + lean * t * t * height)
+		radii.append(lerpf(0.1, 0.38, pow(t, 0.7)) * (1.0 - smoothstep(0.85, 1.0, t) * 0.7))
+	_tube(st, path, radii, 8, Color(0.97, 0.98, 1.0))
 
 
 ## Golden columns of different heights rising out of the water, their tops
@@ -226,13 +312,14 @@ static func _slabs(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
 ## `leaves` leaves along it.
 static func _sprout(
 	st: SurfaceTool, rng: RandomNumberGenerator, foot: Vector3, length: float, width: float,
-	stem: Color, leaf: Color, leaves: int
+	stem: Color, leaf: Color, leaves: int, tip: Color, wilt: float
 ) -> void:
 	var lean_way: float = rng.randf_range(0.0, TAU)
 	var lean := Vector3(cos(lean_way), 0.0, sin(lean_way))
 	var heading: Vector3 = (Vector3.UP * 3.0 + lean * rng.randf_range(0.3, 0.9)).normalized()
 	var bend_axis: Vector3 = lean.cross(Vector3.UP).normalized() * (1.0 if rng.randf() < 0.5 else -1.0)
-	var sway: float = rng.randf_range(0.2, 0.6)
+	# A wilting stalk bends right over under its own weight.
+	var sway: float = rng.randf_range(0.2, 0.6) + wilt
 	var curl: float = rng.randf_range(5.0, 9.0) / length
 	# Gentle bend up the stalk, then a tight curl over the last stretch.
 	var path := _curve(foot + Vector3(0.0, -0.3, 0.0), heading, length + 0.3, bend_axis,
@@ -241,7 +328,7 @@ static func _sprout(
 	for k in range(path.size()):
 		var t: float = float(k) / float(path.size() - 1)
 		radii.append(lerpf(width, width * 0.12, pow(t, 0.7)))
-	_tube(st, path, radii, 8, stem)
+	_tube(st, path, radii, 8, stem, tip)
 
 	for i in range(leaves):
 		var k: int = int(lerpf(0.25, 0.75, (float(i) + rng.randf_range(0.0, 0.8)) / float(leaves)) * float(path.size() - 1))
@@ -270,8 +357,14 @@ static func _curve(start: Vector3, heading: Vector3, length: float, axis: Vector
 	return points
 
 
-## A round tube along `path`, `radii` wide at each point, smooth-shaded.
-static func _tube(st: SurfaceTool, path: PackedVector3Array, radii: PackedFloat32Array, sides: int, color: Color) -> void:
+## A round tube along `path`, `radii` wide at each point, smooth-shaded, its
+## colour running from `color` at the start to `tip` at the end.
+static func _tube(
+	st: SurfaceTool, path: PackedVector3Array, radii: PackedFloat32Array, sides: int, color: Color,
+	tip := Color(-1.0, 0.0, 0.0)
+) -> void:
+	if tip.r < 0.0:
+		tip = color
 	var rings: Array[PackedVector3Array] = []
 	var normals: Array[PackedVector3Array] = []
 	var normal := Vector3.ZERO
@@ -292,7 +385,16 @@ static func _tube(st: SurfaceTool, path: PackedVector3Array, radii: PackedFloat3
 			ring_normals.append(out)
 		rings.append(ring)
 		normals.append(ring_normals)
-	_grid(st, rings, normals, color)
+	if tip == color:
+		_grid(st, rings, normals, color)
+		return
+	# Colour by ring, fading from one end to the other.
+	for i in range(rings.size() - 1):
+		var along: float = float(i) / float(rings.size() - 2)
+		var c: Color = color.lerp(tip, smoothstep(0.35, 0.85, along))
+		var pair: Array[PackedVector3Array] = [rings[i], rings[i + 1]]
+		var pair_normals: Array[PackedVector3Array] = [normals[i], normals[i + 1]]
+		_grid(st, pair, pair_normals, c)
 
 
 ## A leaf: a flat, pointed oval from `base` along `out`, drooping a little,
@@ -318,6 +420,47 @@ static func _leaf(st: SurfaceTool, base: Vector3, out: Vector3, along: Vector3, 
 				var n: Vector3 = up
 				_triangle(st, face[0], face[1], face[2], n, n, n, color)
 				_triangle(st, face[0], face[2], face[1], -n, -n, -n, color)
+
+
+## A smooth dome (the top of a squashed sphere, sunk a little at the foot),
+## its outline wobbled by `wobble`.
+static func _dome(st: SurfaceTool, centre: Vector3, size: Vector3, color: Color, rng: RandomNumberGenerator, wobble: float) -> void:
+	var rings := 8
+	var sides := 14
+	var points: Array[PackedVector3Array] = []
+	var normals: Array[PackedVector3Array] = []
+	var bumps: Array = []
+	for k in range(sides):
+		bumps.append(1.0 + rng.randf_range(-wobble, wobble))
+	bumps.append(bumps[0])
+	for i in range(rings + 1):
+		var v: float = float(i) / float(rings)
+		var y: float = lerpf(-0.3, 1.0, v)
+		var r: float = sqrt(maxf(1.0 - y * y, 0.0))
+		var ring := PackedVector3Array()
+		var ring_normals := PackedVector3Array()
+		for k in range(sides + 1):
+			var a: float = TAU * float(k) / float(sides)
+			var unit := Vector3(cos(a) * r * bumps[k], y, sin(a) * r * bumps[k])
+			ring.append(centre + unit * size)
+			ring_normals.append(Vector3(unit.x / size.x, unit.y / size.y, unit.z / size.z).normalized())
+		points.append(ring)
+		normals.append(ring_normals)
+	_grid(st, points, normals, color)
+
+
+## A four-sided spike from `base` along `axis`, straight to a point.
+static func _spike(st: SurfaceTool, base: Vector3, axis: Vector3, width: float, length: float, twist: float, color: Color) -> void:
+	var side := axis.cross(Vector3.FORWARD if absf(axis.z) < 0.9 else Vector3.RIGHT).normalized()
+	var other := axis.cross(side)
+	var tip: Vector3 = base + axis * length
+	var middle: Vector3 = base + axis * length * 0.3
+	var foot := PackedVector3Array()
+	for k in range(4):
+		var a: float = twist + TAU * float(k) / 4.0
+		foot.append(base + (side * cos(a) + other * sin(a)) * width)
+	for k in range(4):
+		_face(st, [foot[k], foot[(k + 1) % 4], tip], middle, color)
 
 
 ## A lumpy, flat-shaded rock: a squashed sphere with its points jittered.

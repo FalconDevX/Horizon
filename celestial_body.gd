@@ -234,6 +234,11 @@ var terrain_kind: int = 0
 @export_range(1.05, 5.0, 0.01) var ring_inner_radius: float = 1.35
 @export_range(1.1, 6.0, 0.01) var ring_outer_radius: float = 2.35
 
+## Variant (and flags) this planet always rolls, instead of leaving it to the
+## world seed: e.g. "autumn", "giant", "julia,frozen", "rings,spiked". Names are
+## each kind's variants and flags in planet_terrain.gd. Empty = rolled.
+@export var terrain_variant: String = ""
+
 ## Texels along one edge of each of the six heightmap faces.
 @export_range(32, 1024, 16) var terrain_resolution: int = 1024
 
@@ -245,8 +250,13 @@ var velocity: Vector2 = Vector2.ZERO
 
 ## Orientation of the surface, mapping planet space into view space. This is
 ## the whole surface state: a point on the sphere plus a heading, in one value.
-## Later this stops auto-spinning and gets driven by the landed ship instead.
+## It spins on its own, or - while the ship is landed (surface_driven) - is
+## rolled under the ship by roll_surface().
 var surface_rotation := Quaternion.IDENTITY
+
+## True while the ship is landed here: the surface stops its own spin and only
+## moves as the ship flies over it.
+var surface_driven := false
 
 ## What everything is actually generated from: the world seed mixed with
 ## surface_seed. Set before any build.
@@ -294,6 +304,11 @@ var _terrain_key: String = ""
 # reaped in _process once done and their results thrown away.
 var _stale_terrain_tasks: Array[int] = []
 
+## surface_spin_axis as the scene set it. A roll may tilt the axis for one
+## world (a ringed moon, so its rings are not seen edge-on); the next world
+## starts from this again.
+var _scene_spin_axis := Vector3.UP
+
 ## Resource deposits standing on the surface (ResourceDeposits.place), each
 ## with its node under `"node"`. Placed once the heightmap lands.
 var resource_deposits: Array = []
@@ -305,6 +320,7 @@ var _deposit_time := 0.0
 
 
 func _ready() -> void:
+	_scene_spin_axis = surface_spin_axis
 	generation_seed = PlanetSurface.planet_seed(get_world_seed(), surface_seed)
 	if is_anomaly:
 		_roll_anomaly()
@@ -360,9 +376,10 @@ func _process(delta: float) -> void:
 	# Spins with game time: still on pause, faster under warp (capped, or a
 	# fast spinner strobes).
 	var spin_rate: float = minf(float(_world_setting(&"time_scale", 1.0)), MAX_SPIN_WARP)
-	surface_rotation = (
-		Quaternion(surface_spin_axis, get_spin_rate() * delta * spin_rate) * surface_rotation
-	).normalized()
+	if not surface_driven:
+		surface_rotation = (
+			Quaternion(surface_spin_axis, get_spin_rate() * delta * spin_rate) * surface_rotation
+		).normalized()
 
 	push_surface_rotation()
 
@@ -612,6 +629,7 @@ func _build_clouds(p: Dictionary, cyclones: PackedVector4Array) -> void:
 	material.set_shader_parameter("seed_offset", _seed_offset())
 	material.set_shader_parameter("cloud_color", p["cloud_color"])
 	material.set_shader_parameter("cloud_coverage", p["clouds"])
+	material.set_shader_parameter("cloud_speed", p["cloud_speed"])
 	material.set_shader_parameter("cyclones", cyclones)
 	material.set_shader_parameter("atmo_color", p["atmo"])
 	material.set_shader_parameter("atmo_strength", p["atmo_strength"])
@@ -732,6 +750,11 @@ func make_preview() -> Node3D:
 		copy.custom_aabb = bounds
 		sphere.add_child(copy)
 
+	# The deposits too, where they stand now (they share the sphere's unit
+	# space, so they fit the preview as they are).
+	if _deposits_3d != null:
+		sphere.add_child(_deposits_3d.duplicate())
+
 	if _rings_3d != null:
 		var rings := MeshInstance3D.new()
 		rings.mesh = _rings_3d.mesh
@@ -847,9 +870,16 @@ func build_terrain() -> void:
 
 	var kind := terrain_kind as PlanetTerrain.Kind
 	terrain_params = PlanetTerrain.resolve(
-		kind, generation_seed, terrain_liquid_coverage, get_world_chaos()
+		kind, generation_seed, terrain_liquid_coverage, get_world_chaos(), terrain_variant
 	)
 	var p: Dictionary = terrain_params
+	# Before anything reads the pole: the bake, clouds, rings and deposits.
+	# The spin so far turned about the old axis; about a new one it would
+	# wobble, so it starts over.
+	var axis: Vector3 = p.get("spin_axis", _scene_spin_axis)
+	if not axis.normalized().is_equal_approx(surface_spin_axis):
+		surface_spin_axis = axis
+		surface_rotation = Quaternion.IDENTITY
 
 	terrain_material = ShaderMaterial.new()
 	terrain_material.shader = TERRAIN_SHADER
@@ -864,6 +894,7 @@ func build_terrain() -> void:
 	terrain_material.set_shader_parameter("liquid_deep", p["deep"])
 	terrain_material.set_shader_parameter("liquid_emission", p["emission"])
 	terrain_material.set_shader_parameter("liquid_crust", p["crust"])
+	terrain_material.set_shader_parameter("crust_color", p.get("crust_color", (p["rock"] as Color) * 0.5))
 	terrain_material.set_shader_parameter("liquid_gloss", p["gloss"])
 	terrain_material.set_shader_parameter("rock_color", p["rock"])
 	terrain_material.set_shader_parameter("dry_color", p["dry"])
@@ -883,12 +914,14 @@ func build_terrain() -> void:
 	)
 	terrain_material.set_shader_parameter("cloud_color", p["cloud_color"])
 	terrain_material.set_shader_parameter("cloud_coverage", p["clouds"])
+	terrain_material.set_shader_parameter("cloud_speed", p["cloud_speed"])
 	terrain_material.set_shader_parameter("cyclones", cyclones)
 	if p["clouds"] > 0.0:
 		_build_clouds(p, cyclones)
 	if p["clouds"] > 0.0 or PlanetTerrain.is_gas(kind):
 		_build_atmosphere(p)
-	if has_rings:
+	# Rings are the scene's to give (has_rings) or the roll's (a ringed moon).
+	if has_rings or p.get("rings", false):
 		_build_rings(p)
 	terrain_material.set_shader_parameter("seed_offset", _seed_offset())
 	_push_terrain_effects(p)
@@ -934,6 +967,14 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("crack_scale", p["crack_scale"])
 	m.set_shader_parameter("crack_width", p["crack_width"])
 	m.set_shader_parameter("crack_coverage", p["crack_coverage"])
+	m.set_shader_parameter("crack_twin", p["crack_twin"])
+	m.set_shader_parameter("crack_color_b", p["crack_color_b"])
+	m.set_shader_parameter("crack_scale_b", p["crack_scale_b"])
+	m.set_shader_parameter("boil", p["boil"])
+	m.set_shader_parameter("boil_color", p["boil_color"])
+	m.set_shader_parameter("boil_scale", p["boil_scale"])
+	m.set_shader_parameter("land_glow", p["land_glow"])
+	m.set_shader_parameter("land_glow_band", p["land_glow_band"])
 
 	var sigils: Dictionary = PlanetTerrain.sigil_arrays(p)
 	m.set_shader_parameter("sigil_count", sigils["count"])
@@ -953,6 +994,7 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("quake_rings", p["quake_rings"])
 	m.set_shader_parameter("quake_spokes", p["quake_spokes"])
 	m.set_shader_parameter("quake_shift", p["quake_shift"])
+	m.set_shader_parameter("quake_glow", p["quake_glow"])
 
 	m.set_shader_parameter("bud_strength", p["buds"])
 	m.set_shader_parameter("bud_color", p["bud_color"])
@@ -1252,6 +1294,58 @@ func sample_point_in_color(color_index: int, rng: RandomNumberGenerator) -> Vect
 		surface_warp_strength,
 		surface_warp_frequency
 	)
+
+
+## Rolls the surface under a ship at the middle of the disc that moved `step`
+## (screen-space world units): the ground slides the opposite way, as if the
+## ship flew over it. The planet turns about the axis in the view plane
+## square to the step, by the step over the radius.
+func roll_surface(step: Vector2) -> void:
+	# Screen y points down, view y up.
+	var along := Vector3(step.x, -step.y, 0.0)
+	var distance: float = along.length()
+	if distance < 1e-9:
+		return
+	var axis: Vector3 = (along / distance).cross(Vector3.BACK)
+	surface_rotation = (Quaternion(axis, distance / get_draw_radius()) * surface_rotation).normalized()
+	push_surface_rotation()
+
+
+## The planet-space direction straight under the middle of the disc - where a
+## landed ship is.
+func point_under_view() -> Vector3:
+	return surface_rotation.inverse() * Vector3.BACK
+
+
+## The collectible deposit under the middle of the view (where a landed ship
+## sits), or -1. "Under" means the point lies within the deposit's footprint -
+## half its size, both in unit-sphere radians - widened by `reach` world units
+## (the ship's own size). The nearest wins when footprints overlap.
+func deposit_under_view(reach: float) -> int:
+	var under: Vector3 = point_under_view()
+	var slack: float = reach / get_draw_radius()
+	var best: int = -1
+	var best_angle: float = INF
+	for i in range(resource_deposits.size()):
+		var deposit: Dictionary = resource_deposits[i]
+		if not deposit.get("collectible", true):
+			continue
+		var angle: float = under.angle_to(deposit["direction"])
+		if angle < float(deposit["size"]) * 0.5 + slack and angle < best_angle:
+			best = i
+			best_angle = angle
+	return best
+
+
+## Takes a deposit off the surface for good (until the world is rerolled) and
+## returns it.
+func collect_deposit(index: int) -> Dictionary:
+	var deposit: Dictionary = resource_deposits[index]
+	resource_deposits.remove_at(index)
+	var node: Node = deposit.get("node")
+	if node != null:
+		node.queue_free()
+	return deposit
 
 
 ## Whether a surface direction is on the hemisphere facing the camera. Far-side

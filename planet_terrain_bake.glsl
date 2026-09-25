@@ -440,6 +440,13 @@ vec4 eye_parts(vec2 q, vec4 style) {
 	float drips = 1.0 - smoothstep(-0.02, 0.05, drips_d);
 
 	float iris = exp(-pow((length(q) - 0.3) / 0.05, 2.0));
+	if (style.y > 2.5) {
+		// Closed (Occult's blind worlds): no pupil or iris, only the lid's
+		// seam, drawn where the pupil would be.
+		float seam = abs(q.y + 0.06 * (1.0 - q.x * q.x * 1.2));
+		pupil = (1.0 - smoothstep(0.015, 0.045, seam)) * (1.0 - step(0.85, abs(q.x)));
+		iris = 0.0;
+	}
 	return vec4(inside, pupil, drips, iris);
 }
 
@@ -449,6 +456,10 @@ float eye_relief(vec2 q, vec4 style) {
 	vec4 e = eye_parts(q, style);
 	float rim = exp(-pow(eye_lens(q) / 0.1, 2.0));
 	float hood = exp(-pow((length(q - vec2(0.0, -0.35)) - 0.95) / 0.07, 2.0)) * smoothstep(0.2, 0.4, q.y);
+	if (style.y > 2.5) {
+		// A closed lid bulges where an open eye is a pit; its seam is a groove.
+		return rim * 0.3 + hood * 0.35 + e.x * 0.35 - e.y * 0.25 - e.z * 0.3;
+	}
 	return rim * 0.5 + hood * 0.35 + e.w * 0.2 - e.x * 0.6 - e.y * 0.45 - e.z * 0.3;
 }
 
@@ -554,10 +565,15 @@ vec3 ring_parts(vec2 q, vec4 style, vec4 extra) {
 // is domed: each bulb rises from about 0.55 at its rim to a peak at 1 where
 // its orbit settles nearest zero. Outside it the smoothed escape time rises
 // along the filaments, so they stand as lower ridges.
-// style.y = zoom, style.zw = view offset.
-float mandel_height(vec2 q, vec4 style) {
+// style.y = zoom, style.zw = view offset. extra.x > 0.5 makes it a Julia set
+// instead, for the constant extra.yz, centred on the origin.
+float mandel_height(vec2 q, vec4 style, vec4 extra) {
 	vec2 c = vec2(-0.75 + style.z, style.w) + q * style.y;
 	vec2 z = vec2(0.0);
+	if (extra.x > 0.5) {
+		z = q * style.y + style.zw;
+		c = extra.yz;
+	}
 	vec2 last = z;
 	float n = 0.0;
 	const int ITERATIONS = 64;
@@ -586,7 +602,7 @@ const vec4 ISLAND_MOAT = vec4(1.02, 1.2, 1.5, 1.85);
 // Quake scars, carved: a bowl where the planet shader draws each scar, found
 // the same way (the planet shader's hash and `shift`), so rings and spokes
 // sit on the hole. scale, density, size, shift as quakes_at() there.
-float quake_holes(vec3 dir, float scale, float density, float size_share, float shift) {
+float quake_holes(vec3 dir, float scale, float density, float size_share, float shift, float steps) {
 	vec3 p = dir * scale + vec3(shift);
 	vec3 cell = floor(p);
 	vec3 local = p - cell;
@@ -606,6 +622,11 @@ float quake_holes(vec3 dir, float scale, float density, float size_share, float 
 				}
 			}
 		}
+	}
+	if (steps > 0.0) {
+		// Terraced like a quarry: flat ledges with short drops between.
+		float u = hole * steps;
+		hole = (floor(u) + smoothstep(0.75, 1.0, fract(u))) / steps;
 	}
 	return hole;
 }
@@ -641,7 +662,7 @@ float feature_relief(vec3 dir, int kind) {
 				relief -= 2.4 * smoothstep(ISLAND_MOAT.x, ISLAND_MOAT.y, r) * (1.0 - smoothstep(ISLAND_MOAT.z, ISLAND_MOAT.w, r));
 			}
 		} else {
-			relief = max(relief, mandel_height(q, style));
+			relief = max(relief, mandel_height(q, style, extra));
 		}
 	}
 	return relief;
@@ -707,7 +728,23 @@ float meridian_relief(vec3 dir) {
 // Giant four-petal flowers on lily pads, one per cell in a `density` share of
 // cells: a pad disc just above the future waterline, and petals rising from
 // their tips to the flower's centre. `roundness` < 1 fattens the petals.
-float flower_layer(vec3 dir, float scale, float density, float roundness) {
+// One four-petal flower on its pad, `d` from its centre and `angle` round it,
+// in units where the flower spans 1 and the pad reaches 1.1: the pad at 0.15,
+// petals rising from their tips to the centre. `open` < 1 folds the petals up
+// into a bud; `bloom` scales the petals' height. -1 off the pad.
+float flower_shape(float d, float angle, float roundness, float open, float bloom) {
+	if (d > 1.1) {
+		return -1.0;
+	}
+	float petal = pow(abs(cos(2.0 * angle)), roundness);
+	float extent = mix(0.28 + 0.1 * petal, 0.35 + 0.65 * petal, open);
+	if (d < extent) {
+		return 0.3 + 0.7 * pow(1.0 - d / extent, mix(0.4, 0.7, open)) * bloom;
+	}
+	return 0.15;
+}
+
+float flower_layer(vec3 dir, float scale, float density, float roundness, float open) {
 	vec3 helper = abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
 	vec3 t = normalize(cross(helper, dir));
 	vec3 b = cross(dir, t);
@@ -725,19 +762,9 @@ float flower_layer(vec3 dir, float scale, float density, float roundness) {
 					continue;
 				}
 				vec3 off = o + 0.5 + (hash3(cell + o + vec3(5.0, 0.0, 0.0)) - 0.5) * 0.7 - local;
-				float d = length(off);
 				float radius = mix(0.28, 0.45, roll.y);
-				if (d > radius * 1.1) {
-					continue;
-				}
 				float angle = atan(dot(off, b), dot(off, t)) + roll.z * 6.2831853;
-				float petal = pow(abs(cos(2.0 * angle)), roundness);
-				float extent = radius * (0.35 + 0.65 * petal);
-				float h = 0.15;
-				if (d < extent) {
-					h = 0.3 + 0.7 * pow(1.0 - d / extent, 0.7) * mix(0.7, 1.0, roll.y);
-				}
-				height = max(height, h);
+				height = max(height, flower_shape(length(off) / radius, angle, roundness, open, mix(0.7, 1.0, roll.y)));
 			}
 		}
 	}
@@ -934,8 +961,23 @@ float raw_height(vec3 dir) {
 		// a: ocean-floor roughness, flower scale, share of cells with a flower,
 		//    petal roundness. The floor sits far below the pads and flowers,
 		//    and PlanetTerrain pins the sea between them (sea_fixed).
+		// b.x: how open the petals are (1 open, lower a closed bud)
+		// Plus giant flowers in sigils[] (style.x rotation, style.y roundness),
+		// each a continent of its own.
 		float floor_height = -0.3 + continent * a.x;
-		return max(floor_height, flower_layer(dir, a.y, a.z, a.w));
+		float h = max(floor_height, flower_layer(dir, a.y, a.z, a.w, b.x));
+		for (int i = 0; i < 24; i++) {
+			if (float(i) >= sigil_info.x) {
+				break;
+			}
+			vec4 s = sigils[i];
+			if (dot(dir, s.xyz) < cos(min(s.w * 1.2, 3.0))) {
+				continue;
+			}
+			vec2 q = sigil_frame(dir, s, sigil_styles[i].x);
+			h = max(h, flower_shape(length(q), atan(q.y, q.x), sigil_styles[i].y, b.x, 1.0));
+		}
+		return h;
 	}
 
 	if (kind == SWIRL) {
@@ -981,8 +1023,9 @@ float raw_height(vec3 dir) {
 		// a: continent, peak and erosion weights, hole depth
 		// b: scar scale, density, size, shift - quake_* in the planet shader,
 		//    which draws the scars' rings and spokes over these holes
+		// c.x: terraces in each hole (0 = a smooth bowl)
 		float erosion = erosion_at(dir, frequency, 3.0);
-		return continent * a.x + peaks * a.y + erosion * a.z - quake_holes(dir, b.x, b.y, b.z, b.w) * a.w;
+		return continent * a.x + peaks * a.y + erosion * a.z - quake_holes(dir, b.x, b.y, b.z, b.w, c.x) * a.w;
 	}
 
 	if (kind == GLOOM) {

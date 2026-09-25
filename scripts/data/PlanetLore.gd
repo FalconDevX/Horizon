@@ -197,10 +197,10 @@ const KINDS := {
 	},
 	PlanetTerrain.Kind.FRACTAL: {
 		"class": "Fractal world",
-		"description": "A barren brown-grey plain, free of craters, where a few great massifs rise in the exact shape of the Mandelbrot set - domed bulbs crowned in yellow over purple flanks, fringed with navy filament ridges.",
+		"description": "A barren brown-grey plain, free of craters, where a few great massifs rise in the exact shape of a fractal - domed bulbs over lower filament ridges, their colour changing as they climb.",
 		"facts": [
 			"Zoom in on any filament and it keeps branching; the survey drones never found the end of one.",
-			"The thin straight ridge running off each massif is the set's own antenna.",
+			"Each massif repeats its own outline at every scale, down to the pebbles.",
 			"How the ground came to take this shape is still an open question.",
 		],
 	},
@@ -213,6 +213,124 @@ const KINDS := {
 			"Its seas owe their pink to something living in them; the shallows bleach it almost white.",
 		],
 	},
+}
+
+
+## How the catalog names a variant, where its code name will not do; keyed by
+## kind, then variant. Anything missing is shown capitalised.
+const VARIANT_LABELS := {
+	PlanetTerrain.Kind.TERRAN: {"temperate": "Temperate", "autumn": "Autumn"},
+	PlanetTerrain.Kind.DESERT: {"open": "Open sands", "lava": "Lava canyons", "glass": "Glass fields", "sandstorm": "Sandstorm"},
+	PlanetTerrain.Kind.VOLCANIC: {"lava": "Lava", "cryo": "Cryovolcanic"},
+	PlanetTerrain.Kind.BARREN: {"": "Bare rock", "spiked": "Spiked craters"},
+	PlanetTerrain.Kind.TOXIC: {"still": "Still acid", "crystal": "Crystal crust", "boiling": "Boiling"},
+	PlanetTerrain.Kind.SLIME: {"slick": "Slick", "bubbling": "Bubbling", "petrified": "Petrified"},
+	PlanetTerrain.Kind.OCCULT: {"dust": "Black dust", "obsidian_purple": "Obsidian, purple eyes", "obsidian_yellow": "Obsidian, yellow eyes"},
+	PlanetTerrain.Kind.GLOOM: {"single": "Gold cracks", "twin": "Twin cracks"},
+	PlanetTerrain.Kind.BLOOM: {"fields": "In bloom", "winter": "Winter bloom", "dried": "Dried"},
+	PlanetTerrain.Kind.OASIS: {"dry season": "Dry season", "monsoon": "Monsoon"},
+	PlanetTerrain.Kind.LOTUS: {"open": "Open flowers", "night": "Night bloom", "giant": "Giant lotus"},
+	PlanetTerrain.Kind.RINGS: {"green": "Green", "sandy": "Sandy", "volcanic": "Volcanic", "autumn": "Autumn", "flooded": "Flooded"},
+	PlanetTerrain.Kind.QUAKE: {"settled": "Settled", "active": "Active", "terraced": "Terraced holes"},
+	PlanetTerrain.Kind.FRACTAL: {"classic": "Classic palette", "ember": "Ember", "verdigris": "Verdigris", "orchid": "Orchid", "frozen": "Frozen"},
+	PlanetTerrain.Kind.MERIDIAN: {"pink": "Pink seas", "inverted": "Inverted"},
+	PlanetTerrain.Kind.FROZEN: {"white": "White frost", "pink": "Pink methane ice"},
+	PlanetTerrain.Kind.ICE: {"sheet": "Ice sheet", "geysers": "Geyser field"},
+}
+
+## Flags a roll can set beside its variant, and what the catalog calls them.
+const FLAG_LABELS := {"blind": "Blind", "julia": "Julia sets", "rings": "Ringed"}
+
+
+## The catalog's name for one variant or flag of `kind`.
+static func variant_name(kind: int, name: String) -> String:
+	if FLAG_LABELS.has(name):
+		return FLAG_LABELS[name]
+	return VARIANT_LABELS.get(kind, {}).get(name, name.capitalize())
+
+
+## What this world rolled for the body: its variant and any flags, e.g.
+## "Frozen · Julia sets". Empty for kinds without variants.
+static func variant_label(kind: int, params: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	var variant: String = params.get("variant", "")
+	if VARIANT_LABELS.has(kind) and (variant != "" or VARIANT_LABELS[kind].has("")):
+		parts.append(variant_name(kind, variant))
+	for flag: String in FLAG_LABELS:
+		if params.get(flag, false) == true:
+			parts.append(FLAG_LABELS[flag])
+	return " · ".join(parts)
+
+
+## One line added to a kind's description for the variant it rolled
+## (params.variant), keyed by kind, then variant.
+const VARIANT_NOTES := {
+	PlanetTerrain.Kind.TERRAN: {
+		"autumn": "Its forests have turned autumn gold and red, and sand has spread across its dry belts.",
+	},
+	PlanetTerrain.Kind.RINGS: {
+		"sandy": "Sand drifts over its lowlands and piles into hills.",
+		"volcanic": "A few dark volcanoes rise out of the green.",
+		"autumn": "Its grass has turned autumn gold, orange and red.",
+		"flooded": "Every one of its ring sets stands as an island in a ring of sea.",
+	},
+	PlanetTerrain.Kind.DESERT: {
+		"lava": "Deep canyons cut through it, running with lava.",
+		"glass": "Lightning has fused patches of its sand into green glass.",
+		"sandstorm": "A planet-wide sandstorm hides much of its surface.",
+	},
+	PlanetTerrain.Kind.BARREN: {
+		"spiked": "Its crater rims are thrown up into jagged teeth, turning metallic as they climb.",
+	},
+	PlanetTerrain.Kind.TOXIC: {
+		"crystal": "Pale crystal plates crust its acid seas.",
+		"boiling": "Its acid seas are boiling.",
+	},
+	PlanetTerrain.Kind.SLIME: {
+		"bubbling": "Glowing bubbles swell and pop all over the slime.",
+		"petrified": "Its slime has long since dried to a pale, cracked crust.",
+	},
+	PlanetTerrain.Kind.LOTUS: {
+		"night": "Its flowers are folded shut and its lily pads glow in the dark.",
+		"giant": "One of its flowers has grown to the size of a continent.",
+	},
+	PlanetTerrain.Kind.FRACTAL: {
+		"classic": "Its massifs run from navy filaments through purple flanks to yellow crowns.",
+		"ember": "Its massifs burn crimson to gold.",
+		"verdigris": "Its massifs are the green of old copper.",
+		"orchid": "Its massifs bloom indigo to pale pink.",
+		"frozen": "Ice crowns its massifs.",
+	},
+	PlanetTerrain.Kind.MERIDIAN: {
+		"inverted": "Its seas are milk-white and its land near-black.",
+	},
+	PlanetTerrain.Kind.QUAKE: {
+		"active": "Its scars still glow with heat.",
+		"terraced": "Its holes are stepped like quarries.",
+	},
+	PlanetTerrain.Kind.BLOOM: {
+		"winter": "Frost covers its fields, and its beanstalks stand half frozen.",
+		"dried": "Its flowers have withered, and its valleys are choked with dead stalks.",
+	},
+	PlanetTerrain.Kind.OASIS: {
+		"monsoon": "Monsoon rains have swollen its pools into lakes.",
+	},
+	PlanetTerrain.Kind.GLOOM: {
+		"twin": "A finer crimson network runs through the gold.",
+	},
+	PlanetTerrain.Kind.FROZEN: {
+		"pink": "Its frost is methane ice, tinted pink.",
+	},
+	PlanetTerrain.Kind.ICE: {
+		"geysers": "Steaming geysers crowd one field of its ice.",
+	},
+}
+
+## Lines for flags a roll sets alongside its variant, keyed by kind, then flag.
+const FLAG_NOTES := {
+	PlanetTerrain.Kind.OCCULT: {"blind": "Every eye on it is closed."},
+	PlanetTerrain.Kind.FRACTAL: {"julia": "Its massifs follow Julia sets rather than the Mandelbrot set."},
+	PlanetTerrain.Kind.BARREN: {"rings": "A thin ring system circles it."},
 }
 
 
@@ -251,16 +369,19 @@ static func describe(kind: int, params: Dictionary, is_star: bool) -> Dictionary
 		var eye: String = "purple" if params["variant"] == "obsidian_purple" else "yellow"
 		entry["description"] = "A world of glassy obsidian, violet-black where the light catches it, marked by things no geology explains: huge crater-eyes with glowing deep %s irises, and coiling ridges like tentacles, ringed with sucker-like bumps." % eye
 
-	match [kind, params.get("variant", "")]:
-		[PlanetTerrain.Kind.RINGS, "sandy"]:
-			extra.append("Sand drifts over its lowlands and piles into hills.")
-		[PlanetTerrain.Kind.RINGS, "volcanic"]:
-			extra.append("A few dark volcanoes rise out of the green.")
-		[PlanetTerrain.Kind.DESERT, "lava"]:
-			extra.append("Deep canyons cut through it, running with lava.")
-		[PlanetTerrain.Kind.BARREN, "spiked"]:
-			extra.append("Its crater rims are thrown up into jagged teeth, turning metallic as they climb.")
-	if kind == PlanetTerrain.Kind.RINGS and params.get("liquid", false):
+	# Blind worlds: the eyes are shut, so nothing glows.
+	if kind == PlanetTerrain.Kind.OCCULT and params.get("blind", false):
+		entry["description"] = String(entry["description"]).replace("crater-eyes with glowing red irises", "crater-eyes").replace(
+			"crater-eyes with glowing deep purple irises", "crater-eyes").replace("crater-eyes with glowing deep yellow irises", "crater-eyes")
+
+	# A line for the roll's variant, and for each flag it set.
+	var notes: Dictionary = VARIANT_NOTES.get(kind, {})
+	if notes.has(params.get("variant", "")):
+		extra.append(notes[params["variant"]])
+	for flag in FLAG_NOTES.get(kind, {}):
+		if params.get(flag, false):
+			extra.append(FLAG_NOTES[kind][flag])
+	if kind == PlanetTerrain.Kind.RINGS and params.get("liquid", false) and params.get("variant", "") != "flooded":
 		extra.append("Some of its ring sets stand as islands in a ring of sea.")
 	if kind == PlanetTerrain.Kind.BARREN and params.get("cracks", 0.0) > 0.0:
 		extra.append("Fine dark cracks split the ground.")

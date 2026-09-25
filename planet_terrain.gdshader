@@ -35,6 +35,17 @@ uniform float liquid_emission : hint_range(0.0, 4.0) = 0.0;
 // How much of a glowing liquid is crusted over (lava's cooling skin, acid
 // scum). 0 leaves the glow bare.
 uniform float liquid_crust : hint_range(0.0, 1.0) = 1.0;
+// What the crust is made of: cooled rock on lava, crystals on acid.
+uniform vec3 crust_color : source_color = vec3(0.2, 0.19, 0.18);
+// Bubbles swelling and popping all over the liquid. 0 = none.
+uniform float boil : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 boil_color : source_color = vec3(0.6, 1.0, 0.4);
+// Cells per unit of planet-space direction - higher means smaller bubbles.
+uniform float boil_scale = 60.0;
+// Land that gives off light of its own, below `land_glow_band` (0..1 land
+// height) - glowing lily pads. 0 = none.
+uniform float land_glow : hint_range(0.0, 2.0) = 0.0;
+uniform float land_glow_band : hint_range(0.0, 1.0) = 0.2;
 uniform float liquid_gloss : hint_range(0.0, 1.0) = 0.8;
 
 uniform vec3 rock_color : source_color = vec3(0.4);
@@ -84,6 +95,10 @@ uniform float crack_scale = 6.0;
 uniform float crack_width = 0.03;
 // Threshold on a slow noise: -1 cracks everywhere, 1 almost nowhere.
 uniform float crack_coverage = 0.0;
+// A second, finer network in its own colour, laid through the first. 0 = none.
+uniform float crack_twin : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 crack_color_b : source_color = vec3(0.8, 0.05, 0.1);
+uniform float crack_scale_b = 10.0;
 
 // Placed features the bake carved (see PlanetTerrain.sigil_arrays()), coloured
 // here. `sigil_mode` mirrors PlanetTerrain.FeatureMode: 0 Occult eyes, 1 Swirl
@@ -116,6 +131,8 @@ uniform float quake_spokes = 6.0;
 // Offset of the scar lattice, shared with the bake, which carves a hole under
 // every scar.
 uniform float quake_shift = 7.0;
+// Light the scars give off (an active world's run hot).
+uniform float quake_glow : hint_range(0.0, 3.0) = 0.12;
 
 // Buds: small spiky green dots scattered over dry ground, thickest just above
 // the waterline and never in it. 0 = none.
@@ -357,6 +374,13 @@ vec4 eye_parts(vec2 q, vec4 style) {
 	float drips = 1.0 - smoothstep(-0.02, 0.05, drips_d);
 
 	float iris = exp(-pow((length(q) - 0.3) / 0.05, 2.0));
+	if (style.y > 2.5) {
+		// Closed (Occult's blind worlds): no pupil or iris, only the lid's
+		// seam, drawn where the pupil would be.
+		float seam = abs(q.y + 0.06 * (1.0 - q.x * q.x * 1.2));
+		pupil = (1.0 - smoothstep(0.015, 0.045, seam)) * (1.0 - step(0.85, abs(q.x)));
+		iris = 0.0;
+	}
 	return vec4(inside, pupil, drips, iris);
 }
 
@@ -531,16 +555,48 @@ float quakes_at(vec3 d, vec3 t, vec3 b, float footprint) {
 // Glowing cracks: the zero lines of warped noise, like the bake's ice
 // fractures but drawn. Never thinner than about a pixel, so they do not
 // break up at a distance. x = the line, y = its halo.
-vec2 cracks_at(vec3 d, float footprint) {
-	vec3 p = d * crack_scale + seed_offset * 0.21;
+vec2 cracks_at(vec3 d, float footprint, float scale, float shift) {
+	vec3 p = d * scale + seed_offset * 0.21 + shift;
 	vec3 w = vec3(noised(p * 0.5 + 5.0).x, noised(p * 0.5 + 9.0).x, noised(p * 0.5 + 13.0).x) * 1.2;
 	float a = abs(noised(p + w).x);
 	float b = abs(noised(p * 2.3 + w * 1.7 + 31.0).x);
-	float width = max(crack_width, footprint * crack_scale * 0.6);
+	float width = max(crack_width, footprint * scale * 0.6);
 	float line = max(1.0 - smoothstep(0.0, width, a), (1.0 - smoothstep(0.0, width * 0.6, b)) * 0.4);
 	float halo = max(1.0 - smoothstep(0.0, width * 4.0, a), (1.0 - smoothstep(0.0, width * 2.5, b)) * 0.25);
-	float region = smoothstep(crack_coverage - 0.1, crack_coverage + 0.1, noised(d * 1.3 + 71.0 + seed_offset).x);
+	float region = smoothstep(crack_coverage - 0.1, crack_coverage + 0.1, noised(d * 1.3 + 71.0 + seed_offset + shift).x);
 	return vec2(line, halo) * region;
+}
+
+// Bubbles in a boiling liquid: one per cell at most, each swelling on its own
+// clock and popping at full size - a bright rim over a paler cap. 0..1.
+float bubbles_at(vec3 d, float footprint) {
+	float fade = 1.0 - smoothstep(0.2, 0.5, footprint * boil_scale);
+	if (fade <= 0.0) {
+		return 0.0;
+	}
+	vec3 p = d * boil_scale + seed_offset * 0.37;
+	vec3 cell = floor(p);
+	vec3 local = p - cell;
+	float best = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 h = hash3(cell + o + vec3(401.0, 0.0, 0.0));
+				if (h.x > 0.45) {
+					continue;
+				}
+				vec3 off = o + 0.5 + (hash3(cell + o + vec3(0.0, 0.0, 97.0)) - 0.5) * 0.6 - local;
+				float life = fract(planet_time * (0.15 + 0.2 * h.y) + h.z);
+				float radius = mix(0.15, 0.42, h.y) * sqrt(life);
+				float dist = length(off);
+				float rim = exp(-pow((dist - radius) / (0.25 * radius + 0.02), 2.0));
+				float cap = (1.0 - smoothstep(radius * 0.7, radius, dist)) * 0.5;
+				best = max(best, max(rim, cap) * (1.0 - smoothstep(0.85, 1.0, life)));
+			}
+		}
+	}
+	return best * fade;
 }
 
 // Buds at d, tangent frame (t, b): x = cover, y = how far toward the bud's
@@ -707,7 +763,7 @@ void fragment() {
 				// Lava: a cooling crust drifting over the glow.
 				float crust = smoothstep(-0.05, 0.15,
 					fbm(d + vec3(0.0, planet_time * 0.002, 0.0), 4, 60.0, footprint)) * liquid_crust;
-				col = mix(col, rock_color * 0.5, crust * 0.85);
+				col = mix(col, crust_color, crust * 0.85);
 				glow = liquid_emission * (1.0 - crust * 0.9) * mix(1.0, 0.55, depth);
 				gloss *= 1.0 - crust;
 			} else {
@@ -716,6 +772,12 @@ void fragment() {
 					* smoothstep(0.35, 0.75, value_noise(d * 700.0 + planet_time * 0.6));
 				col = mix(col, vec3(0.9), surf * 0.55);
 				col = mix(col, liquid_shallow * 1.3, (1.0 - smoothstep(0.0, 0.03, depth)) * 0.4);
+			}
+
+			if (boil > 0.0) {
+				float bubble = bubbles_at(d, footprint) * boil;
+				col = mix(col, boil_color, bubble);
+				emit += boil_color * bubble * 0.5;
 			}
 
 			// Swell - two octaves of moving waves, gone once sub-pixel.
@@ -769,9 +831,18 @@ void fragment() {
 			}
 
 			if (crack_strength > 0.0) {
-				vec2 crack = cracks_at(d, footprint);
+				vec2 crack = cracks_at(d, footprint, crack_scale, 0.0);
 				col = mix(col, crack_color, crack.x);
 				emit += crack_color * crack_strength * (crack.x + crack.y * 0.12);
+				if (crack_twin > 0.0) {
+					vec2 twin = cracks_at(d, footprint, crack_scale_b, 37.0) * crack_twin;
+					col = mix(col, crack_color_b, twin.x);
+					emit += crack_color_b * crack_strength * (twin.x + twin.y * 0.12);
+				}
+			}
+
+			if (land_glow > 0.0) {
+				emit += col * land_glow * (1.0 - smoothstep(land_glow_band * 0.6, land_glow_band, land));
 			}
 
 			if (quake_strength > 0.0) {
@@ -779,7 +850,7 @@ void fragment() {
 				// eye even on shaded slopes.
 				float scar = quakes_at(d, t, b, footprint) * quake_strength;
 				col = mix(col, quake_color * (0.9 + 0.2 * grain), scar);
-				emit += quake_color * scar * 0.12;
+				emit += quake_color * scar * quake_glow;
 			}
 		}
 

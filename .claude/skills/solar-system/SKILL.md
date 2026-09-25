@@ -169,7 +169,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
   view space. It is the entire surface state: position plus heading. Advance it by
   composing rotations (`delta * rotation`), never by adding a tangent — a tangent step
   leaves the sphere and compounds. Currently `_process` auto-spins about `Vector3.UP`;
-  a landed ship will drive it later.
+  while landed (`surface_driven`) the ship drives it instead - see Landing.
 - **View-space axes are constants:** `Vector3.RIGHT` = forward, `Vector3.BACK` = turn.
   Turning leaves position untouched because the ship sits on the turn axis.
 - **Per-planet values** (`surface_seed`, `surface_blob_count`, `surface_color_count`) are
@@ -177,7 +177,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
 - **Seeds.** `surface_seed` is only a planet's *local* seed. Everything — blob rolls,
   terrain colours, the elevation bake, the shaders' `seed_offset` — reads
   `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, set at the
-  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 20260924),
+  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 1461402483),
   read through `owner` in `get_world_seed()` because planets `_ready` before the root.
   Changing the script default of `surface_seed` does nothing - every planet overrides
   it in the scene. `set_world_seed(value)` clears `PlanetTerrain`'s bake cache and
@@ -279,20 +279,36 @@ still shows the blob preview.
   lava/cryo crust over, acid does not (a crust on acid reads as polka dots).
   Liquid kinds: Terran (water), Volcanic (lava or cryo, emissive), Ice, Toxic (acid).
   `terrain_liquid_coverage` overrides the share (0 = dry).
-- **Per-kind variants** (rolled in `_roll_*()`, name in `params.variant` where it
-  matters, described by `PlanetLore.describe()`): Gloom cracks gold → crimson; Bloom
-  fields mix two hues from navy–purple–crimson by height band; Slime green / yellow /
-  teal / blue; Oasis sand → orange, 50% long muddy rivers (`channels()` as deep as
-  the puddles, coverage raised); Desert 25% `lava` (canyons via `channels()` in
-  `detail` c, lava liquid); Barren 35% `spiked` (`crater_layer_spiked()` teeth, top of
-  the gradient metallic green/blue), 50% dark drawn cracks, 30% red mist + red
-  clouds; Quake cast steel / metallic green / metallic blue, and every scar is a
-  carved hole (`quake_holes()` in the bake mirrors `quakes_at()` via `hash3_plain()`
-  and the shared `quake_shift`); Rings `green` / `sandy` (dry biome sand + dune
-  patches) / `volcanic` (`peak_layer()` cones with calderas, dark slope rock), 40% of
-  ring sets are islands (`extra.z`; plateau + moat per `ISLAND_MOAT`, sea coverage
-  = 0.27·size² per island, blue ocean), violet bushes round every set (buds with
-  `bud_near_features` → `feature_surroundings()`).
+- **Per-kind variants** (rolled in `_roll_*()`, named in `params.variant` - plus the
+  flags `blind`, `julia`, `rings` - and described by `PlanetLore.VARIANT_NOTES` /
+  `FLAG_NOTES`): Terran temperate/autumn (autumn grass + forests, more sand);
+  Rings green/sandy/volcanic/autumn/flooded (flooded = every ring set an island;
+  islands = plateau + moat per `ISLAND_MOAT`, sea coverage 0.27·size² each; violet
+  bushes round every set via `bud_near_features`); Occult dust/obsidian_purple/
+  obsidian_yellow + `blind` (eye `style.y` 3 = closed lid, both shaders' `eye_parts`);
+  Lotus open/night (petals folded to buds via bake `b.x` openness, pads glow via
+  `land_glow`)/giant (one continent-sized flower from `sigils[0]`, `flower_shape()`);
+  Fractal palettes classic/ember/verdigris/orchid/frozen + `julia` (Julia sets:
+  `extra.x` 1, constant in `extra.yz`); Meridian pink/inverted (white seas, dark
+  land); Quake settled/active (`quake_glow`, orange)/terraced (bake `c.x` steps) and
+  every scar a carved hole (`quake_holes()` mirrors `quakes_at()` via `hash3_plain()`
+  and `quake_shift`); Bloom fields/winter/dried; Oasis dry season/monsoon (+50% muddy
+  rivers); Barren spiked/cracks/red mist + `rings` (master's `_build_rings()`, the roll
+  tips the axis with `spin_axis` - see below); Toxic still/crystal (`crust_color`)/
+  boiling (`boil*`, `bubbles_at()`); Desert open/lava/glass (`rock_patches`)/sandstorm
+  (`cloud_speed`); Slime slick/bubbling/petrified (solid: liquid off, chalky low
+  ground, cracks); Gloom single/twin (`crack_twin`, second `cracks_at()` pass); Frozen
+  white/pink; Ice sheet/geysers.
+- **Forcing a variant**: `terrain_variant` on a planet (comma-separated, e.g.
+  `"julia,frozen"`, `"rings,spiked"`) reaches `resolve()` as `forced_variant`; the
+  rolls pick through `Roller.variant()` / `Roller.flag()`, which still draw their
+  random numbers and then return the forced name, so the rest of the look stays as
+  the world seed made it. Empty = rolled. The scene currently forces a showcase
+  variant on 16 planets (temporary - clear the fields to go back to rolling).
+- **A roll can tilt the spin axis**: `params.spin_axis` replaces the scene's
+  `surface_spin_axis` for that world (restored from `_scene_spin_axis` otherwise), set
+  in `build_terrain()` before anything reads the pole; `surface_rotation` resets when
+  the axis changes, or the spin would wobble.
 - **Bake recipe per planet.** `recipe` (continent warp, mountain-belt thresholds,
   ridge sharpness) is shared by every rocky kind; `detail` is 16 kind-specific floats
   sent as `detail[4]` in the bake's `Params` - their meaning is commented per branch
@@ -312,7 +328,7 @@ still shows the blob preview.
   `planet_clouds.gdshaderinc` for cloud shadows, and noise helpers live in
   `planet_noise.gdshaderinc`. Cyclones come from `PlanetTerrain.roll_cyclones()`,
   seeded by `generation_seed`. `rebuild_surface()` frees both shells before
-  rebuilding. The catalog (I key) calls `make_preview()` on each body; unknown names
+  rebuilding. The catalog (J key) calls `make_preview()` on each body; unknown names
   in `PlanetLore` (Anthea, Dunmere) just show blank lore. Cloud *amount* reads much
   heavier on the shell than it did in-shader, so the `clouds` ranges in `_roll_*()`
   may want lowering.
@@ -372,13 +388,18 @@ still shows the blob preview.
   optional `wiggle` / `spots`) and `SPAWNS` (per `PlanetTerrain.Kind`: entries with
   `type`, `count`, `on` land/liquid/any, `land` height band in colour-gradient units,
   `lowest` (the planet's lowest share of land, via `Ground.land_below()` - use it for
-  valleys, since a roll's heights may never reach a fixed band), `slope`, `feature` (e.g. `&"swirl_ridge"`, a CPU mirror of `swirl_parts()`),
-  `motion`). Kinds missing from `SPAWNS` get nothing (gas giants, Volcanic, Ice,
-  Frozen, Gloom, Quake, Meridian for now). `place()` runs once the bake lands
+  valleys, since a roll's heights may never reach a fixed band), `above`, `slope`,
+  `only` / `except` (variant names or true flags), `chance`, `cluster`, `color` /
+  `glow` overrides, type `&"random"` (any collectible but `except_types`),
+  `feature` (`&"swirl_ridge"` - CPU mirror of `swirl_parts()`; `&"ring_centre"`;
+  `&"quake_hole"` - snaps to hole centres via `_shader_hash()`, a GDScript PCG3D),
+  `motion`). Kinds missing from `SPAWNS` get nothing (gas giants, Volcanic and
+  Gloom for now). `place()` runs once the bake lands
   (`_apply_terrain()` → `_place_deposits()`), rolled from `generation_seed`, using
   `PlanetTerrain.height_at()`; liquid spawns sit at the unit sphere (the sea surface).
   Shapes are built per deposit from its seed in `deposit_meshes.gd` (`DepositMeshes`:
-  crystals, tiles, scrap, beanstalk, pillars, egg, pebbles, bones, slabs; +Y up,
+  crystals, tiles, scrap, beanstalk (green/frozen/dried), pillars, egg, pebbles,
+  bones, slabs, spikes, jelly, tumbleweed, geyser; +Y up,
   ~1 unit across, feet sunk; vertex colours for inner shading); add a look there and
   in `build()`. Lit by `resource_deposit.gdshader` (`sun_position` global, wiggle
   driven by the pausable `planet_time` global, procedural spots). Data per deposit in
@@ -390,10 +411,37 @@ still shows the blob preview.
   `turn()`, which follow the sphere in ≤ `MAX_STEP` substeps and refuse any spot the
   deposit's own `SPAWNS` rule would not allow), `pose(time)` (bob / waddle / spin in
   the deposit's frame: +Y up, -Z heading, cluster units) and `animates()`; register
-  it in `ResourceDeposits.MOTIONS`. A spawn's `motion` defaults to still; nothing
-  uses `DepositDrift` (slow meandering slide) right now. The beanstalks' sway is
+  it in `ResourceDeposits.MOTIONS`. A spawn's `motion` defaults to still;
+  `DepositRoll` (tumbleweeds) and `DepositHop` (slime jellies) are in use,
+  `DepositDrift` (slow meandering slide) is not. Types with `collectible` false
+  (tumbleweed, dried beanstalk, geyser) are scenery: deposits carry `collectible`. The beanstalks' sway is
   shader-only (`wiggle`), not a motion.
   `celestial_body._process()` calls `ResourceDeposits.advance()` with game time.
+- **Catalog (I key, `planet_info_panel.gd`)** has two tabs (click, Tab or Left/Right):
+  PLANETS - stats now start with a "Variant" row (`PlanetLore.variant_label()`, names
+  from `VARIANT_LABELS` / `FLAG_LABELS`), a RESOURCES tally of the body's
+  `resource_deposits` (scenery marked), and the globe preview (`make_preview()`)
+  carries a copy of the deposits; RESOURCES - one row per `ResourceDeposits.TYPES`
+  entry, a turning model (`ResourceDeposits.make_showcase()`, side-on camera), this
+  world's counts per planet, and FOUND ON: every kind that spawns it
+  (`spawns_of()`, random entries included) with the system's planets of that kind
+  and `spawn_notes()` - where, which variants, how many. List rows shrink to fit.
+  A new variant needs a label in `PlanetLore.VARIANT_LABELS`; a new spawn key needs
+  words in `spawn_notes()`.
+- **What the player knows** gates the catalog. `solar_system.gd` keeps
+  `charted_bodies` (the sun and home planet from the start; `_chart_nearby_bodies()`
+  adds a planet once the ship is within max(SOI, `CHART_RADII` radii) of it, with a
+  "SURVEYED" notice through `music_toast.show_message()`) and `found_resources`
+  (body -> {type: true}; empty - gathering is to call `mark_resource_found(body,
+  type)`). Scenery types count as found on any charted planet they stand on.
+  `is_resource_found_on()`, `is_resource_known()` (found anywhere) and
+  `bodies_where_found()` drive the panel: unknown planets and resources are dark rows,
+  black silhouettes and redaction bars (`_draw_redacted()`); a planet page names only
+  resources found on it, the rest summed as "Unidentified signals"; a resource page
+  ("OCCURS ON n planets") lists every planet holding it now - in full (count, that
+  kind's spawn notes) where it was found, as redaction bars everywhere else, known
+  resource or not.
+  Nothing is saved - a new session starts uncharted.
 - **Gallery tool.** `scripts/tools/planet_gallery.gd` photographs every planet across
   world seeds: `godot --path . -s scripts/tools/planet_gallery.gd -- --worlds 6
   --seed 1000 [--chaos C] [--out DIR]` (needs rendering, not `--headless`). Writes a
@@ -445,6 +493,45 @@ still shows the blob preview.
   `LoadingScreen.current` and waits on `is_surface_ready()` of every body. While it is
   up (`loading_screen != null`) `_physics_process` and `_unhandled_input` return early.
   A threaded `load_threaded_request` of the scene fails on the scripts' preloads.
+
+## Landing
+
+`ENTER` lands on / takes off from a planet; `landing_prompt.gd` (a HUD Control
+added to `$HUD` in `_ready`) is the top-centre "ENTER - LAND ON X" / "TAKE OFF"
+plate, fed by `_update_landing_prompt()` every frame.
+
+- **Candidate**: `_find_landing_candidate()` - nearest planet within
+  `min(radius * LANDING_RANGE_RADII, SOI)`. ENTER is read in `_input` (not
+  `_unhandled_input`, a focused button would eat it) and ignored while the catalog,
+  settings, pause menu or builder is open.
+- **Landed** (`landed_body != null`): the ship is not integrated - `_pin_ship_to()`
+  holds it on the planet centre every sim step, so SOI, camera and HUD keep working.
+  `ship.get_manual_acceleration()` (W / RMB aim / A D, same as in space) feeds
+  `ground_velocity`, and `CelestialBody.roll_surface(ground_velocity * dt)` rolls
+  the planet the opposite way under the ship (rotation about `step x BACK`, angle
+  `|step| / draw radius`). `surface_driven` stops the auto-spin;
+  `point_under_view()` is the planet-space point under the ship.
+- **Locks while landed**: time warp forced and clamped to 1x (`set_time_scale`),
+  `$BehindWorld`, time-warp panel and Pe/Ap gauges hidden, zoom clamped to
+  `LANDED_VIEW_MAX_RADII` planet radii when zooming out (zooming in only by `ZOOM_MAX`, so the true-scale ship sprite shows past zoom 4), no pan / body picking / autopilot (F). HUD speed
+  shows ground speed, orbit row "Landed <name>".
+- **Take-off**: circular orbit round the planet, prograde in the direction the ship
+  came in, at the landing distance clamped to `[TAKE_OFF_MIN_RADII * R, 0.8 * SOI]`;
+  camera and overlays restored. Both land and take-off call
+  `_restart_trajectory_prediction()`, and no prediction runs while landed.
+- **Collecting** (`E` while landed; in space `E` is still the enemy menu):
+  `CelestialBody.deposit_under_view(reach)` is the collectible deposit whose
+  footprint (`size * 0.5` rad, plus `reach / draw radius`, reach = ship
+  `collision_radius`) holds `point_under_view()` - deposit `direction`s are in
+  the same planet space. `collect_under_ship()` removes it (`collect_deposit`,
+  node freed; back on a world reroll), adds it to `inventory` (with the
+  planet's name as its source) and calls `mark_resource_found()`, which unlocks it in the catalog. A second
+  `landing_prompt.gd` instance (`collect_prompt`, key "E", row 1) shows "COLLECT
+  <name>" or, for a type not yet found on this planet, "COLLECT UNIDENTIFIED
+  SAMPLE". Prompts start at y 52, under `HUD/MusicToast` (16-44).
+- The predictor's ORBIT/ESCAPE test is made against the planet whose SOI the
+  prediction ends in (planet-relative velocity), not always the sun - against the sun,
+  low planet orbits read ESCAPE on every prograde half.
 
 ## Black hole / wormhole
 
@@ -536,8 +623,49 @@ There is no test suite. Changes are checked by running the game in Godot 4.7
 (`run/main_scene` is the main menu; New Game shows the loading screen, then
 `solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
 zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
-follow, `N` reroll the world seed, `B` ship builder, `I` planet catalog, `M` galaxy map,
-plus the flight keys above.
+follow, `N` reroll the world seed, `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `T` tech tree, `M` galaxy map,
+`E` collect while landed (enemy menu in space), `ENTER` land / take off, plus the flight keys above.
+
+## Inventory
+
+Three layers, so the hold can move into a bigger interface later without
+touching the data or the drawing:
+
+- `inventory.gd` - `class_name Inventory` (RefCounted): item id -> count in
+  pickup order, plus id -> {source: count}; `add(id, n, source)`, `remove`,
+  `count`, `ids`, `sources`, `total`; emits `changed`. `PlayerProgress.inventory`
+  is the one hold (static, so it survives scene reloads); `solar_system.gd`'s
+  `inventory` points at it and the tech tree spends from it. Ids are
+  `ResourceDeposits.TYPES` keys.
+- `inventory_view.gd` - `class_name InventoryView` (Control), the component:
+  `bind(inventory)`, then give it any rect. Slots stretch to fill the width,
+  as many rows as fit (clips, no scrolling yet); the details column (`DETAIL_WIDTH`,
+  at most 42%) drops away under `DETAIL_MIN_TOTAL`. Each item held gets its own
+  small SubViewport (`ResourceIcons.make_stage`) with the showcase model
+  spinning, rendered only while visible.
+  `step(dx, dy)` for keys, `item_selected` signal, `item_info(id)` is the one
+  place that names an item.
+- `inventory_screen.gd` - the disposable full-screen frame ("CARGO HOLD") around
+  a view; `solar_system.gd` routes keys while open (arrows step, I/Esc close,
+  J switches to the log). New `class_name`s need a rescan (`--import`, or the
+  editor) before a headless run sees them.
+- `resource_icons.gd` - `class_name ResourceIcons`: `icon(id)` a still cached
+  Texture2D of a type's model for plain UI (tech tree), `make_stage(id, px)` a
+  scene to animate, `display_name` / `color`. Icons are lit by the deposit
+  shader's `fixed_light` uniform (zero = the sun as in space), so they look the
+  same in any scene.
+
+## Resources and the tech tree
+
+Master's raw-material list (`ResourceCatalog`, 14 materials in 3 tiers with PNG
+icons and a per-planet yield table) was removed: the game's resources are the
+`ResourceDeposits` types gathered on planets. `PlayerProgress` holds the
+`Inventory` (no starting stock - tier-1 nodes are free) and `TechTree` recipes
+name deposit types; the board's materials were mapped onto them (listed in
+`TechTree.gd`'s header). `TechTree.TIER_NAMES` / `TIER_COLORS` are the tree's own
+tiers. `set_world_seed` (galaxy-map travel, `N`) takes off if landed and resets
+`charted_bodies` / `found_resources`; `known_resources` (types ever found)
+survives.
 
 ## Ship builder engines
 
@@ -554,22 +682,20 @@ engine art with the module. There is no RCS / corrective engine any more.
 
 From the Horizon Miro board ("Moduły statku", "Receptury modułów", "Planety → surowce").
 
-- `scripts/data/ResourceCatalog.gd`: 14 resources in tiers T1 (Common), T2 (Uncommon) and T3 (Rare), with icons in
-  `textures/resources/<id>.png`, and `PLANETS` (body_name → resources, zone, why) for every body. The
-  I panel (`planet_info_panel.gd` `_draw_resources`) reads it. A new planet needs a row
-  there, or it shows no resources.
+- Resources are the `ResourceDeposits` types (see "Resources and the tech tree"
+  above); master's `ResourceCatalog` is gone.
 - `scripts/data/TechTree.gd`: `NODES` (branch, tier, recipe, requires, modules). Tier 1
   is open from the start. Higher tiers need `requires` (my own links, not from the board) and pay
   `UNLOCK_COST[tier]` of each recipe resource. A catalog module in no node is always
   available.
-- `scripts/data/PlayerProgress.gd`: static stock and unlocked set, starting at 50 T1, 20 T2 and 0 T3.
-  There is no gathering yet, so T3 nodes cannot be unlocked.
+- `scripts/data/PlayerProgress.gd`: the static cargo hold (`inventory`, filled by
+  collecting with E on planets) and the unlocked set.
 - The builder inventory (B) lists every module by category as before (FLOOR, TRUSS
   included). Locked ones are greyed out and not clickable (`ShipBuilderController._hook_slot`), and
   the list refreshes when the yard opens. The tree itself is `scripts/ui/TechTreePanel.gd` (branch
   tabs, resource bar, scrolling `TechTreeView`) in its own window, `TechTreeWindow`, which
   `solar_system.gd` creates next to the planet catalog. **T** opens and closes it, apart from
-  the **I** catalog.
+  the **J** log and the **I** cargo hold.
 - New structure categories: `FLOOR` (deck tiles that edge-attach to a hull or floor, +1 slot/cell)
   and `TRUSS` (built on the weapon-mount ring; the ring also grows from floor and truss,
   `ModuleData.is_frame()`; guns may stand on truss, `ShipHull.is_truss_beam_cell`;

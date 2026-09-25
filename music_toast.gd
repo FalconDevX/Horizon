@@ -7,7 +7,12 @@ const FADE_DURATION := 0.8
 
 
 func show_track(title: String) -> void:
-	current_text = "♪  NOW PLAYING: " + title
+	show_message("♪  NOW PLAYING: " + title)
+
+
+## Any short notice, shown and faded like a track title.
+func show_message(text: String) -> void:
+	current_text = text
 	display_timer = DISPLAY_DURATION
 	visible = true
 	queue_redraw()
