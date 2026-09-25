@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ckrulurjqquch"
-path="res://.godot/imported/floor_3.png-c094c22546b7483e08e5e370a2a379f7.ctex"
+uid="uid://uaffqdm55lop"
+path="res://.godot/imported/radar_survey.png-0df1831f77841fd1e0056d0b4eb72bcf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://textures/modules/floor_3.png"
-dest_files=["res://.godot/imported/floor_3.png-c094c22546b7483e08e5e370a2a379f7.ctex"]
+source_file="res://textures/modules/radar_survey.png"
+dest_files=["res://.godot/imported/radar_survey.png-0df1831f77841fd1e0056d0b4eb72bcf.ctex"]
 
 [params]
 

@@ -11,6 +11,14 @@ const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
 const LINE_COLOR := Color(0.6, 0.65, 0.72, 0.9)
 
 var throttle := 0.0
+## The ship built in the yard (ShipRender), nose to the right; null shows the
+## stock ship's blueprint.
+var built_texture: Texture2D = null
+
+
+func set_built_texture(texture: Texture2D) -> void:
+	built_texture = texture
+	queue_redraw()
 
 
 func _process(_delta: float) -> void:
@@ -35,6 +43,9 @@ func _gui_input(event: InputEvent) -> void:
 
 func _draw() -> void:
 	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 16.0, 0.85, 0.55)
+	if built_texture != null:
+		_draw_built()
+		return
 
 	var image_rect: Rect2 = _fit_rect()
 	draw_texture_rect(SHIP_TEXTURE, image_rect, false)
@@ -48,6 +59,23 @@ func _draw() -> void:
 		HudPanelStyle.get_font(), engine_label_pos, "MAIN", HORIZONTAL_ALIGNMENT_CENTER, 30.0, 8,
 		Color(MAIN_OUTER_COLOR, 0.9) if throttle > 0.0 else Color(LINE_COLOR, 0.5)
 	)
+
+
+## The built ship, turned nose up like the blueprint, fitted to the panel.
+func _draw_built() -> void:
+	var picture: Vector2 = built_texture.get_size()
+	var turned := Vector2(picture.y, picture.x)
+	var room := size - Vector2(SIDE_PADDING, TOP_PADDING) * 2.0
+	var fit: float = minf(room.x / turned.x, room.y / turned.y)
+	var drawn: Vector2 = picture * fit
+	draw_set_transform(size * 0.5, -PI * 0.5, Vector2.ONE)
+	draw_texture_rect(built_texture, Rect2(-drawn * 0.5, drawn), false)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if throttle > 0.0:
+		draw_string(
+			HudPanelStyle.get_font(), Vector2(0.0, size.y - 10.0), "ENGINES", HORIZONTAL_ALIGNMENT_CENTER, size.x, 8,
+			Color(MAIN_OUTER_COLOR, 0.9)
+		)
 
 
 const FLAME_RESERVE_FRACTION := 0.22

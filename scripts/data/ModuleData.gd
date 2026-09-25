@@ -12,8 +12,8 @@ enum Category {
 	SHIELD,
 	CONNECTOR, ## 1x1 connector - bridges separate hull pieces
 	RADAR,
-	FLOOR, ## deck tiles that attach straight to a hull, extending it
 	TRUSS, ## mounting frame: guns sit on it, and it reaches further out
+	COCKPIT, ## the bridge: stands in open space like a hull, linked to one by a connector
 }
 
 @export var title: String = "Module"
@@ -37,7 +37,7 @@ enum Category {
 @export var thrust: float = 0.0
 @export var fuel_consumption: float = 0.0
 @export var max_heat: float = 100.0
-## When true, this engine is RCS-only (truss next to normal deck, not ENGINE_MOUNT).
+## When true, this engine is RCS-only (truss next to deck).
 @export var is_corrective_engine: bool = false
 ## Engine family this size belongs to (e.g. "Chemical") and its star ratings
 ## [thrust, fuel, energy, mass] - the shipyard groups engines into rows by it.
@@ -72,15 +72,21 @@ func is_structure() -> bool:
 	return (
 		category == Category.HULL
 		or category == Category.CONNECTOR
-		or category == Category.FLOOR
 		or category == Category.TRUSS
+		or category == Category.COCKPIT
 	)
 
 
-## Hulls, floor tiles and truss beams: what the weapon-mount ring is measured
-## from (ShipHull.WEAPON_MOUNT_DEPTH).
+## Hulls and truss beams: what the weapon-mount ring is measured from
+## (ShipHull.WEAPON_MOUNT_DEPTH).
+## Hulls and the cockpit: the big pieces that stand apart and are joined by
+## connectors (ShipHull keeps them from touching edge to edge).
+func is_hull_like() -> bool:
+	return category == Category.HULL or category == Category.COCKPIT
+
+
 func is_frame() -> bool:
-	return category == Category.HULL or category == Category.FLOOR or category == Category.TRUSS
+	return category == Category.HULL or category == Category.TRUSS
 
 
 func is_equipment() -> bool:
@@ -96,7 +102,7 @@ func is_equipment() -> bool:
 
 
 ## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
-## Main engines only on ENGINE_MOUNT (may overhang onto the weapon truss).
+## Main engines stand in open space on a hull's left (aft) face instead.
 ## Corrective engines and weapons only on truss cells adjacent to normal DECK.
 func is_deck_equipment() -> bool:
 	return (
@@ -123,6 +129,12 @@ func is_weapon() -> bool:
 
 func is_main_engine() -> bool:
 	return category == Category.ENGINE and not is_corrective_engine
+
+
+## Main engines never turn: their nozzle always points to the grid's left
+## (the aft, ShipHull.AFT). Rotating the shipyard view turns them with it.
+func is_rotatable() -> bool:
+	return not is_main_engine()
 
 
 func is_rcs_engine() -> bool:
@@ -256,5 +268,7 @@ func category_name() -> String:
 			return "Connector"
 		Category.RADAR:
 			return "Radar"
+		Category.COCKPIT:
+			return "Cockpit"
 		_:
 			return "Unknown"

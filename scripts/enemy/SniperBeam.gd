@@ -1,8 +1,8 @@
 class_name SniperBeam
 extends Node2D
 ## Long straight laser fired by the sniper enemy: it shoots out to its full
-## range in a blink, then thins and fades where it was fired. Like LaserBolt,
-## it carries its damage but nothing is hit yet. Widths are screen pixels, so
+## range in a blink, then thins and fades where it was fired. Hits kamikaze
+## enemies along the beam on the first frame. Widths are screen pixels, so
 ## it reads the same at any zoom.
 
 ## Beam direction (unit) and reach in world units.
@@ -14,16 +14,46 @@ var glow_color: Color = Color(1.0, 0.78, 0.12)
 var core_color: Color = Color(1.0, 0.97, 0.75)
 ## Share of the lifetime the beam takes to reach full length.
 var grow_fraction: float = 0.08
+## Skip the sniper that fired this beam.
+var ignore_enemy: Enemy = null
 
 var _age := 0.0
+var _did_hit_check := false
 
 
 func _process(delta: float) -> void:
 	_age += delta
+	if not _did_hit_check:
+		_did_hit_check = true
+		_hit_along_beam()
 	if _age >= lifetime:
 		queue_free()
 		return
 	queue_redraw()
+
+
+func _hit_along_beam() -> void:
+	var parent := get_parent()
+	if parent == null:
+		return
+	var tip: Vector2 = global_position + direction * reach
+	for child in parent.get_children():
+		if child == ignore_enemy:
+			continue
+		if child is Enemy:
+			var enemy := child as Enemy
+			if not enemy.is_hittable():
+				continue
+			if LaserBolt._segment_hits_circle(
+				global_position, tip, enemy.global_position, enemy.collision_radius
+			):
+				enemy.take_hit(damage)
+		elif child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
+			var ship := child as Node2D
+			if LaserBolt._segment_hits_circle(
+				global_position, tip, ship.global_position, float(ship.get("collision_radius"))
+			):
+				ship.call("take_damage", damage)
 
 
 func _draw() -> void:

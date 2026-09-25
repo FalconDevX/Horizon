@@ -69,6 +69,9 @@ func center_view() -> void:
 	if host != null:
 		host.refresh()
 		await get_tree().process_frame
+	# One more for the scroll bars to take the new content size, or the
+	# scroll values below get clamped to the old range.
+	await get_tree().process_frame
 	var content := _content_size()
 	var view := size
 	scroll_horizontal = maxi(0, int((content.x - view.x) * 0.5))

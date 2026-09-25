@@ -17,6 +17,18 @@ extends RefCounted
 
 const SHADER := preload("res://resource_deposit.gdshader")
 
+## Looks made from a model instead of built by DepositMeshes: the mesh (in
+## cluster units, standing on +Y) and its colour texture. A type using one
+## recolours the texture with `tint` (hue turn, saturation and value
+## multipliers), which a spawn may override - one flower, many worlds.
+const MODELS := {
+	&"moonbloom": {"mesh": "res://models/moonbloom.obj", "texture": "res://models/moonbloom_albedo.png"},
+}
+## No recolour: the texture as painted.
+const TINT_NONE := Vector3(0.0, 1.0, 1.0)
+## Loaded MODELS entries: name -> {mesh, texture}.
+static var _model_cache: Dictionary = {}
+
 ## What each resource is. `size` is the cluster's footprint in planet radii;
 ## `collectible` false marks scenery the player cannot pick up (default true);
 ## `color_param` takes the colour from a terrain param instead (a slime's own
@@ -34,17 +46,23 @@ const TYPES := {
 		"name": "Scrap", "mesh": &"scrap", "size": Vector2(0.06, 0.08),
 		"color": Color.WHITE, "shine": 0.25, "glow": 0.04,
 	},
+	# The three plants are one model (MODELS moonbloom), told apart by how
+	# its texture is recoloured: as painted alive (teal leaves, crimson
+	# flowers), drained and washed ice-blue frozen, drained and browned dried.
 	&"beanstalk": {
-		"name": "Beanstalk", "mesh": &"beanstalk", "size": Vector2(0.045, 0.065),
+		"name": "Moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
 		"color": Color.WHITE, "shine": 0.2, "glow": 0.05, "wiggle": 0.035,
+		"tint": TINT_NONE,
 	},
 	&"frozen_beanstalk": {
-		"name": "Frozen beanstalk", "mesh": &"beanstalk_frozen", "size": Vector2(0.045, 0.065),
-		"color": Color.WHITE, "shine": 0.6, "glow": 0.08, "wiggle": 0.012,
+		"name": "Frozen moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
+		"color": Color(0.72, 0.87, 1.0), "shine": 0.6, "glow": 0.08, "wiggle": 0.012,
+		"tint": Vector3(0.0, 0.25, 1.45),
 	},
 	&"dried_beanstalk": {
-		"name": "Dried beanstalk", "mesh": &"beanstalk_dried", "size": Vector2(0.04, 0.06),
-		"color": Color.WHITE, "shine": 0.1, "glow": 0.02, "wiggle": 0.02, "collectible": false,
+		"name": "Dried moonbloom", "mesh": &"moonbloom", "size": Vector2(0.04, 0.06),
+		"color": Color(0.9, 0.66, 0.42), "shine": 0.1, "glow": 0.02, "wiggle": 0.02, "collectible": false,
+		"tint": Vector3(0.0, 0.3, 0.9),
 	},
 	&"gold_pillar": {
 		"name": "Gold pillar", "mesh": &"pillars", "size": Vector2(0.06, 0.09),
@@ -178,7 +196,8 @@ const SPAWNS := {
 			"note": "Bubbles of fuel gas drifting over the cloud tops"},
 	],
 	PlanetTerrain.Kind.SLIME: [
-		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"]},
+		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"],
+			"tint": Vector3(0.75, 1.0, 1.0), "note": "Sickly green here, soaked in slime"},
 		{"type": &"toxic_ore", "count": Vector2i(6, 12), "except": ["petrified"]},
 		{"type": &"toxic_ore", "count": Vector2i(15, 20), "only": ["petrified"],
 			"note": "Far more of it once the slime has dried off it"},
@@ -408,6 +427,7 @@ static func _deposit(
 		"seed": rng.randi(),
 		"color": color,
 		"glow": rule.get("glow", type.get("glow", 0.15)),
+		"tint": rule.get("tint", type.get("tint", TINT_NONE)),
 		"collectible": type.get("collectible", true),
 		"motion": motion,
 	}
@@ -605,6 +625,7 @@ static func make_showcase(type_name: StringName) -> MeshInstance3D:
 	var node: MeshInstance3D = make_node({
 		"type": type_name, "seed": 7, "size": 1.0, "lift": 0.0,
 		"color": type["color"], "glow": type.get("glow", 0.15),
+		"tint": type.get("tint", TINT_NONE),
 		"motion": DepositMotion.new(),
 	})
 	node.transform = Transform3D.IDENTITY
@@ -626,12 +647,32 @@ static func make_node(deposit: Dictionary) -> MeshInstance3D:
 	material.set_shader_parameter("spot_color_b", type.get("spot_color_b", Color.WHITE))
 
 	var node := MeshInstance3D.new()
-	node.mesh = DepositMeshes.build(type["mesh"], deposit["seed"])
+	if MODELS.has(type["mesh"]):
+		# One shared mesh; each deposit gets its own touch of hue and
+		# brightness on top of the type's (or spawn's) tint.
+		var model: Dictionary = _model(type["mesh"])
+		node.mesh = model["mesh"]
+		var tint: Vector3 = deposit.get("tint", type.get("tint", TINT_NONE))
+		var jitter := RandomNumberGenerator.new()
+		jitter.seed = deposit["seed"]
+		tint += Vector3(jitter.randf_range(-0.025, 0.025), 0.0, jitter.randf_range(-0.08, 0.08))
+		material.set_shader_parameter("albedo_tex", model["texture"])
+		material.set_shader_parameter("use_texture", true)
+		material.set_shader_parameter("tex_adjust", tint)
+	else:
+		node.mesh = DepositMeshes.build(type["mesh"], deposit["seed"])
 	node.material_override = material
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	node.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	node.transform = transform_of(deposit, 0.0)
 	return node
+
+
+static func _model(model_name: StringName) -> Dictionary:
+	if not _model_cache.has(model_name):
+		var entry: Dictionary = MODELS[model_name]
+		_model_cache[model_name] = {"mesh": load(entry["mesh"]), "texture": load(entry["texture"])}
+	return _model_cache[model_name]
 
 
 static func _motion_for(rule: Dictionary) -> GDScript:

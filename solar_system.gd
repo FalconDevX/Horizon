@@ -95,6 +95,22 @@ var _builder_controller: ShipBuilderController
 ## Module tech tree window (T), created in _ready next to the planet catalog.
 var tech_tree_window: TechTreeWindow
 var galaxy_map_window: GalaxyMapWindow
+## Enemies the radars see (right, under the autopilot) and the mounted guns
+## (bottom, beside the resource bars); the enemy picked there is the target.
+var enemy_contacts_panel: Control
+var weapons_panel: Control
+var targeted_enemy: Enemy = null
+
+## HUD button that fires the hyperdrive (lit once a course is set and the ship
+## is past the last asteroid belt).
+var warp_button: WarpButton
+## The jump under way, or null. While it runs the sim and input are held.
+var hyperspace_jump: HyperspaceJump = null
+## Where the ship's run-up into hyperspace starts, and which way it goes.
+var _warp_run_start: Vector2 = Vector2.ZERO
+var _warp_run_dir: Vector2 = Vector2.RIGHT
+## How far (in screen pixels) the ship shoots ahead during the run-up.
+const WARP_RUN_PX := 2600.0
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -107,13 +123,23 @@ const HOME_PLANET_INDEX := 1
 ## they are.
 const CHART_RADII := 12.0
 ## Close enough to land on a planet: within this many of its radii of its
-## centre (or inside its SOI, if that is smaller).
-const LANDING_RANGE_RADII := 4.0
+## centre (or inside its SOI, if that is smaller). 1 = only while the ship is
+## over the planet's disc.
+const LANDING_RANGE_RADII := 1.0
 ## How much of a landed planet the view spans, top to bottom, in its radii,
 ## and the most the wheel may zoom out to while landed. Zooming in is only held
 ## by ZOOM_MAX, so the ship can be seen at true scale over the surface.
 const LANDED_VIEW_RADII := 1.1
 const LANDED_VIEW_MAX_RADII := 3.0
+## Driving over a surface: no inertia. WASD / arrows move in screen
+## directions, RMB heads for the cursor, Shift is slow. Top speed in planet
+## radii per second; how fast the ship reaches it or stops (seconds, a short
+## ease so starts and stops are smooth, not jerky); how fast the nose turns
+## to face the way it goes; how sharply it slows as it nears the cursor.
+const GROUND_SPEED_RADII := 0.5
+const GROUND_RESPONSE := 0.08
+const GROUND_TURN_RESPONSE := 14.0
+const GROUND_FOLLOW_GAIN := 3.0
 ## Taking off drops the ship into a circular orbit at least this many radii
 ## out, and inside the SOI.
 const TAKE_OFF_MIN_RADII := 1.3
@@ -359,7 +385,7 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
 		return
-	if loading_screen != null or planet_info_panel.visible or inventory_screen.visible:
+	if loading_screen != null or hyperspace_jump != null or planet_info_panel.visible or inventory_screen.visible:
 		return
 	for menu: Control in [settings_menu, pause_menu, ship_builder_panel]:
 		if menu != null and menu.visible:
@@ -374,7 +400,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if loading_screen != null:
+	if loading_screen != null or hyperspace_jump != null:
 		return
 	# The cargo hold and the planet catalog sit over everything and keep the
 	# keyboard to themselves.
@@ -615,15 +641,23 @@ func _unhandled_input(event: InputEvent) -> void:
 func set_world_seed(value: int) -> void:
 	# Other worlds (galaxy-map travel, or N): the ship lifts off first, and
 	# what it charted here no longer describes these bodies - they are charted
-	# again. The Journal keeps every variant seen and everything found.
+	# again. The Journal keeps every variant seen and everything found. The
+	# system left behind is saved (GalaxyMap.save_state), and one visited
+	# before gets back what was charted and collected there.
 	if landed_body != null:
 		take_off()
-	charted_bodies.clear()
+	if value != world_seed:
+		GalaxyMap.save_state(world_seed, _capture_system_state())
 	world_seed = value
 	GalaxyMap.visit(world_seed)
 	PlanetTerrain.clear_cache()
+	var saved: Dictionary = GalaxyMap.saved_state(world_seed)
+	_restore_system_state(saved)
+	_update_system_title()
 
 	for i in planets.size():
+		var collected: Dictionary = saved.get("collected", {}).get(i, {})
+		planets[i].set("collected_deposit_seeds", collected.duplicate())
 		planets[i].call("rebuild_surface")
 		# An anomaly re-rolls its size (and mass) with the world.
 		if i < mu_planets.size():
@@ -635,6 +669,168 @@ func set_world_seed(value: int) -> void:
 
 func reroll_world() -> void:
 	set_world_seed(randi())
+
+
+## What the player did in this system, by body index (celestial_bodies for
+## charts, planets for collected deposits), so it can be put back when the
+## ship returns. Finds live in the Journal, which is not per system.
+func _capture_system_state() -> Dictionary:
+	var charted: Array[int] = []
+	for body: Node2D in charted_bodies:
+		charted.append(celestial_bodies.find(body))
+	var collected: Dictionary = {}
+	for i in planets.size():
+		var seeds: Dictionary = planets[i].get("collected_deposit_seeds")
+		if not seeds.is_empty():
+			collected[i] = seeds.duplicate()
+	return {"charted": charted, "collected": collected}
+
+
+## Charts from a saved state; an empty one is a new system, charted afresh.
+func _restore_system_state(state: Dictionary) -> void:
+	charted_bodies.clear()
+	for index: int in state.get("charted", []):
+		if index >= 0 and index < celestial_bodies.size():
+			charted_bodies[celestial_bodies[index]] = true
+
+
+## The HUD panel's header names the system the ship is in.
+func _update_system_title() -> void:
+	var label: Label = $HUD/PanelContainer/VBoxContainer/TitleRow/TitleLabel
+	label.text = "%s SYSTEM" % GalaxyMap.system_name(world_seed).to_upper()
+
+
+## Galaxy map picked a course: say where to go to use it.
+func _on_course_set(system_seed: int) -> void:
+	music_toast.show_message(
+		"COURSE SET: %s. Fly past the outer belt and press WARP" % GalaxyMap.system_name(system_seed).to_upper()
+	)
+
+
+## How far from the sun the hyperdrive may fire: past the outer edge of the
+## last asteroid belt.
+func _warp_clearance() -> float:
+	var edge: float = 0.0
+	for belt: Dictionary in AsteroidBelts.BELTS:
+		edge = maxf(edge, float(belt["outer"]))
+	return edge
+
+
+func _update_warp_button() -> void:
+	var panel: Control = $HUD/PanelContainer
+	warp_button.position = Vector2(panel.position.x, panel.position.y + panel.size.y + 10.0)
+	warp_button.visible = hyperspace_jump == null
+	if not GalaxyMap.has_target():
+		warp_button.set_state(false, "WARP", "No course set. Open the map (M)")
+		return
+	var title: String = "WARP TO %s" % GalaxyMap.system_name(GalaxyMap.target_seed()).to_upper()
+	if landed_body != null:
+		warp_button.set_state(false, title, "Take off first")
+		return
+	var to_go: float = _warp_clearance() - ship.global_position.distance_to(sun.global_position)
+	if to_go > 0.0 and not PlayerProgress.god_mode:
+		warp_button.set_state(false, title, "Clear the outer belt: %s to go" % _short_distance(to_go))
+		return
+	warp_button.set_state(true, title, "Hyperdrive ready")
+
+
+func _short_distance(value: float) -> String:
+	if value >= 1000000.0:
+		return "%.2fM" % (value / 1000000.0)
+	if value >= 1000.0:
+		return "%dk" % int(value / 1000.0)
+	return "%d" % int(value)
+
+
+## Fires the hyperdrive at the course set on the galaxy map: the ship runs
+## ahead along its nose while the stars stretch, the new system is built
+## behind the tunnel, and the ship drops out next to one of its planets.
+func start_hyperspace_jump() -> void:
+	if hyperspace_jump != null or not GalaxyMap.has_target() or landed_body != null:
+		return
+	if ship.global_position.distance_to(sun.global_position) < _warp_clearance() and not PlayerProgress.god_mode:
+		return
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+	set_time_scale(1.0)
+	camera_follow_ship = true
+	camera_follow_body = null
+	_warp_run_start = ship.position
+	_warp_run_dir = Vector2.RIGHT.rotated(ship.rotation)
+
+	var target: int = GalaxyMap.target_seed()
+	hyperspace_jump = HyperspaceJump.new()
+	hyperspace_jump.destination_name = GalaxyMap.system_name(target)
+	hyperspace_jump.ready_check = _all_surfaces_ready
+	hyperspace_jump.midpoint.connect(_arrive_in_system.bind(target))
+	hyperspace_jump.finished.connect(func() -> void:
+		hyperspace_jump = null
+		music_toast.show_message("ARRIVED: %s" % GalaxyMap.system_name(world_seed).to_upper())
+	)
+	add_child(hyperspace_jump)
+
+
+## The run-up: the ship shoots ahead faster and faster (the sim is held, so
+## this only moves the node; the arrival places it properly).
+func _advance_warp_run_up() -> void:
+	var s: float = hyperspace_jump.spool_progress()
+	if s >= 1.0:
+		return
+	ship.position = _warp_run_start + _warp_run_dir * (WARP_RUN_PX * s * s * s / camera_zoom)
+	ship.reset_physics_interpolation()
+
+
+func _all_surfaces_ready() -> bool:
+	for body: Node2D in celestial_bodies:
+		if not body.call("is_surface_ready"):
+			return false
+	return true
+
+
+## Behind the tunnel: build system `system_seed`, spread its planets round
+## their orbits, and put the ship in a circular orbit round one of them.
+func _arrive_in_system(system_seed: int) -> void:
+	set_world_seed(system_seed)
+
+	var sun_mass: float = sun.get("mass")
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for i in planets.size():
+		var planet: Node2D = planets[i]
+		var distance: float = (planet.position - sun.position).length()
+		planet.position = sun.position + Vector2(distance, 0.0).rotated(rng.randf() * TAU)
+		planet.velocity = get_circular_orbit_velocity(planet.position, sun.position, sun_mass)
+		physics_planets[i].pull_from_node()
+		planet.call("snap_visual_position")
+		soi_radii_cache[i] = get_soi_radius(planet)
+
+	var candidates: Array[int] = []
+	for i in planets.size():
+		if not planets[i].get("is_anomaly") and not planets[i].get("is_black_hole"):
+			candidates.append(i)
+	var index: int = candidates[rng.randi_range(0, candidates.size() - 1)]
+	var planet: Node2D = planets[index]
+	var radius: float = planet.get("radius")
+	var orbit: float = clampf(radius * 5.0, radius * TAKE_OFF_MIN_RADII, maxf(soi_radii_cache[index] * 0.5, radius * TAKE_OFF_MIN_RADII))
+	var outward: Vector2 = Vector2.from_angle(rng.randf() * TAU)
+	var along: Vector2 = outward.orthogonal()
+	set_ship_state(
+		planet.position + outward * orbit,
+		(planet.velocity as Vector2) + along * sqrt(mu_planets[index] / orbit)
+	)
+	ship.rotation = along.angle()
+	ship.reset_physics_interpolation()
+	simulation_accumulator = 0.0
+
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera_zoom = clampf(get_viewport().get_visible_rect().size.y / (orbit * 5.0), ZOOM_MIN, ZOOM_MAX)
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera.position = ship.position
+	for i in planets.size():
+		update_orbit_line(planets[i], orbit_lines[i], i)
+	_restart_trajectory_prediction()
 
 
 func _ready() -> void:
@@ -752,10 +948,37 @@ func _ready() -> void:
 	tech_tree_window.name = "TechTreeWindow"
 	planet_info_panel.get_parent().add_child(tech_tree_window)
 	GalaxyMap.visit(world_seed)
+	_update_system_title()
 	galaxy_map_window = GalaxyMapWindow.new()
 	galaxy_map_window.name = "GalaxyMapWindow"
-	galaxy_map_window.travel_requested.connect(set_world_seed)
+	galaxy_map_window.course_set.connect(_on_course_set)
 	planet_info_panel.get_parent().add_child(galaxy_map_window)
+	enemy_contacts_panel = preload("res://enemy_contacts_panel.gd").new()
+	enemy_contacts_panel.name = "EnemyContactsPanel"
+	enemy_contacts_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	enemy_contacts_panel.offset_left = -312.0
+	enemy_contacts_panel.offset_right = -12.0
+	enemy_contacts_panel.offset_top = 330.0
+	enemy_contacts_panel.offset_bottom = 560.0
+	enemy_contacts_panel.target_picked.connect(_set_target_enemy)
+	$HUD.add_child(enemy_contacts_panel)
+	$HUD.move_child(enemy_contacts_panel, $HUD/AutopilotPanel.get_index() + 1)
+	weapons_panel = preload("res://weapons_panel.gd").new()
+	weapons_panel.name = "WeaponsPanel"
+	weapons_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	weapons_panel.offset_left = -648.0
+	weapons_panel.offset_right = -438.0
+	weapons_panel.offset_top = -324.0
+	weapons_panel.offset_bottom = -28.0
+	$HUD.add_child(weapons_panel)
+	$HUD.move_child(weapons_panel, $HUD/ResourceBarsPanel.get_index() + 1)
+	warp_button = WarpButton.new()
+	warp_button.name = "WarpButton"
+	warp_button.size = Vector2(266.0, 44.0)
+	warp_button.warp_pressed.connect(start_hyperspace_jump)
+	$HUD.add_child(warp_button)
+	# Under every window and menu in the HUD, just above the left panel.
+	$HUD.move_child(warp_button, $HUD/PanelContainer.get_index() + 1)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -796,6 +1019,169 @@ func _ready() -> void:
 	)
 
 	_apply_all_settings()
+	pause_menu.save_requested.connect(save_game)
+	_apply_pending_save()
+
+
+## A loaded game names its system before the planets generate: they read
+## world_seed in their own _ready, which runs before this scene's.
+func _enter_tree() -> void:
+	if SaveGame.pending.has("world_seed"):
+		world_seed = int(SaveGame.pending["world_seed"])
+
+
+## Everything about the flight a saved game needs (SaveGame adds the galaxy
+## and the player's progress). Positions come from the float64 physics state,
+## not the float32 nodes, so far-out planets land back exactly.
+func build_save_data() -> Dictionary:
+	var planet_states: Array = []
+	for body: PhysicsBody in physics_planets:
+		planet_states.append([body.x, body.y, body.vx, body.vy])
+	var hull_modules: Array = []
+	if _builder_controller != null and _builder_controller.get_hull() != null:
+		for placed: PlacedModule in _builder_controller.get_hull().get_all_modules():
+			hull_modules.append({
+				"id": placed.data.id, "origin": placed.origin,
+				"rotation": placed.rotation, "health": placed.current_health,
+			})
+	var day: int = int(sim_time * CLOCK_HOURS_PER_SIM_SECOND / 24.0) + 1
+	var system: String = GalaxyMap.system_name(world_seed)
+	return {
+		"meta": {
+			"name": "%s  Day %d" % [system, day],
+			"system": system,
+			"day": day,
+			"saved_unix": int(Time.get_unix_time_from_system()),
+		},
+		"world_seed": world_seed,
+		"sim_time": sim_time,
+		"total_sim_time": total_sim_time,
+		"planet_visual_time": planet_visual_time,
+		"planets": planet_states,
+		"ship": [physics_ship.x, physics_ship.y, physics_ship.vx, physics_ship.vy, ship.rotation],
+		"landed": planets.find(landed_body) if landed_body != null else -1,
+		"landing_offset": _landing_state.get("offset", Vector2.ZERO) if landed_body != null else Vector2.ZERO,
+		"camera_zoom": camera_zoom,
+		"system_state": _capture_system_state(),
+		"hull": hull_modules,
+		"ship_resources": [ship.fuel, ship.energy, ship.shield, ship.hull_hp],
+	}
+
+
+## Saves into this session's slot (pause menu), with a notice.
+func save_game() -> void:
+	if hyperspace_jump != null or loading_screen != null:
+		music_toast.show_message("CAN'T SAVE DURING A JUMP")
+		return
+	if SaveGame.save_session(build_save_data()).is_empty():
+		music_toast.show_message("SAVE FAILED")
+	else:
+		music_toast.show_message("GAME SAVED")
+
+
+## Puts a loaded game back (SaveGame.pending), once the scene is built. The
+## world seed was already applied in _enter_tree.
+func _apply_pending_save() -> void:
+	var data: Dictionary = SaveGame.pending
+	if data.is_empty():
+		return
+	SaveGame.pending = {}
+
+	sim_time = float(data.get("sim_time", 0.0))
+	total_sim_time = float(data.get("total_sim_time", 0.0))
+	planet_visual_time = float(data.get("planet_visual_time", 0.0))
+
+	var planet_states: Array = data.get("planets", [])
+	for i in mini(planet_states.size(), physics_planets.size()):
+		var state: Array = planet_states[i]
+		var body: PhysicsBody = physics_planets[i]
+		body.x = state[0]
+		body.y = state[1]
+		body.vx = state[2]
+		body.vy = state[3]
+		body.push_to_node()
+		planets[i].call("snap_visual_position")
+	soi_radii_cache.resize(planets.size())
+	for i in planets.size():
+		soi_radii_cache[i] = get_soi_radius(planets[i])
+		update_orbit_line(planets[i], orbit_lines[i], i)
+
+	var ship_state: Array = data.get("ship", [])
+	if ship_state.size() >= 5:
+		physics_ship.x = ship_state[0]
+		physics_ship.y = ship_state[1]
+		physics_ship.vx = ship_state[2]
+		physics_ship.vy = ship_state[3]
+		physics_ship.push_to_node()
+		ship.rotation = ship_state[4]
+		ship.reset_physics_interpolation()
+
+	# Charts, finds and collected deposits here; the planets may already have
+	# placed deposits from a cached bake, so drop the collected ones now too.
+	var state: Dictionary = data.get("system_state", {})
+	_restore_system_state(state)
+	for i in planets.size():
+		var collected: Dictionary = state.get("collected", {}).get(i, {})
+		planets[i].set("collected_deposit_seeds", collected.duplicate())
+		planets[i].call("drop_collected_deposits")
+
+	_restore_hull(data.get("hull", []))
+	var resources: Array = data.get("ship_resources", [])
+	if resources.size() >= 4 and ship.resources_enabled:
+		ship.fuel = minf(float(resources[0]), ship.fuel_capacity)
+		ship.energy = minf(float(resources[1]), ship.energy_capacity)
+		ship.shield = minf(float(resources[2]), ship.shield_strength)
+		ship.hull_hp = clampf(float(resources[3]), 1.0, ship.max_hull_hp)
+
+	camera_zoom = clampf(float(data.get("camera_zoom", camera_zoom)), ZOOM_MIN, ZOOM_MAX)
+	camera.zoom = Vector2(camera_zoom, camera_zoom)
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera.position = ship.position
+
+	var landed_index: int = int(data.get("landed", -1))
+	if landed_index >= 0 and landed_index < planets.size():
+		# land_on() reads where the ship came down from, relative to the planet.
+		var planet: Node2D = planets[landed_index]
+		var body_xy: PackedFloat64Array = get_precise_xy(planet)
+		var offset: Vector2 = data.get("landing_offset", Vector2.ZERO)
+		set_ship_state(Vector2(body_xy[0], body_xy[1]) + offset, planet.get("velocity"))
+		land_on(planet)
+	_restart_trajectory_prediction()
+	_update_system_title()
+
+
+## Rebuilds the ship's modules in the builder. Placement rules depend on what
+## is already there (engines need their hull), so modules that don't fit yet
+## are retried until a pass places nothing more.
+func _restore_hull(saved: Array) -> void:
+	if saved.is_empty() or _builder_controller == null:
+		return
+	var hull: ShipHull = _builder_controller.get_hull()
+	if hull == null:
+		return
+	var catalog: Dictionary = {}
+	for module: ModuleData in ModuleCatalog.all_buildable_modules():
+		catalog[module.id] = module
+	for placed: PlacedModule in hull.get_all_modules():
+		hull.detach_module(placed.instance_id)
+	var remaining: Array = saved.duplicate()
+	while not remaining.is_empty():
+		var left: Array = []
+		for entry: Dictionary in remaining:
+			var module: ModuleData = catalog.get(entry["id"])
+			if module == null:
+				continue
+			var attached: PlacedModule = hull.attach_module(module, entry["origin"], int(entry["rotation"]))
+			if attached == null:
+				left.append(entry)
+			else:
+				attached.current_health = float(entry.get("health", attached.current_health))
+		if left.size() == remaining.size():
+			push_warning("Save: %d ship modules could not be placed back" % left.size())
+			break
+		remaining = left
+	_sync_ship_from_builder()
 
 
 func _process(delta: float) -> void:
@@ -817,6 +1203,10 @@ func _process(delta: float) -> void:
 	update_fov_gameplay()
 	update_hud()
 	_update_landing_prompt()
+	_update_warp_button()
+	_update_combat_panels()
+	if hyperspace_jump != null:
+		_advance_warp_run_up()
 
 	if camera_follow_body != null:
 		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
@@ -2380,9 +2770,6 @@ const COLOR_BAD := Color(0.95, 0.45, 0.3)
 const COLOR_ORBIT_INFO := Color(0.4, 0.9, 1)
 const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
 
-const PLACEHOLDER_FUEL_PCT := 0.82
-const PLACEHOLDER_ENERGY_PCT := 0.95
-const PLACEHOLDER_SHIELD_PCT := 1.0
 
 
 func update_hud() -> void:
@@ -2406,7 +2793,14 @@ func update_hud() -> void:
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship_blueprint_panel.set_state(main_engine_display)
 	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
-	resource_bars_panel.set_state(PLACEHOLDER_FUEL_PCT, PLACEHOLDER_ENERGY_PCT, PLACEHOLDER_SHIELD_PCT)
+	if ship.resources_enabled:
+		resource_bars_panel.set_values(
+			ship.fuel, ship.fuel_capacity, ship.energy, ship.energy_capacity,
+			ship.shield, ship.shield_strength, ship.hull_hp, ship.max_hull_hp, ship.powered
+		)
+	else:
+		# The stock ship (nothing built yet) has no limits: shown full.
+		resource_bars_panel.set_unlimited()
 
 	var lock_suffix: String = "  [LOCK]" if ship.throttle_locked else ""
 	if ship.flight_assist and not ship.throttle_locked:
@@ -3246,6 +3640,7 @@ func _on_settings_menu_closed() -> void:
 
 
 func _on_pause_exit_requested() -> void:
+	save_game()
 	get_tree().change_scene_to_file("res://scenes/menu/MainMenu.tscn")
 
 
@@ -3262,8 +3657,32 @@ func open_ship_builder() -> void:
 
 
 func close_ship_builder() -> void:
+	# A built ship needs a cockpit and at least one main engine to fly; with
+	# nothing built the stock ship flies as before.
+	var problem: String = _builder_launch_problem()
+	if problem != "":
+		if _builder_controller != null:
+			_builder_controller.show_warning(problem)
+		return
 	ship_builder_panel.visible = false
 	_sync_ship_from_builder()
+
+
+func _builder_launch_problem() -> String:
+	if _builder_controller == null or _builder_controller.get_hull() == null:
+		return ""
+	var modules: Array[PlacedModule] = _builder_controller.get_hull().get_all_modules()
+	if modules.is_empty():
+		return ""
+	var cockpit: bool = modules.any(func(m: PlacedModule) -> bool: return m.data.category == ModuleData.Category.COCKPIT)
+	var engine: bool = modules.any(func(m: PlacedModule) -> bool: return m.data.is_main_engine())
+	if not cockpit and not engine:
+		return "The ship needs a cockpit and an engine before it can leave the yard."
+	if not cockpit:
+		return "The ship needs a cockpit before it can leave the yard."
+	if not engine:
+		return "The ship needs an engine before it can leave the yard."
+	return ""
 
 
 func toggle_enemy_menu() -> void:
@@ -3296,12 +3715,20 @@ func _on_enemy_selected(enemy_id: String) -> void:
 		return
 
 	var enemy := scene.instantiate() as Enemy
+	enemy.title = str(entry.get("title", enemy.title))
 	ship.get_parent().add_child(enemy)
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
 	_test_enemy = enemy
+	enemy.tree_exiting.connect(_on_test_enemy_exiting.bind(enemy))
 
 	enemy_menu_panel.visible = false
+
+
+func _on_test_enemy_exiting(enemy: Enemy) -> void:
+	if _test_enemy == enemy:
+		_test_enemy = null
+
 
 
 func _bind_ship_builder_to_ship() -> void:
@@ -3325,12 +3752,17 @@ func _sync_ship_from_builder() -> void:
 		return
 	ship.apply_module_stats(_builder_controller.get_stats_dictionary())
 	ship.apply_fov_devices(_builder_controller.get_fov_devices())
+	# What was built is what flies: its picture in space and in the HUD.
+	var visual: Dictionary = ShipRender.compose(_builder_controller.get_hull()) if _builder_controller.get_hull() != null else {}
+	ship.set_built_visual(visual)
+	ship_blueprint_panel.set_built_texture(visual.get("texture"))
 
 
 func update_fov_gameplay() -> void:
 	if ship == null:
 		return
-	if ship.fov_devices.is_empty():
+	# Without power the radars and target locks go dark.
+	if ship.fov_devices.is_empty() or not ship.powered:
 		ship.clear_fov_contacts()
 		for body in celestial_bodies:
 			if body.get("fov_contact") != null:
@@ -3374,7 +3806,31 @@ func update_fov_gameplay() -> void:
 
 
 func _try_fire_fov_weapon() -> void:
-	if ship == null or ship.weapon_locks.is_empty():
+	if ship == null or landed_body != null:
+		return
+	# Enemies first: the picked target if a gun covers it, else the nearest
+	# enemy inside a weapon cone; each shot's damage goes to it.
+	var target: Enemy = null
+	var target_dist := INF
+	if targeted_enemy != null and is_instance_valid(targeted_enemy) and targeted_enemy.is_alive():
+		if _enemy_in_weapon_cone(targeted_enemy):
+			target = targeted_enemy
+			target_dist = -1.0
+	for child in get_children():
+		if child is Enemy and child != _test_enemy and (child as Enemy).is_alive():
+			var dist: float = ship.global_position.distance_to(child.global_position)
+			if dist < target_dist and ship.fov_devices.any(
+				func(device: Dictionary) -> bool:
+					return str(device.get("kind", "")) == "weapon" and ship.is_body_in_device_fov(device, child.global_position)
+			):
+				target = child
+				target_dist = dist
+	if target != null:
+		for shot: Dictionary in ship.fire_weapons_at(target.global_position, target.collision_radius):
+			if is_instance_valid(target) and target.is_alive():
+				target.take_hit(float(shot.get("damage", 0.0)))
+		return
+	if ship.weapon_locks.is_empty():
 		return
 	var best_body: Node2D = null
 	var best_dist := INF
@@ -3404,11 +3860,14 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 			if background_mask != null:
 				background_mask.color.a = clampf(1.0 - float(value), 0.0, 1.0)
 			_push_starfield_to_black_holes()
-		"ship_rotation_speed":
-			if ship != null:
-				ship.rotation_speed = float(value)
 		"camera_smoothing":
 			pass
+		"god_mode":
+			# Everything the catalog and tree show may have changed.
+			if planet_info_panel.visible:
+				planet_info_panel.queue_redraw()
+			if tech_tree_window != null and tech_tree_window.visible:
+				tech_tree_window.open()
 
 
 ## Black holes lens the star image directly (see celestial_body.set_starfield).
@@ -3431,8 +3890,6 @@ func _apply_all_settings() -> void:
 	if background_mask != null:
 		background_mask.color.a = clampf(1.0 - settings_mgr.starfield_brightness, 0.0, 1.0)
 	_push_starfield_to_black_holes()
-	if ship != null:
-		ship.rotation_speed = settings_mgr.ship_rotation_speed
 
 
 func _on_time_scale_selected(value: float) -> void:
@@ -3740,7 +4197,7 @@ func _find_landing_candidate() -> Node2D:
 func _update_landing_prompt() -> void:
 	if landed_body != null:
 		landing_prompt.show_prompt(
-			"TAKE OFF", "Surface of %s   ·   W thrust   ·   RMB / A D steer" % landed_body.get("body_name")
+			"TAKE OFF", "Surface of %s     WASD move     RMB go to cursor     Shift slow" % landed_body.get("body_name")
 		)
 		var index: int = landed_body.call("deposit_under_view", ship.get("collision_radius"))
 		if index < 0:
@@ -3750,7 +4207,7 @@ func _update_landing_prompt() -> void:
 			if is_resource_found_on(landed_body, type_name):
 				collect_prompt.show_prompt(
 					"COLLECT %s" % String(ResourceDeposits.TYPES[type_name]["name"]).to_upper(),
-					"In the hold: %d   ·   I to open" % inventory.count(type_name)
+					"In the hold: %d     I to open" % inventory.count(type_name)
 				)
 			else:
 				collect_prompt.show_prompt("COLLECT UNIDENTIFIED SAMPLE", "Unknown signal right under the ship")
@@ -3762,7 +4219,7 @@ func _update_landing_prompt() -> void:
 	else:
 		landing_prompt.show_prompt(
 			"LAND ON %s" % String(landing_candidate.get("body_name")).to_upper(),
-			"Fly over its surface   ·   ENTER again to take off"
+			"You are over its surface"
 		)
 
 
@@ -3793,6 +4250,7 @@ func land_on(body: Node2D) -> void:
 
 	landed_body = body
 	ground_velocity = Vector2.ZERO
+	ship.disengage_manual_main_engine()
 	set_time_scale(1.0)
 	body.set("surface_driven", true)
 	_pin_ship_to(body)
@@ -3821,6 +4279,7 @@ func take_off() -> void:
 	body.set("surface_driven", false)
 	landed_body = null
 	ground_velocity = Vector2.ZERO
+	ship.disengage_manual_main_engine()
 	var body_xy: PackedFloat64Array = get_precise_xy(body)
 	set_ship_state(
 		Vector2(body_xy[0], body_xy[1]) + outward * distance,
@@ -3863,11 +4322,130 @@ func collect_under_ship() -> void:
 	mark_resource_found(landed_body, type_name)
 	var label: String = String(ResourceDeposits.TYPES[type_name]["name"]).to_upper()
 	music_toast.show_message(
-		("NEW RESOURCE: %s   ·   J to view" if first_find else "COLLECTED: %s") % label
-		+ "   ·   ×%d" % inventory.count(type_name)
+		("NEW RESOURCE: %s     J to view" if first_find else "COLLECTED: %s") % label
+		+ "     ×%d" % inventory.count(type_name)
 	)
 	if planet_info_panel.visible:
 		planet_info_panel.queue_redraw()
+
+
+## One step of driving over the surface: ground_velocity eases toward where
+## the keys (or the cursor) say to go - no drift, it stops when they let go -
+## and the nose turns smoothly to face the way the ship moves. The engine
+## flame follows the speed, so it still reads as flying.
+func _drive_on_ground(dt: float) -> void:
+	var top_speed: float = float(landed_body.get("radius")) * GROUND_SPEED_RADII * ship.precision_scale()
+	var target := Vector2.ZERO
+	var keys := Vector2(
+		float(Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT))
+			- float(Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)),
+		float(Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN))
+			- float(Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP))
+	)
+	if keys != Vector2.ZERO:
+		target = keys.normalized() * top_speed
+	elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		var to_cursor: Vector2 = ship.get_global_mouse_position() - ship.global_position
+		var distance: float = to_cursor.length()
+		if distance > 1.0:
+			target = to_cursor / distance * minf(top_speed, distance * GROUND_FOLLOW_GAIN)
+	ground_velocity = ground_velocity.lerp(target, 1.0 - exp(-dt / GROUND_RESPONSE))
+	if ground_velocity.length() < top_speed * 0.002 and target == Vector2.ZERO:
+		ground_velocity = Vector2.ZERO
+	var speed: float = ground_velocity.length()
+	if speed > top_speed * 0.05:
+		ship.rotation = lerp_angle(ship.rotation, ground_velocity.angle(), 1.0 - exp(-dt * GROUND_TURN_RESPONSE))
+	ship.throttle = clampf(speed / maxf(top_speed, 1e-6), 0.0, 1.0)
+
+
+func _enemy_in_weapon_cone(enemy: Node2D) -> bool:
+	return ship.fov_devices.any(
+		func(device: Dictionary) -> bool:
+			return str(device.get("kind", "")) == "weapon" and ship.is_body_in_device_fov(device, enemy.global_position)
+	)
+
+
+## Enemies inside any radar cone, nearest first, and why the list may be
+## empty: no radar, or no power for it. The enemy the player flies is left out.
+func detected_enemies() -> Dictionary:
+	var radars: Array = ship.fov_devices.filter(func(device: Dictionary) -> bool: return str(device.get("kind", "")) == "radar")
+	if radars.is_empty():
+		return {"contacts": [], "status": "No radar fitted"}
+	if not ship.powered:
+		return {"contacts": [], "status": "Radar offline: no power"}
+	var contacts: Array = []
+	for child in get_children():
+		if not (child is Enemy) or child == _test_enemy or not (child as Enemy).is_alive():
+			continue
+		var enemy := child as Enemy
+		if radars.any(func(device: Dictionary) -> bool: return ship.is_body_in_device_fov(device, enemy.global_position)):
+			contacts.append({
+				"enemy": enemy, "title": enemy.title,
+				"distance": ship.global_position.distance_to(enemy.global_position),
+			})
+	contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])
+	return {"contacts": contacts, "status": ""}
+
+
+func _set_target_enemy(enemy: Node2D) -> void:
+	if targeted_enemy != null and is_instance_valid(targeted_enemy):
+		targeted_enemy.targeted = false
+	targeted_enemy = enemy as Enemy
+	if targeted_enemy != null:
+		targeted_enemy.targeted = true
+
+
+## Contacts and weapons panels, every frame.
+func _update_combat_panels() -> void:
+	if targeted_enemy != null and (not is_instance_valid(targeted_enemy) or not targeted_enemy.is_alive()):
+		targeted_enemy = null
+	var detected: Dictionary = detected_enemies()
+	var contacts: Array = detected["contacts"]
+	# A target that drops off the radar stays picked but is not shown in the list.
+	enemy_contacts_panel.set_state(contacts, detected["status"], targeted_enemy)
+	# "LOCK" per gun: the target, or else the nearest contact, in its cone.
+	var aim: Enemy = targeted_enemy
+	if aim == null and not contacts.is_empty():
+		aim = contacts[0]["enemy"]
+	var weapons: Array = []
+	for device: Dictionary in ship.fov_devices:
+		if str(device.get("kind", "")) != "weapon":
+			continue
+		var reload_time: float = maxf(float(device.get("reload_time", 0.0)), 0.05)
+		var left: float = float(ship._weapon_cooldowns.get(int(device.get("instance_id", -1)), 0.0))
+		weapons.append({
+			"title": device.get("title", "Weapon"),
+			"reload": left / reload_time,
+			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
+		})
+	weapons_panel.set_state(weapons, ship.powered)
+
+
+## The hull reached 0: the ship is rebuilt, full, in orbit round the home
+## planet of this system - the hold and everything learned are kept.
+func _respawn_destroyed_ship() -> void:
+	if landed_body != null:
+		take_off()
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+	set_time_scale(1.0)
+	var home: Node2D = planets[HOME_PLANET_INDEX]
+	var index: int = HOME_PLANET_INDEX
+	var body: PhysicsBody = physics_planets[index]
+	var distance: float = 4000.0
+	var along := Vector2(0.0, 1.0)
+	set_ship_state(
+		Vector2(body.x, body.y) + Vector2(distance, 0.0),
+		Vector2(body.vx, body.vy) + along * sqrt(mu_planets[index] / distance)
+	)
+	ship.reset_physics_interpolation()
+	ship.refill()
+	camera_follow_ship = true
+	camera_follow_body = null
+	camera.position = ship.position
+	_restart_trajectory_prediction()
+	music_toast.show_message("SHIP DESTROYED     Rebuilt in orbit of %s" % String(home.get("body_name")).to_upper())
 
 
 ## Holds the ship on the planet's centre, moving with it.
@@ -3891,14 +4469,17 @@ func _set_space_overlays_visible(shown: bool) -> void:
 	ap_gauge.visible = shown
 
 
-## Whether the ship has surveyed `body` (see charted_bodies).
+## Whether the ship has surveyed `body` (see charted_bodies). God mode
+## (debug) charts everything.
 func is_charted(body: Node2D) -> bool:
-	return Journal.reveal_all or charted_bodies.has(body)
+	return PlayerProgress.god_mode or charted_bodies.has(body)
 
 
 ## Whether the player has found a resource of this type on `body` as it is
 ## now - on this planet, in the variant it has rolled, in any system.
 func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return _has_deposit(body, type_name)
 	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
 		return is_charted(body) and _has_deposit(body, type_name)
 	return Journal.is_found(get_body_name(body), _variant_of(body), type_name)
@@ -3906,6 +4487,8 @@ func is_resource_found_on(body: Node2D, type_name: StringName) -> bool:
 
 ## Whether the player has found a resource of this type anywhere.
 func is_resource_known(type_name: StringName) -> bool:
+	if PlayerProgress.god_mode:
+		return true
 	return Journal.is_known(type_name) or not bodies_where_found(type_name).is_empty()
 
 
@@ -3969,15 +4552,15 @@ func _chart_nearby_bodies() -> void:
 			var new_variant: bool = _chart(planet)
 			var variant: String = PlanetLore.variant_label(planet.get("terrain_kind"), planet.get("terrain_params"))
 			if new_variant and variant != "":
-				music_toast.show_message("NEW VARIANT: %s - %s   ·   J to view" % [label, variant.to_upper()])
+				music_toast.show_message("NEW VARIANT: %s - %s     J to view" % [label, variant.to_upper()])
 			else:
-				music_toast.show_message("SURVEYED: %s   ·   J to view" % label)
+				music_toast.show_message("SURVEYED: %s     J to view" % label)
 			if planet_info_panel.visible:
 				planet_info_panel.queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
-	if loading_screen != null:
+	if loading_screen != null or hyperspace_jump != null:
 		return
 	simulation_accumulator += delta * time_scale
 	sim_time += delta * time_scale
@@ -4036,17 +4619,31 @@ func simulation_step(dt: float) -> void:
 			# Flight assist and the holds work against the ground.
 			ship.hold_reference_velocity = ground_velocity
 
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		if landed_body != null:
+			pass # Ground driving steers the ship itself (below).
+		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			ship.update_rotation(dt)
 		elif autopilot_on_main_engine:
 			ship.update_autopilot_rotation(dt)
 		else:
 			ship.update_rotation(dt)
 
-		if autopilot_thrusting:
+		if landed_body != null:
+			pass
+		elif autopilot_thrusting:
 			ship.disengage_manual_main_engine()
 		else:
 			ship.update_throttle(dt, time_scale <= 1.0)
+
+	# Fuel, energy, shields and repairs, from what the engines are doing now.
+	var engine_output: float = 0.0
+	if landed_body == null and ship.has_fuel():
+		var manual: float = ship.throttle if (time_scale <= 1.0 or ship.throttle_locked) else 0.0
+		engine_output = maxf(manual, ship.autopilot_main_engine_output)
+	ship.update_resources(dt, engine_output, landed_body != null)
+	if ship.is_destroyed():
+		_respawn_destroyed_ship()
+		return
 
 	var landed: bool = landed_body != null
 
@@ -4082,7 +4679,7 @@ func simulation_step(dt: float) -> void:
 		# surface rolls the other way under it, while the ship itself rides
 		# the planet's centre round the sun. _pin_ship_to reads the precise
 		# state, so it does not need the planets' nodes pushed this step.
-		ground_velocity += ship.get_manual_acceleration() * dt
+		_drive_on_ground(dt)
 		landed_body.roll_surface(ground_velocity * dt)
 		_pin_ship_to(landed_body)
 		return

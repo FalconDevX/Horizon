@@ -17,7 +17,7 @@ extends Control
 ## cards fill up across every system the player travels to; unseen ones stay
 ## redacted. The one in front of the player now is marked HERE. Clicking a
 ## seen card shows that variant in the view: a hidden copy of the planet (a
-## "twin", far out of sight) rolls it from the same seed with the variant forced
+## "twin", celestial_body preview_only) rolls it from the same seed with the variant forced
 ## (PlanetLore.forced_variant), bakes, and lends its preview; twins are kept
 ## while the log is open and freed when it closes.
 ##
@@ -105,6 +105,7 @@ func _ready() -> void:
 		"Mouse wheel over the planet: zoom",
 		"Up and Down arrows: previous and next entry",
 		"Tab, Left or Right: planets / resources",
+		"Click a variant card: preview that variant",
 		"J or Esc: close the log",
 	]))
 	add_child(_help)
@@ -591,7 +592,7 @@ func _draw() -> void:
 			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _tab else HudPanelStyle.COLOR_TEXT_MUTED
 		)
 	draw_string(
-		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "VESPERIS SYSTEM",
+		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
@@ -736,7 +737,7 @@ func _draw_text(font: Font) -> void:
 				draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, Color(0.1, 0.1, 0.12))
 				_draw_redacted(x + 14.0, y, label.length() * 7.0, 11)
 				draw_string(
-					font, Vector2(x + 22.0 + label.length() * 7.0, y), "Unidentified  ·  %s" % notes["count"],
+					font, Vector2(x + 22.0 + label.length() * 7.0, y), "Unidentified   %s" % notes["count"],
 					HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 22.0 - label.length() * 7.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
 				)
 				y += 15.0
@@ -822,7 +823,7 @@ func _draw_resource_text(font: Font) -> void:
 			groups.append({"body": body, "rows": rows})
 			variant_total += rows.size()
 	draw_string(
-		font, Vector2(x, y), "OCCURS ON  %d %s  ·  %d %s" % [
+		font, Vector2(x, y), "OCCURS ON  %d %s   %d %s" % [
 			groups.size(), "planet" if groups.size() == 1 else "planets",
 			variant_total, "variant" if variant_total == 1 else "variants",
 		],
@@ -939,7 +940,7 @@ func _draw_variant_cards(font: Font) -> void:
 	var body_name: String = body.get("body_name")
 	var total: int = PlanetLore.variants_of(kind).size()
 	draw_string(
-		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen   ·   click a card to view it" % [Journal.seen_count(body_name, kind), total],
+		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen      click a card to view it" % [Journal.seen_count(body_name, kind), total],
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
 	)
 	for card: Dictionary in _card_entries():
@@ -1019,17 +1020,23 @@ func _twin_for(body: Node2D, forced: String) -> Node2D:
 	var key := "%s|%s" % [body.get("body_name"), forced]
 	if _twins.has(key) and is_instance_valid(_twins[key]):
 		return _twins[key]
-	var twin := Node2D.new()
-	twin.set_script(body.get_script())
+	var twin: Node2D = body.get_script().new()
 	for prop: Dictionary in body.get_property_list():
 		var usage: int = prop["usage"]
 		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE and usage & PROPERTY_USAGE_STORAGE:
 			twin.set(prop["name"], body.get(prop["name"]))
+	# The pole the scene gave it, before any roll tilted it.
+	twin.set("surface_spin_axis", body.get("_scene_spin_axis"))
 	twin.set("terrain_variant", forced)
-	twin.set("world_source", _system)
+	# A lighter bake: it is only ever seen in the log's view.
+	twin.set("terrain_resolution", mini(int(body.get("terrain_resolution")), 512))
+	# Hidden (celestial_body preview_only), reading the world from the system.
+	twin.set("preview_only", true)
+	twin.set("world", _system)
 	twin.name = "VariantTwin"
 	twin.position = TWIN_POSITION
-	_system.add_child(twin)
+	twin.visible = false
+	add_child(twin)
 	_twins[key] = twin
 	return twin
 
@@ -1092,9 +1099,9 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 	var y: float = card.position.y + 30.0
 	var tag: String = "HERE" if here else ("SEEN" if seen else "UNSEEN")
 	if is_trait:
-		tag = "TRAIT  ·  " + tag
+		tag = "TRAIT   " + tag
 	if viewed and not _viewing.is_empty():
-		tag += "  ·  VIEWING"
+		tag += "   VIEWING"
 	draw_string(
 		font, Vector2(x, card.position.y + 14.0), tag, HORIZONTAL_ALIGNMENT_LEFT, inner, 9,
 		HudPanelStyle.COLOR_CYAN if here else (HudPanelStyle.COLOR_TEXT_MUTED if seen else HudPanelStyle.COLOR_TEXT_FAINT)

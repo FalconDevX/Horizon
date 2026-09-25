@@ -56,3 +56,21 @@ func total() -> int:
 
 func is_empty() -> bool:
 	return _counts.is_empty()
+
+
+func clear() -> void:
+	_counts.clear()
+	_sources.clear()
+	changed.emit()
+
+
+## Counts and sources, for a saved game.
+func to_dict() -> Dictionary:
+	return {"counts": _counts.duplicate(true), "sources": _sources.duplicate(true)}
+
+
+## Replaces the contents with a saved game's.
+func load_dict(data: Dictionary) -> void:
+	_counts = (data.get("counts", {}) as Dictionary).duplicate(true)
+	_sources = (data.get("sources", {}) as Dictionary).duplicate(true)
+	changed.emit()

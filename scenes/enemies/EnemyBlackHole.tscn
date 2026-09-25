@@ -1,0 +1,23 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_black_hole.png" id="2_tex"]
+
+[node name="EnemyBlackHole" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_tex")
+visual_length = 44.0
+move_speed = 95.0
+turn_speed = 1.6
+can_fire = false
+black_hole_mode = true
+black_hole_radius = 520.0
+black_hole_pull = 240.0
+black_hole_fuse = 6.0
+black_hole_blast_radius = 400.0
+black_hole_blast_damage = 140.0
+collision_radius = 16.0
+muzzles = PackedVector2Array()
+## Core glow is painted in; skip stacked procedural flames.
+engine_exits = PackedVector2Array()
+engine_half_width = 3.0

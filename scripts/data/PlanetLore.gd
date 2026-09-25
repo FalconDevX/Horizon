@@ -293,7 +293,7 @@ static func variant_label(kind: int, params: Dictionary) -> String:
 	for flag: String in FLAG_LABELS:
 		if params.get(flag, false) == true:
 			parts.append(FLAG_LABELS[flag])
-	return " · ".join(parts)
+	return ", ".join(parts)
 
 
 ## One line added to a kind's description for the variant it rolled
@@ -342,7 +342,7 @@ const VARIANT_NOTES := {
 		"terraced": "Its holes are stepped like quarries, under a fast blue-grey mist.",
 	},
 	PlanetTerrain.Kind.BLOOM: {
-		"winter": "Frost covers its fields, snow lies in humps across them, and its beanstalks stand half frozen.",
+		"winter": "Frost covers its fields, snow lies in humps across them, and its moonblooms stand half frozen.",
 		"dried": "Its flowers have withered, and its valleys are choked with dead stalks.",
 	},
 	PlanetTerrain.Kind.OASIS: {

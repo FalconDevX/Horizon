@@ -5,13 +5,15 @@ extends Node2D
 ##   equipment  - engines/utilities on DECK / mounts; weapons on the outer truss ring
 ##
 ## Rules:
-##   - Hull pieces may not touch each other edge-to-edge (must use a connector).
-##   - Left edge is ENGINE_MOUNT; main engines only there (+ optional truss overhang), not on deck.
-##   - Corrective / RCS engines and weapons only on truss cells adjacent to normal DECK (not ENGINE_MOUNT).
-##   - Ship-wide: ≥1 RCS on each outer side except the main-engine side.
-##   - Truss itself: empty cells within WEAPON_MOUNT_DEPTH of a hull, floor tile or truss beam
-##     (also used for main-engine overhang).
-##   - FLOOR tiles attach straight to a hull or other floor and act as deck (+1 slot per cell).
+##   - Hull pieces and the cockpit may not touch each other edge-to-edge (must use a connector).
+##   - Main engines stand in open space on a hull's left (aft) side: grid -x, whatever
+##     way the hull is turned. At least one engine cell must touch the hull's left face.
+##   - Corrective / RCS engines only on truss cells adjacent to DECK.
+##   - Weapons: every cell on the truss ring (or a truss beam), and at least one
+##     anchored - next to DECK or on a beam - so a long gun can stick out. A gun
+##     may not face the ship: no hull or cockpit straight ahead of its muzzle.
+##   - Ship-wide: ≥1 RCS on each outer side except the left (main-engine) side.
+##   - Truss itself: empty cells within WEAPON_MOUNT_DEPTH of a hull or truss beam.
 ##   - TRUSS beams go on the truss ring (so they can chain outward); weapons may stand on them.
 ##   - Moving a hull keeps its attached modules (cargo).
 
@@ -31,7 +33,12 @@ var _next_instance_id: int = 1
 var _cached_stats: ShipStats = ShipStats.new()
 
 ## How many empty cells outward from a hull edge weapons may occupy (truss depth).
-const WEAPON_MOUNT_DEPTH := 2
+const WEAPON_MOUNT_DEPTH := 3
+## Main engines go on this side of a hull - the build grid's left, never turned
+## with the hull (the shipyard view can still be rotated around it).
+const AFT := Vector2i(-1, 0)
+## Ship side the main engines push from (see are_ship_rcs_sides_covered).
+const AFT_SIDE := 3
 
 const _DIRS: Array[Vector2i] = [
 	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
@@ -94,6 +101,7 @@ func get_fov_devices() -> Array[Dictionary]:
 			"local_origin": offset_cells * FovUtil.WORLD_UNITS_PER_CELL,
 			"damage": module.data.damage,
 			"reload_time": module.data.reload_time,
+			"energy": module.data.energy_consumption,
 			"hull_rects": hull_rects,
 			"ignore_rects": ignore_rects,
 		})
@@ -128,6 +136,12 @@ func get_structure_blocker_cells() -> Dictionary:
 func _is_open_frame(cell: Vector2i) -> bool:
 	var s := get_structure_at(cell)
 	return s != null and s.data != null and s.data.category == ModuleData.Category.TRUSS
+
+
+## Middle of the ship's structure, in cells - the origin of its ship-local
+## space (weapon mounts, the picture in space).
+func structure_centroid() -> Vector2:
+	return _structure_centroid_cells()
 
 
 func _structure_centroid_cells() -> Vector2:
@@ -175,8 +189,6 @@ func get_floor_type(cell: Vector2i) -> HullData.FloorType:
 		return HullData.FloorType.EMPTY
 	if structure.data.category == ModuleData.Category.CONNECTOR:
 		return HullData.FloorType.CONNECTOR
-	if structure.data.category == ModuleData.Category.FLOOR:
-		return HullData.FloorType.DECK
 	if structure.data.category == ModuleData.Category.HULL:
 		if structure.data.hull_data == null:
 			return HullData.FloorType.DECK
@@ -187,10 +199,6 @@ func get_floor_type(cell: Vector2i) -> HullData.FloorType:
 
 func is_deck_cell(cell: Vector2i) -> bool:
 	return HullData.is_deck_floor(get_floor_type(cell))
-
-
-func is_engine_mount_cell(cell: Vector2i) -> bool:
-	return get_floor_type(cell) == HullData.FloorType.ENGINE_MOUNT
 
 
 ## Every cell that is not empty space, for drawing: structure (hulls,
@@ -267,7 +275,7 @@ func is_truss_beam_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
 	)
 
 
-## Empty truss cell orthogonally adjacent to at least one normal DECK (not ENGINE_MOUNT).
+## Empty truss cell orthogonally adjacent to at least one DECK cell.
 ## Used by corrective engines and weapons.
 func is_deck_adjacent_truss_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
 	if not is_weapon_mount_cell(cell, ignore_instance_id):
@@ -276,6 +284,35 @@ func is_deck_adjacent_truss_cell(cell: Vector2i, ignore_instance_id: int = -1) -
 		if get_floor_type(cell + d) == HullData.FloorType.DECK:
 			return true
 	return false
+
+
+## How far ahead of a gun its line of fire is checked for the ship's own hull.
+const WEAPON_CLEAR_AHEAD := 12
+
+
+## True if a gun turned this way would fire into the ship: a hull or cockpit
+## cell straight ahead of any of its cells, in the direction it faces.
+func _weapon_faces_ship(cells: Array[Vector2i], rotation: int, ignore_instance_id: int = -1) -> bool:
+	var facing: Vector2 = FovUtil.local_facing(rotation)
+	var step := Vector2i(roundi(facing.x), roundi(facing.y))
+	var own: Dictionary = {}
+	for cell: Vector2i in cells:
+		own[cell] = true
+	for cell: Vector2i in cells:
+		for k in range(1, WEAPON_CLEAR_AHEAD + 1):
+			var ahead: Vector2i = cell + step * k
+			if own.has(ahead):
+				continue
+			var s := get_structure_at(ahead)
+			if s != null and s.data != null and s.instance_id != ignore_instance_id and s.data.is_hull_like():
+				return true
+	return false
+
+
+## A weapon cell that holds the gun to the ship: on a truss beam, or an empty
+## truss cell right next to DECK.
+func _weapon_anchor(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
+	return is_truss_beam_cell(cell, ignore_instance_id) or is_deck_adjacent_truss_cell(cell, ignore_instance_id)
 
 
 ## Deck-adjacent truss of a hull being relocated (floor not yet written).
@@ -304,7 +341,7 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 	if data == null:
 		return false
 	match data.category:
-		ModuleData.Category.HULL, ModuleData.Category.CONNECTOR, ModuleData.Category.FLOOR:
+		ModuleData.Category.HULL, ModuleData.Category.CONNECTOR, ModuleData.Category.COCKPIT:
 			return get_structure_at(cell) == null and get_equipment_at(cell) == null
 		ModuleData.Category.TRUSS:
 			return (
@@ -317,17 +354,11 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 				return false
 			if is_truss_beam_cell(cell):
 				return true
-			return get_structure_at(cell) == null and is_deck_adjacent_truss_cell(cell)
+			return is_weapon_mount_cell(cell)
 		_:
 			if data.is_main_engine():
-				# Orange mount only, or empty truss (≥1 ENGINE_MOUNT checked in can_place).
-				if get_floor_type(cell) == HullData.FloorType.ENGINE_MOUNT:
-					return get_equipment_at(cell) == null
-				return (
-					get_structure_at(cell) == null
-					and get_equipment_at(cell) == null
-					and is_weapon_mount_cell(cell)
-				)
+				# Open space; touching a hull's left face is checked in can_place.
+				return get_structure_at(cell) == null and get_equipment_at(cell) == null
 			if data.is_rcs_engine():
 				return (
 					get_structure_at(cell) == null
@@ -347,6 +378,8 @@ func can_place(
 ) -> bool:
 	if data == null or data.grid_shape.is_empty():
 		return false
+	if not data.is_rotatable() and posmod(rotation, 4) != 0:
+		return false
 
 	var cells := data.get_occupied_cells(origin, rotation)
 
@@ -362,12 +395,8 @@ func can_place(
 		if not _cell_free_for(data, cell, ignore_instance_id):
 			return false
 
-	if data.category == ModuleData.Category.HULL:
+	if data.is_hull_like():
 		if _hull_would_touch_other_hull(cells, ignore_instance_id):
-			return false
-
-	if data.category == ModuleData.Category.FLOOR:
-		if not _cells_touch_deck_structure(cells, ignore_instance_id):
 			return false
 
 	if data.category == ModuleData.Category.TRUSS:
@@ -375,8 +404,14 @@ func can_place(
 			if not is_weapon_mount_cell(cell, ignore_instance_id):
 				return false
 
+	if data.category == ModuleData.Category.WEAPON:
+		if not cells.any(func(cell: Vector2i) -> bool: return _weapon_anchor(cell, ignore_instance_id)):
+			return false
+		if _weapon_faces_ship(cells, rotation, ignore_instance_id):
+			return false
+
 	if data.is_main_engine():
-		if not _cells_touch_floor(cells, HullData.FloorType.ENGINE_MOUNT):
+		if not _cells_behind_hull(cells, ignore_instance_id):
 			return false
 
 	return true
@@ -402,7 +437,8 @@ func can_place_hull_with_cargo(
 	var drot := posmod(rotation - pick_rotation, 4)
 	for item in cargo:
 		var c_data: ModuleData = item["data"]
-		var c_rot := posmod(int(item["rotation"]) + drot, 4)
+		# Main engines stay facing aft even when their hull turns.
+		var c_rot := posmod(int(item["rotation"]) + drot, 4) if c_data.is_rotatable() else 0
 		var local: Vector2i = item["local_origin"]
 		var world_origin := origin + local_to_world_delta(local, rotation, hull_module.hull_data)
 		var cells := c_data.get_occupied_cells(world_origin, c_rot)
@@ -415,23 +451,13 @@ func can_place_hull_with_cargo(
 				return false
 			match c_data.category:
 				ModuleData.Category.WEAPON:
-					if not _cell_is_deck_adjacent_truss_on_hull(
-						cell, hull_cells, origin, rotation, hull_module.hull_data
-					):
+					# On the moved hull's ring; anchoring is checked for the whole gun below.
+					if hull_cells.has(cell) or not _cell_in_weapon_truss(cell, hull_cells):
 						return false
 				_:
 					if c_data.is_main_engine():
-						# Orange mount cells, or overhanging onto the truss — not regular deck.
+						# Open space only - never on the hull itself.
 						if hull_cells.has(cell):
-							var local_floor := world_delta_to_local(
-								cell - origin, rotation, hull_module.hull_data
-							)
-							if (
-								hull_module.hull_data.get_local_floor(local_floor)
-								!= HullData.FloorType.ENGINE_MOUNT
-							):
-								return false
-						elif not _cell_in_weapon_truss(cell, hull_cells):
 							return false
 					elif c_data.is_rcs_engine():
 						if not _cell_is_deck_adjacent_truss_on_hull(
@@ -448,13 +474,14 @@ func can_place_hull_with_cargo(
 							return false
 					else:
 						return false
-		if c_data.category == ModuleData.Category.ENGINE:
-			var cargo_cells := c_data.get_occupied_cells(world_origin, c_rot)
-			if c_data.is_main_engine():
-				if not _cells_touch_floor_on_hull(
-					cargo_cells, origin, rotation, hull_module.hull_data, HullData.FloorType.ENGINE_MOUNT
-				):
-					return false
+		if c_data.is_main_engine():
+			if not _cells_left_of(c_data.get_occupied_cells(world_origin, c_rot), hull_cells):
+				return false
+		if c_data.category == ModuleData.Category.WEAPON:
+			if not cells.any(func(cell: Vector2i) -> bool:
+				return _cell_is_deck_adjacent_truss_on_hull(cell, hull_cells, origin, rotation, hull_module.hull_data)
+			):
+				return false
 	return true
 
 
@@ -522,7 +549,8 @@ func attach_hull_with_cargo(
 	var drot := posmod(rotation - pick_rotation, 4)
 	for item in cargo:
 		var c_data: ModuleData = item["data"]
-		var c_rot := posmod(int(item["rotation"]) + drot, 4)
+		# Main engines stay facing aft even when their hull turns.
+		var c_rot := posmod(int(item["rotation"]) + drot, 4) if c_data.is_rotatable() else 0
 		var local: Vector2i = item["local_origin"]
 		var world_origin := origin + local_to_world_delta(local, rotation, hull_data.hull_data)
 		attach_module(c_data, world_origin, c_rot)
@@ -608,7 +636,7 @@ func cell_to_local_center(cell: Vector2i) -> Vector2:
 func are_hulls_connected() -> bool:
 	var hulls: Array[PlacedModule] = []
 	for m: PlacedModule in _modules.values():
-		if m.data != null and m.data.category == ModuleData.Category.HULL:
+		if m.data != null and m.data.is_hull_like():
 			hulls.append(m)
 	if hulls.size() <= 1:
 		return true
@@ -636,14 +664,14 @@ func are_hulls_connected() -> bool:
 
 
 ## Ship-level (not per-hull): ≥1 corrective engine on each outer side
-## except the side that carries the main engines / ENGINE_MOUNT.
+## except the left one, where the main engines are (AFT_SIDE).
 ## Sides: 0=top(min_y), 1=right(max_x), 2=bottom(max_y), 3=left(min_x).
 func are_ship_rcs_sides_covered() -> bool:
 	var hull_cells := _collect_hull_cells()
 	if hull_cells.is_empty():
 		return true
 	var bbox := _cells_bbox(hull_cells)
-	var main_side := _ship_main_engine_side(hull_cells, bbox)
+	var main_side := AFT_SIDE
 	var covered: Array[bool] = [false, false, false, false]
 	for m: PlacedModule in _modules.values():
 		if m.data == null or not m.data.is_rcs_engine():
@@ -659,7 +687,7 @@ func are_ship_rcs_sides_covered() -> bool:
 	return true
 
 
-## Hull, floor and truss cells - what the weapon-mount ring grows from.
+## Hull and truss cells - what the weapon-mount ring grows from.
 func _collect_frame_cells() -> Dictionary:
 	var cells: Dictionary = {}
 	for cell: Vector2i in _structure.keys():
@@ -693,48 +721,6 @@ static func _cells_bbox(cells: Dictionary) -> Rect2i:
 			min_c = Vector2i(mini(min_c.x, cell.x), mini(min_c.y, cell.y))
 			max_c = Vector2i(maxi(max_c.x, cell.x), maxi(max_c.y, cell.y))
 	return Rect2i(min_c, max_c - min_c + Vector2i.ONE)
-
-
-## Dominant ship side that holds ENGINE_MOUNT tiles on the hull AABB perimeter.
-func _ship_main_engine_side(hull_cells: Dictionary, bbox: Rect2i) -> int:
-	var counts: Array[int] = [0, 0, 0, 0] # N, E, S, W
-	var min_c := bbox.position
-	var max_c := bbox.position + bbox.size - Vector2i.ONE
-	for cell: Vector2i in hull_cells.keys():
-		if get_floor_type(cell) != HullData.FloorType.ENGINE_MOUNT:
-			continue
-		if cell.y == min_c.y:
-			counts[0] += 1
-		if cell.x == max_c.x:
-			counts[1] += 1
-		if cell.y == max_c.y:
-			counts[2] += 1
-		if cell.x == min_c.x:
-			counts[3] += 1
-	# Prefer a side that also has a placed main engine.
-	var engine_boost: Array[int] = [0, 0, 0, 0]
-	for m: PlacedModule in _modules.values():
-		if m.data == null or not m.data.is_main_engine():
-			continue
-		for cell: Vector2i in m.get_occupied_cells():
-			if get_floor_type(cell) != HullData.FloorType.ENGINE_MOUNT:
-				continue
-			if cell.y == min_c.y:
-				engine_boost[0] += 2
-			if cell.x == max_c.x:
-				engine_boost[1] += 2
-			if cell.y == max_c.y:
-				engine_boost[2] += 2
-			if cell.x == min_c.x:
-				engine_boost[3] += 2
-	var best := 3 # default west (authoring left / aft)
-	var best_score := -1
-	for s in 4:
-		var score: int = counts[s] + engine_boost[s]
-		if score > best_score:
-			best_score = score
-			best = s
-	return best
 
 
 ## One RCS module covers one non-main ship side (corner prefers a required side).
@@ -830,6 +816,10 @@ func _collect_cargo_for_hull(hull: PlacedModule) -> Array:
 					if get_floor_type(n) == HullData.FloorType.DECK:
 						belongs = true
 						break
+			# Main engines hanging off this hull's left face.
+			if m.data.is_main_engine() and hull_cells.has(cell - AFT):
+				belongs = true
+				break
 			if belongs:
 				break
 		if not belongs:
@@ -867,10 +857,12 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 				return false
 	match data.category:
 		ModuleData.Category.WEAPON:
-			return is_deck_adjacent_truss_cell(cell, ignore_instance_id)
+			return is_weapon_mount_cell(cell, ignore_instance_id)
 		_:
 			if data.is_main_engine():
-				return _main_engine_cell_ok(cell, ignore_instance_id)
+				# Open space only; must not overlap any hull or truss.
+				var s3 := get_structure_at(cell)
+				return s3 == null or s3.instance_id == ignore_instance_id
 			if data.is_rcs_engine():
 				return is_deck_adjacent_truss_cell(cell, ignore_instance_id)
 			if data.is_deck_equipment():
@@ -882,58 +874,30 @@ func _equipment_floor_ok(data: ModuleData, cell: Vector2i) -> bool:
 	return _equipment_floor_type_ok(data, get_floor_type(cell))
 
 
-## Main engines: orange ENGINE_MOUNT only, or empty truss (can_place requires ≥1 ENGINE_MOUNT).
-func _main_engine_cell_ok(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
-	if get_floor_type(cell) == HullData.FloorType.ENGINE_MOUNT:
-		return true
-	return is_weapon_mount_cell(cell, ignore_instance_id)
-
-
 func _equipment_floor_type_ok(_data: ModuleData, floor: HullData.FloorType) -> bool:
-	# General deck gear on DECK / ENGINE_MOUNT.
-	# Main / RCS engines use their own truss / mount checks.
+	# General deck gear on DECK.
+	# Main / RCS engines use their own open-space / truss checks.
 	return HullData.is_deck_floor(floor)
 
 
-func _cells_touch_floor(cells: Array[Vector2i], floor: HullData.FloorType) -> bool:
+## Main engine footprint touches a hull's left face: some cell has a hull
+## cell straight to its right (the AFT rule).
+func _cells_behind_hull(cells: Array[Vector2i], ignore_instance_id: int = -1) -> bool:
 	for cell: Vector2i in cells:
-		if get_floor_type(cell) == floor:
+		var s := get_structure_at(cell - AFT)
+		if (
+			s != null and s.data != null and s.instance_id != ignore_instance_id
+			and s.data.category == ModuleData.Category.HULL
+		):
 			return true
 	return false
 
 
-## Same rule while a hull+cargo ghost is being relocated (floor not yet written).
-func _cells_touch_floor_on_hull(
-	cells: Array[Vector2i],
-	hull_origin: Vector2i,
-	hull_rotation: int,
-	hull: HullData,
-	floor: HullData.FloorType
-) -> bool:
-	if hull == null:
-		return false
+## Same rule while a hull+cargo ghost is being relocated (hull not yet written).
+static func _cells_left_of(cells: Array[Vector2i], hull_cells: Dictionary) -> bool:
 	for cell: Vector2i in cells:
-		var local := world_delta_to_local(cell - hull_origin, hull_rotation, hull)
-		if hull.get_local_floor(local) == floor:
+		if hull_cells.has(cell - AFT):
 			return true
-	return false
-
-
-## A floor tile must sit edge-to-edge with a hull or another floor tile.
-func _cells_touch_deck_structure(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
-	var proposed: Dictionary = {}
-	for c: Vector2i in cells:
-		proposed[c] = true
-	for c: Vector2i in cells:
-		for d: Vector2i in _DIRS:
-			var n := c + d
-			if proposed.has(n):
-				continue
-			var s := get_structure_at(n)
-			if s == null or s.data == null or s.instance_id == ignore_instance_id:
-				continue
-			if s.data.category == ModuleData.Category.HULL or s.data.category == ModuleData.Category.FLOOR:
-				return true
 	return false
 
 
@@ -951,7 +915,7 @@ func _hull_would_touch_other_hull(cells: Array[Vector2i], ignore_instance_id: in
 				continue
 			if s.instance_id == ignore_instance_id:
 				continue
-			if s.data.category == ModuleData.Category.HULL:
+			if s.data.is_hull_like():
 				return true
 	return false
 
@@ -980,9 +944,6 @@ func _total_hull_capacity(ignore_instance_id: int = -1) -> int:
 	for m: PlacedModule in _modules.values():
 		if m.data == null or m.instance_id == ignore_instance_id:
 			continue
-		if m.data.category == ModuleData.Category.FLOOR:
-			cap += int(m.data.capacity)
-			continue
 		if m.data.category != ModuleData.Category.HULL:
 			continue
 		if m.data.hull_data != null:
@@ -1007,6 +968,13 @@ func _recalculate_stats() -> void:
 		if d.is_equipment():
 			stats.occupied_cells += d.get_cell_count()
 		stats.energy_consumption += d.energy_consumption
+		match d.category:
+			ModuleData.Category.ENGINE:
+				stats.energy_engines += d.energy_consumption
+			ModuleData.Category.SHIELD:
+				stats.energy_shields += d.energy_consumption
+			ModuleData.Category.WEAPON:
+				stats.energy_weapons += d.energy_consumption
 		if d.is_rcs_engine():
 			stats.correction_thrust += d.thrust
 		else:

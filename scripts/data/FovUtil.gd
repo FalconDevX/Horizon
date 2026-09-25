@@ -13,9 +13,11 @@ const CONE_SEGMENTS := 28
 const LOS_STEP_FRAC := 0.2 ## fraction of a cell per ray-march step
 
 
-## Authoring face for rot 0 = +X (right). Quarters are clockwise.
+## Authoring face for rot 0 = +X (right). Quarters are clockwise on screen
+## (y down), the same way ModuleData.rotate_shape and the grid's rotated art
+## turn - so the cone leaves the barrel end.
 static func local_facing(rotation: int) -> Vector2:
-	return Vector2.RIGHT.rotated(-float(posmod(rotation, 4)) * PI * 0.5)
+	return Vector2.RIGHT.rotated(float(posmod(rotation, 4)) * PI * 0.5)
 
 
 static func builder_preview_length(fov_range_su: float, cell_size: float) -> float:

@@ -1,0 +1,24 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_cruiser.png" id="2_tex"]
+[ext_resource type="AudioStream" path="res://sounds/laser_tank.wav" id="3_laser"]
+
+[node name="EnemyCruiser" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_tex")
+visual_length = 42.0
+move_speed = 135.0
+turn_speed = 2.1
+fire_cooldown = 0.38
+laser_sound = ExtResource("3_laser")
+laser_speed = 480.0
+laser_range = 1000.0
+laser_damage = 18.0
+laser_width = 2.8
+laser_length = 18.0
+laser_pitch = 0.85
+## Forward twin batteries + mid broadside turrets (nose-up art).
+muzzles = PackedVector2Array(0.38, 0.1, 0.62, 0.1, 0.22, 0.42, 0.78, 0.42)
+engine_exits = PackedVector2Array(0.5, 0.96)
+engine_half_width = 3.8

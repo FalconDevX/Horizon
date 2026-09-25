@@ -112,15 +112,21 @@ func _refresh() -> void:
 	_icon.position = Vector2.ZERO
 	_icon.size = icon_size
 	_icon.texture = module_data.texture
+	_icon.stretch_mode = (
+		TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		if module_data.category == ModuleData.Category.ENGINE
+		else TextureRect.STRETCH_SCALE
+	)
 
 	_label.text = module_data.title
-	tooltip_text = "%s\n[%s]\nShape: %dx%d (%d cells)\nMass: %.1f\nClick or drag to install. R rotates." % [
+	tooltip_text = "%s\n[%s]\nShape: %dx%d (%d cells)\nMass: %.1f\nClick or drag to install. %s" % [
 		module_data.title,
 		module_data.category_name(),
 		bounds.x,
 		bounds.y,
 		module_data.get_cell_count(),
 		module_data.mass,
+		"R rotates." if module_data.is_rotatable() else "Always faces aft (left of the hull).",
 	]
 
 	# Grow slot with footprint so 2x2 icons aren't crushed.
