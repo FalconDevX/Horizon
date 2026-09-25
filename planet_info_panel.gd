@@ -15,7 +15,11 @@ extends Control
 ## blind, Julia sets, ringed): its name and note, and what it yields - found
 ## items named, the rest redacted. Seen variants come from the Journal, so the
 ## cards fill up across every system the player travels to; unseen ones stay
-## redacted. The one in front of the player now is marked HERE.
+## redacted. The one in front of the player now is marked HERE. Clicking a
+## seen card shows that variant in the view: a hidden copy of the planet (a
+## "twin", far out of sight) rolls it from the same seed with the variant forced
+## (PlanetLore.forced_variant), bakes, and lends its preview; twins are kept
+## while the log is open and freed when it closes.
 ##
 ## Only what the player knows is shown: a planet until the ship has charted it
 ## (solar_system.gd is_charted - flying near it), a resource until it has been
@@ -33,6 +37,8 @@ const GAP := 20.0
 const CARDS_HEIGHT := 168.0
 const CARD_MAX_WIDTH := 250.0
 const CARD_GAP := 10.0
+## Where variant twins stand: far outside anything the camera sees.
+const TWIN_POSITION := Vector2(4.0e7, -4.0e7)
 
 ## Orthographic view sizes, in body radii across the shorter side.
 const VIEW_DEFAULT := 2.4
@@ -70,6 +76,16 @@ var _dragging: bool = false
 var _idle_time: float = 0.0
 
 var _tab: int = TAB_PLANETS
+## The card being viewed on the selected planet: {name, trait}, or {} for the
+## world as it is now.
+var _viewing: Dictionary = {}
+## "body|forced variant" -> twin body, for this opening of the log.
+var _twins: Dictionary = {}
+## The twin the view is waiting on to finish baking, or null.
+var _pending_twin: Node2D = null
+## The twin of the card being viewed (baked or not), or null for the world
+## here - the text column describes it.
+var _viewed_twin: Node2D = null
 var _hovered_tab: int = -1
 ## Resource types in the order the tab lists them.
 var _resources: Array = ResourceDeposits.TYPES.keys()
@@ -152,6 +168,13 @@ func hide_panel() -> void:
 	visible = false
 	_help.close()
 	_clear_preview()
+	_viewing = {}
+	_pending_twin = null
+	_viewed_twin = null
+	for twin: Node2D in _twins.values():
+		if is_instance_valid(twin):
+			twin.queue_free()
+	_twins.clear()
 
 
 func _build_viewport() -> void:
@@ -206,6 +229,9 @@ func _select(index: int) -> void:
 		return
 
 	var body: Node2D = _bodies[_selected]
+	_viewing = {}
+	_pending_twin = null
+	_viewed_twin = null
 	if _known_body(body):
 		_preview = body.call("make_preview")
 	else:
@@ -301,6 +327,10 @@ func _process(delta: float) -> void:
 		var axis := Vector3.UP if _tab == TAB_RESOURCES else Vector3(0.0, 0.0, 1.0)
 		var speed: float = IDLE_SPIN * (3.0 if _tab == TAB_RESOURCES else 1.0)
 		_turn(axis, speed * delta * smoothstep(0.0, 1.5, _idle_time))
+
+	if _pending_twin != null and is_instance_valid(_pending_twin) and _twin_ready(_pending_twin):
+		_show_preview_of(_pending_twin)
+		_pending_twin = null
 
 	# Keep lighting right even if the sun moved while the catalog was open.
 	if _preview != null:
@@ -435,6 +465,9 @@ func _gui_input(event: InputEvent) -> void:
 					_set_tab(_tab_at(button.position))
 				elif _row_at(button.position) >= 0:
 					_select(_row_at(button.position))
+				elif _tab == TAB_PLANETS and _card_at(button.position) >= 0:
+					var card: Dictionary = _card_entries()[_card_at(button.position)]
+					_view_card(card["name"], card["trait"])
 				elif view.has_point(button.position):
 					_dragging = true
 			else:
@@ -464,8 +497,12 @@ func _lore(body: Node2D) -> Dictionary:
 	return PlanetLore.describe(body.get("terrain_kind"), body.get("terrain_params"), body.get("is_star"))
 
 
-## Label/value rows for the body, all read live from the simulation.
-func _stats(body: Node2D) -> Array:
+## Label/value rows for the body, all read live from the simulation. The rows
+## that depend on the roll (variant, liquid, clouds, atmosphere) come from
+## `look` - the body itself, or a viewed card's twin.
+func _stats(body: Node2D, look: Node2D = null) -> Array:
+	if look == null:
+		look = body
 	var gravity: float = _system.get_script().get_script_constant_map()["G"]
 	var radius: float = body.get("radius")
 	var mass: float = body.get("mass")
@@ -488,8 +525,8 @@ func _stats(body: Node2D) -> Array:
 	var spin: float = absf(body.call("get_spin_rate"))
 	rows.append(["Day", _duration(TAU / spin) if spin > 0.0001 else "-"])
 
-	var params: Dictionary = body.get("terrain_params")
-	var terrain: Dictionary = body.get("terrain_data")
+	var params: Dictionary = look.get("terrain_params")
+	var terrain: Dictionary = look.get("terrain_data")
 	var variant: String = PlanetLore.variant_label(body.get("terrain_kind"), params) if not params.is_empty() else ""
 	if variant != "":
 		rows.insert(0, ["Variant", variant])
@@ -498,8 +535,21 @@ func _stats(body: Node2D) -> Array:
 	if not params.is_empty() and params.get("clouds", 0.0) > 0.0:
 		rows.append(["Cloud cover", "~%d%%" % roundi(params["clouds"] * 100.0)])
 
-	rows.append(["Atmosphere", body.get("atmosphere")])
+	rows.append(["Atmosphere", look.get("atmosphere")])
 	return rows
+
+
+## Whether the player has found this type on `body` as `look` shows it: the
+## world here asks solar_system.gd; a viewed variant asks the Journal about
+## that variant (scenery is in plain sight once the variant has been seen).
+func _found_on(body: Node2D, look: Node2D, type_name: StringName) -> bool:
+	if look == body:
+		return _system.call("is_resource_found_on", body, type_name)
+	var body_name: String = body.get("body_name")
+	var variant: String = (look.get("terrain_params") as Dictionary).get("variant", "")
+	if not ResourceDeposits.TYPES[type_name].get("collectible", true):
+		return Journal.has_seen(body_name, variant)
+	return Journal.is_found(body_name, variant, type_name)
 
 
 ## A span of simulated time on the game clock (see solar_system.gd's
@@ -613,11 +663,15 @@ func _draw_text(font: Font) -> void:
 		return
 	var text: Rect2 = _text_rect()
 	var body: Node2D = _bodies[_selected]
-	if not _known_body(body):
+	# The world the text describes: a viewed card's twin (its variant, its
+	# description, its resources), or the planet as it is here. The orbit and
+	# the body itself are always the planet's.
+	var look: Node2D = _viewed_twin if _viewed_twin != null and is_instance_valid(_viewed_twin) else body
+	if not _known_body(body) and look == body:
 		_draw_uncharted_text(font, body)
 		return
 	var name: String = body.get("body_name")
-	var lore: Dictionary = _lore(body)
+	var lore: Dictionary = _lore(look)
 	var x: float = text.position.x
 	var y: float = text.position.y + 18.0
 
@@ -625,8 +679,14 @@ func _draw_text(font: Font) -> void:
 	y += 22.0
 	draw_string(font, Vector2(x, y), lore.get("class", ""), HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_AMBER)
 	y += 22.0
+	if look != body:
+		draw_string(
+			font, Vector2(x, y - 4.0), "Previewing a variant - not this system's world", HORIZONTAL_ALIGNMENT_LEFT,
+			text.size.x, 10, HudPanelStyle.COLOR_TEXT_MUTED
+		)
+		y += 14.0
 
-	for row: Array in _stats(body):
+	for row: Array in _stats(body, look):
 		draw_string(font, Vector2(x, y), row[0], HORIZONTAL_ALIGNMENT_LEFT, text.size.x * 0.45, 11, HudPanelStyle.COLOR_TEXT_MUTED)
 		draw_string(
 			font, Vector2(x + text.size.x * 0.45, y), row[1], HORIZONTAL_ALIGNMENT_LEFT,
@@ -637,36 +697,50 @@ func _draw_text(font: Font) -> void:
 	y += 10.0
 	y = _draw_paragraph(font, lore.get("description", ""), x, y, text.size.x, 12, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
-	# What this world has, as far as the player has found it; the rest is
-	# only a count of signals.
-	var tally: Dictionary = {}
-	var signals: int = 0
-	for deposit: Dictionary in body.get("resource_deposits"):
-		if _system.call("is_resource_found_on", body, deposit["type"]):
-			tally[deposit["type"]] = tally.get(deposit["type"], 0) + 1
-		else:
-			signals += 1
-	if not tally.is_empty() or signals > 0:
+	# What this world yields: its kind's spawn rules for the variant and
+	# traits it rolled - where, how it differs here and how many per world -
+	# not the count that came out this time, so the page reads the same for
+	# this planet generated in any system. Named where the player has found
+	# it on this variant; the rest only says something is there, and how many.
+	var rules: Array = ResourceDeposits.rules_for(body.get("terrain_kind"), look.get("terrain_params"))
+	if not rules.is_empty():
 		y += 14.0
 		draw_string(font, Vector2(x, y), "RESOURCES", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_AMBER)
 		y += 18.0
-		for type_name: StringName in tally:
-			var type: Dictionary = ResourceDeposits.TYPES[type_name]
-			var scenery: bool = not type.get("collectible", true)
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, type["color"])
-			draw_string(
-				font, Vector2(x + 14.0, y), "%s  ×%d%s" % [type["name"], tally[type_name], "  (scenery)" if scenery else ""],
-				HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 14.0, 11,
-				HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_SECONDARY
-			)
-			y += 17.0
-		if signals > 0:
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, Color(0.1, 0.1, 0.12))
-			draw_string(
-				font, Vector2(x + 14.0, y), "Unidentified signals  ×%d" % signals,
-				HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_MUTED
-			)
-			y += 17.0
+		for rule: Dictionary in rules:
+			var notes: Dictionary = ResourceDeposits.spawn_notes(body.get("terrain_kind"), rule)
+			var type_name: StringName = rule["type"]
+			var label: String = "Assorted rare finds"
+			var color: Color = HudPanelStyle.COLOR_TEXT_MUTED
+			var scenery: bool = false
+			var found: bool = true
+			if type_name != &"random":
+				var type: Dictionary = ResourceDeposits.TYPES[type_name]
+				label = type["name"]
+				color = rule.get("color", type["color"])
+				scenery = not type.get("collectible", true)
+				found = _found_on(body, look, type_name)
+			if found:
+				draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, color)
+				draw_string(
+					font, Vector2(x + 14.0, y), label + ("  (scenery)" if scenery else ""), HORIZONTAL_ALIGNMENT_LEFT,
+					text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_PRIMARY
+				)
+				y += 15.0
+				var line: String = notes["where"] + "."
+				if notes["note"] != "":
+					line += " %s." % notes["note"]
+				line += " %s." % notes["count"]
+				y = _draw_paragraph(font, line, x + 14.0, y, text.size.x - 14.0, 10, HudPanelStyle.COLOR_TEXT_SECONDARY)
+			else:
+				draw_circle(Vector2(x + 4.0, y - 4.0), 3.5, Color(0.1, 0.1, 0.12))
+				_draw_redacted(x + 14.0, y, label.length() * 7.0, 11)
+				draw_string(
+					font, Vector2(x + 22.0 + label.length() * 7.0, y), "Unidentified  ·  %s" % notes["count"],
+					HORIZONTAL_ALIGNMENT_LEFT, text.size.x - 22.0 - label.length() * 7.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
+				)
+				y += 15.0
+			y += 4.0
 
 	var facts: Array = lore.get("facts", [])
 	if not facts.is_empty():
@@ -843,7 +917,7 @@ func _draw_variant_tally(font: Font, body: Node2D, row: Rect2) -> void:
 	var total: int = PlanetLore.variants_of(body.get("terrain_kind")).size()
 	if total < 2:
 		return
-	var seen: int = Journal.seen_count(String(body.get("body_name")))
+	var seen: int = Journal.seen_count(String(body.get("body_name")), body.get("terrain_kind"))
 	draw_string(
 		font, row.position + Vector2(0.0, 19.0), "%d/%d" % [seen, total], HORIZONTAL_ALIGNMENT_RIGHT,
 		row.size.x - 8.0, 10, HudPanelStyle.COLOR_EMERALD if seen == total else HudPanelStyle.COLOR_TEXT_MUTED
@@ -862,22 +936,136 @@ func _draw_variant_cards(font: Font) -> void:
 		)
 		return
 	var kind: int = body.get("terrain_kind")
+	var body_name: String = body.get("body_name")
+	var total: int = PlanetLore.variants_of(kind).size()
+	draw_string(
+		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen   ·   click a card to view it" % [Journal.seen_count(body_name, kind), total],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
+	)
+	for card: Dictionary in _card_entries():
+		_draw_variant_card(font, body, card["rect"], card["name"], card["trait"])
+	_draw_view_caption(font)
+
+
+## The selected planet's cards: {rect, name, trait} - its variants, then its
+## traits, side by side across the strip.
+func _card_entries() -> Array:
+	var body: Node2D = _bodies[_selected]
+	if not _has_variants(body):
+		return []
+	var kind: int = body.get("terrain_kind")
 	var cards: Array = []
 	for variant: String in PlanetLore.variants_of(kind):
 		cards.append({"name": variant, "trait": false})
 	for flag: String in PlanetLore.traits_of(kind):
 		cards.append({"name": flag, "trait": true})
-
-	var body_name: String = body.get("body_name")
-	var total: int = PlanetLore.variants_of(kind).size()
-	draw_string(
-		font, strip.position + Vector2(0.0, -6.0), "VARIANTS  %d/%d seen" % [Journal.seen_count(body_name), total],
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD
-	)
+	var strip: Rect2 = _cards_rect()
 	var width: float = minf(CARD_MAX_WIDTH, (strip.size.x - CARD_GAP * (cards.size() - 1)) / cards.size())
 	for i in range(cards.size()):
-		var card := Rect2(strip.position + Vector2(i * (width + CARD_GAP), 4.0), Vector2(width, strip.size.y - 4.0))
-		_draw_variant_card(font, body, card, cards[i]["name"], cards[i]["trait"])
+		cards[i]["rect"] = Rect2(strip.position + Vector2(i * (width + CARD_GAP), 4.0), Vector2(width, strip.size.y - 4.0))
+	return cards
+
+
+func _card_at(point: Vector2) -> int:
+	var cards: Array = _card_entries()
+	for i in range(cards.size()):
+		if (cards[i]["rect"] as Rect2).has_point(point):
+			return i
+	return -1
+
+
+## Whether the world in front of the player now is this card.
+func _card_is_here(body: Node2D, name: String, is_trait: bool) -> bool:
+	var params: Dictionary = body.get("terrain_params")
+	return _known_body(body) and (
+		params.get(name, false) == true if is_trait else params.get("variant", "") == name
+	)
+
+
+## Whether the view shows this card: the one clicked, or HERE when none is.
+func _card_is_viewed(body: Node2D, name: String, is_trait: bool) -> bool:
+	if _viewing.is_empty():
+		return _card_is_here(body, name, is_trait) and not is_trait
+	return _viewing["name"] == name and _viewing["trait"] == is_trait
+
+
+## Shows a card's variant in the view - the planet itself if it is the world
+## here now, else a twin that rolls it.
+func _view_card(name: String, is_trait: bool) -> void:
+	var body: Node2D = _bodies[_selected]
+	var seen: bool = Journal.has_seen_trait(body.get("body_name"), name) if is_trait \
+		else Journal.has_seen(body.get("body_name"), name)
+	if not seen:
+		return
+	_viewing = {"name": name, "trait": is_trait}
+	if not is_trait and _card_is_here(body, name, false):
+		_viewing = {}
+		_pending_twin = null
+		_viewed_twin = null
+		_show_preview_of(body)
+		return
+	var kind: int = body.get("terrain_kind")
+	var params: Dictionary = body.get("terrain_params")
+	var forced: String = PlanetLore.forced_variant(
+		kind, params.get("variant", PlanetLore.variants_of(kind)[0]), name
+	) if is_trait else PlanetLore.forced_variant(kind, name)
+	_pending_twin = _twin_for(body, forced)
+	_viewed_twin = _pending_twin
+	queue_redraw()
+
+
+## A hidden copy of `body` - same exports, same world - that rolls `forced`.
+func _twin_for(body: Node2D, forced: String) -> Node2D:
+	var key := "%s|%s" % [body.get("body_name"), forced]
+	if _twins.has(key) and is_instance_valid(_twins[key]):
+		return _twins[key]
+	var twin := Node2D.new()
+	twin.set_script(body.get_script())
+	for prop: Dictionary in body.get_property_list():
+		var usage: int = prop["usage"]
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE and usage & PROPERTY_USAGE_STORAGE:
+			twin.set(prop["name"], body.get(prop["name"]))
+	twin.set("terrain_variant", forced)
+	twin.set("world_source", _system)
+	twin.name = "VariantTwin"
+	twin.position = TWIN_POSITION
+	_system.add_child(twin)
+	_twins[key] = twin
+	return twin
+
+
+func _twin_ready(twin: Node2D) -> bool:
+	return not (twin.get("terrain_data") as Dictionary).is_empty()
+
+
+## Swaps the view's model for `source`'s preview, keeping the zoom.
+func _show_preview_of(source: Node2D) -> void:
+	_clear_preview()
+	_preview = source.call("make_preview")
+	_world_root.add_child(_preview)
+	_preview.position = _preview_origin()
+	_globe = _preview.get_child(0) if _preview.get_child_count() > 0 else null
+	_idle_time = 0.0
+	_aim_camera()
+	queue_redraw()
+
+
+## What the view is showing, over its top-left corner.
+func _draw_view_caption(font: Font) -> void:
+	var body: Node2D = _bodies[_selected]
+	if _viewing.is_empty():
+		return
+	var view: Rect2 = _view_rect()
+	var label: String = PlanetLore.variant_name(body.get("terrain_kind"), _viewing["name"]).to_upper()
+	var text: String = ("GENERATING  %s ..." if _pending_twin != null else "VIEWING  %s") % label
+	draw_string(
+		font, view.position + Vector2(14.0, 24.0), text, HORIZONTAL_ALIGNMENT_LEFT, view.size.x - 28.0, 12,
+		HudPanelStyle.COLOR_AMBER
+	)
+	draw_string(
+		font, view.position + Vector2(14.0, 40.0), "A preview - not the world in this system", HORIZONTAL_ALIGNMENT_LEFT,
+		view.size.x - 28.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
+	)
 
 
 func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_trait: bool) -> void:
@@ -886,13 +1074,16 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 	var params: Dictionary = body.get("terrain_params")
 	var seen: bool = Journal.has_seen_trait(body_name, name) if is_trait else Journal.has_seen(body_name, name)
 	# HERE: the world in front of the player now is this variant (or has it).
-	var here: bool = _known_body(body) and (
-		params.get(name, false) == true if is_trait else params.get("variant", "") == name
-	)
+	var here: bool = _card_is_here(body, name, is_trait)
+	var viewed: bool = _card_is_viewed(body, name, is_trait)
 
 	draw_rect(card, Color(HudPanelStyle.COLOR_BG_SURFACE, 0.9 if seen else 0.4))
+	if viewed:
+		draw_rect(card, Color(HudPanelStyle.COLOR_AMBER, 0.08))
 	var border: Color = HudPanelStyle.COLOR_CYAN if here else Color(HudPanelStyle.COLOR_BORDER_DEFAULT, 1.0 if seen else 0.4)
-	draw_rect(card, border, false, 1.0)
+	if viewed:
+		border = HudPanelStyle.COLOR_AMBER
+	draw_rect(card, border, false, 1.0 if not viewed else 2.0)
 	if here:
 		draw_rect(Rect2(card.position, Vector2(card.size.x, 3.0)), HudPanelStyle.COLOR_CYAN)
 
@@ -902,6 +1093,8 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 	var tag: String = "HERE" if here else ("SEEN" if seen else "UNSEEN")
 	if is_trait:
 		tag = "TRAIT  ·  " + tag
+	if viewed and not _viewing.is_empty():
+		tag += "  ·  VIEWING"
 	draw_string(
 		font, Vector2(x, card.position.y + 14.0), tag, HORIZONTAL_ALIGNMENT_LEFT, inner, 9,
 		HudPanelStyle.COLOR_CYAN if here else (HudPanelStyle.COLOR_TEXT_MUTED if seen else HudPanelStyle.COLOR_TEXT_FAINT)

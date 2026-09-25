@@ -83,9 +83,21 @@ const TYPES := {
 		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
 		"color": Color(0.64, 0.5, 0.32), "shine": 0.1, "glow": 0.02, "collectible": false,
 	},
-	&"geyser": {
-		"name": "Geyser", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
-		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04, "collectible": false,
+	&"ice_wurm": {
+		"name": "Ice wurm", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
+		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04,
+	},
+	&"wind_crystal": {
+		"name": "Wind crystal", "mesh": &"wind_crystals", "size": Vector2(0.035, 0.05),
+		"color": Color(0.62, 0.95, 0.9), "shine": 0.8, "glow": 0.22,
+	},
+	&"hel": {
+		"name": "Hel", "mesh": &"bubbles", "size": Vector2(0.05, 0.07),
+		"color": Color(0.95, 0.72, 1.0), "shine": 0.6, "glow": 0.7, "wiggle": 0.03,
+	},
+	&"silver_spheres": {
+		"name": "Silver spheres", "mesh": &"sphere_arch", "size": Vector2(0.045, 0.065),
+		"color": Color(0.86, 0.88, 0.93), "shine": 0.95, "glow": 0.08,
 	},
 }
 
@@ -111,6 +123,8 @@ const TYPES := {
 ##             &"quake_hole" (the middle of a Quake scar's hole)
 ##   cluster - all within this many radians of the first one (a field)
 ##   motion  - &"still" (default), &"drift", &"roll" or &"hop" (see MOTIONS)
+##   per_feature - instead of `count` per world, this many round every
+##             placed feature (the world's sigils: Ice hollows), in a group
 ##   note    - how it differs on the variants this entry is for, for the
 ##             journal ("near-black here")
 ## Kinds missing here get no deposits.
@@ -118,88 +132,147 @@ const SPAWNS := {
 	PlanetTerrain.Kind.TERRAN: [
 		{"type": &"gold_ore", "count": Vector2i(5, 9)},
 		{"type": &"silver_ore", "count": Vector2i(5, 9)},
+		{"type": &"sky_stone", "count": Vector2i(0, 2), "only": ["temperate"]},
+		{"type": &"pink_crystal", "count": Vector2i(0, 2), "only": ["autumn"],
+			"note": "A few stray crystals among the autumn woods"},
+		{"type": &"ice_crystal", "count": Vector2i(0, 2), "only": ["snowy"], "feature": &"snow_hump", "slope": 2.0},
 	],
 	PlanetTerrain.Kind.DESERT: [
-		{"type": &"gold_ore", "count": Vector2i(14, 20)},
+		{"type": &"gold_ore", "count": Vector2i(8, 15)},
 		{"type": &"scrap", "count": Vector2i(2, 4)},
 		{"type": &"bone", "count": Vector2i(1, 1), "chance": 0.25},
-		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll",
-			"note": "Only on the open sands - the other deserts are too wild or too still"},
+		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll"},
+		{"type": &"tumbleweed", "count": Vector2i(3, 5), "only": ["sandstorm"], "motion": &"roll",
+			"note": "Blown along by the storm"},
+		{"type": &"gold_pillar", "count": Vector2i(1, 3), "only": ["sandstorm"],
+			"note": "Uncovered where the storm scours the sand away"},
+		{"type": &"wind_crystal", "count": Vector2i(5, 6), "only": ["lava"],
+			"note": "Grown in the hot winds off the lava canyons"},
+	],
+	PlanetTerrain.Kind.VOLCANIC: [
+		{"type": &"scrap", "count": Vector2i(8, 10)},
+		{"type": &"pink_crystal", "count": Vector2i(7, 10), "only": ["lava"]},
+		{"type": &"ice_crystal", "count": Vector2i(7, 10), "only": ["cryo"]},
+		{"type": &"wind_crystal", "count": Vector2i(3, 6), "only": ["cryo"]},
 	],
 	PlanetTerrain.Kind.BARREN: [
 		{"type": &"gold_ore", "count": Vector2i(2, 4)},
 		{"type": &"silver_ore", "count": Vector2i(2, 4)},
-		{"type": &"scrap", "count": Vector2i(1, 3)},
+		{"type": &"scrap", "count": Vector2i(12, 20), "only": ["spiked"],
+			"note": "Strewn round the jagged crater rims"},
+		{"type": &"scrap", "count": Vector2i(10, 12), "except": ["spiked"]},
 	],
 	PlanetTerrain.Kind.TOXIC: [
-		{"type": &"toxic_ore", "count": Vector2i(6, 10)},
+		{"type": &"toxic_ore", "count": Vector2i(3, 5), "only": ["crystal"]},
+		{"type": &"pink_crystal", "count": Vector2i(8, 10), "only": ["crystal"]},
+		{"type": &"wind_crystal", "count": Vector2i(3, 7), "only": ["crystal"]},
+		{"type": &"toxic_ore", "count": Vector2i(4, 7), "except": ["crystal"]},
+		{"type": &"bone", "count": Vector2i(5, 9), "except": ["crystal"]},
+	],
+	PlanetTerrain.Kind.GAS_GIANT: [
+		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
+			"note": "Bubbles of fuel gas drifting over the cloud tops"},
+	],
+	PlanetTerrain.Kind.ICE_GIANT: [
+		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
+			"note": "Bubbles of fuel gas drifting over the cloud tops"},
 	],
 	PlanetTerrain.Kind.SLIME: [
 		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"]},
-		{"type": &"toxic_ore", "count": Vector2i(5, 8), "except": ["petrified"]},
-		{"type": &"toxic_ore", "count": Vector2i(11, 16), "only": ["petrified"],
-			"note": "Twice as common once the slime has dried off it"},
+		{"type": &"toxic_ore", "count": Vector2i(6, 12), "except": ["petrified"]},
+		{"type": &"toxic_ore", "count": Vector2i(15, 20), "only": ["petrified"],
+			"note": "Far more of it once the slime has dried off it"},
 		{"type": &"slime_jelly", "count": Vector2i(4, 7), "on": "any", "except": ["petrified"], "motion": &"hop"},
 	],
 	PlanetTerrain.Kind.OCCULT: [
-		{"type": &"gold_ore", "count": Vector2i(8, 14)},
-		{"type": &"bone", "count": Vector2i(5, 9), "except": ["blind"]},
+		{"type": &"silver_ore", "count": Vector2i(4, 9), "only": ["obsidian_yellow"],
+			"note": "Silver, not gold, where the eyes are gold"},
+		{"type": &"gold_ore", "count": Vector2i(4, 9), "except": ["obsidian_yellow"]},
+		{"type": &"bone", "count": Vector2i(10, 15), "except": ["blind"]},
 		# Blind worlds hide their bones: near-black, no glow.
-		{"type": &"bone", "count": Vector2i(5, 9), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0,
+		{"type": &"bone", "count": Vector2i(10, 15), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0,
 			"note": "Near-black and dull here - hard to tell from the dust"},
+	],
+	PlanetTerrain.Kind.GLOOM: [
+		{"type": &"silver_spheres", "count": Vector2i(5, 7)},
 	],
 	PlanetTerrain.Kind.BLOOM: [
 		# The valley floors only - the flower fields stay bare, bar some
 		# silver on dried worlds.
-		{"type": &"beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["fields"]},
-		{"type": &"frozen_beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
-		{"type": &"dried_beanstalk", "count": Vector2i(18, 26), "lowest": 0.14, "slope": 0.8, "only": ["dried"]},
-		{"type": &"beanstalk", "count": Vector2i(2, 4), "lowest": 0.14, "slope": 0.8, "only": ["dried"],
+		{"type": &"beanstalk", "count": Vector2i(15, 25), "lowest": 0.1, "slope": 0.7, "only": ["fields"]},
+		{"type": &"frozen_beanstalk", "count": Vector2i(10, 18), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
+		{"type": &"ice_crystal", "count": Vector2i(8, 16), "only": ["winter"], "feature": &"snow_hump", "slope": 2.0},
+		{"type": &"scrap", "count": Vector2i(5, 15), "except": ["dried"]},
+		{"type": &"dried_beanstalk", "count": Vector2i(50, 70), "lowest": 0.35, "slope": 0.9, "only": ["dried"],
+			"note": "Everywhere in the low ground - the dead stalks choke it"},
+		{"type": &"beanstalk", "count": Vector2i(0, 18), "lowest": 0.35, "slope": 0.9, "only": ["dried"],
 			"note": "The last few still alive among the dead stalks"},
 		{"type": &"silver_ore", "count": Vector2i(8, 12), "above": 0.3, "only": ["dried"],
 			"note": "Laid bare where the flowers withered"},
 	],
 	PlanetTerrain.Kind.OASIS: [
-		{"type": &"silver_ore", "count": Vector2i(14, 20)},
-		{"type": &"scrap", "count": Vector2i(5, 8)},
+		{"type": &"scrap", "count": Vector2i(14, 20)},
+		{"type": &"silver_ore", "count": Vector2i(5, 8)},
+		{"type": &"gold_pillar", "count": Vector2i(0, 3)},
 		{"type": &"tumbleweed", "count": Vector2i(3, 6), "motion": &"roll"},
 	],
 	PlanetTerrain.Kind.LOTUS: [
-		{"type": &"gold_pillar", "count": Vector2i(5, 9), "on": "liquid"},
-		{"type": &"toxic_ore", "count": Vector2i(1, 3), "slope": 0.9, "only": ["night", "giant"],
-			"note": "Only where the flowers have closed or grown giant"},
+		{"type": &"gold_pillar", "count": Vector2i(10, 13), "on": "liquid", "except": ["giant"]},
+		{"type": &"gold_pillar", "count": Vector2i(6, 10), "on": "liquid", "only": ["giant"],
+			"note": "Fewer, where the giant flowers crowd the sea"},
+		{"type": &"toxic_ore", "count": Vector2i(2, 8), "slope": 0.9, "only": ["night"],
+			"note": "Only while the flowers are closed for the night"},
 	],
 	PlanetTerrain.Kind.SWIRL: [
 		{"type": &"sky_stone", "count": Vector2i(8, 14), "feature": &"swirl_ridge"},
 		{"type": &"silver_ore", "count": Vector2i(6, 10)},
+		{"type": &"scrap", "count": Vector2i(0, 2)},
+		{"type": &"bone", "count": Vector2i(0, 2), "chance": 0.5},
 	],
 	PlanetTerrain.Kind.RINGS: [
-		{"type": &"bone", "count": Vector2i(2, 4), "feature": &"ring_centre", "slope": 0.8},
-		{"type": &"gold_ore", "count": Vector2i(6, 10)},
+		{"type": &"bone", "count": Vector2i(0, 4), "feature": &"ring_centre", "slope": 0.8},
+		{"type": &"gold_ore", "count": Vector2i(13, 20), "only": ["sandy"],
+			"note": "Twice as rich where the sand has spread"},
+		{"type": &"gold_ore", "count": Vector2i(5, 9), "except": ["sandy"]},
 		{"type": &"scrap", "count": Vector2i(3, 6)},
+		{"type": &"sky_stone", "count": Vector2i(2, 5), "only": ["volcanic"], "feature": &"volcano", "slope": 2.0},
 	],
 	PlanetTerrain.Kind.FRACTAL: [
 		# On the massifs: the plains stay below ~0.25.
-		{"type": &"egg", "count": Vector2i(1, 3), "land": Vector2(0.45, 1.0), "slope": 0.45},
+		{"type": &"egg", "count": Vector2i(3, 6), "land": Vector2(0.45, 1.0), "slope": 0.45},
 		{"type": &"silver_ore", "count": Vector2i(8, 14), "land": Vector2(0.0, 0.25)},
+		{"type": &"scrap", "count": Vector2i(6, 15), "land": Vector2(0.0, 0.25)},
 	],
 	PlanetTerrain.Kind.MERIDIAN: [
-		# Pink crystals along the shores, gold anywhere.
-		{"type": &"pink_crystal", "count": Vector2i(6, 10), "land": Vector2(0.0, 0.07), "slope": 0.6},
-		{"type": &"gold_ore", "count": Vector2i(5, 8)},
+		# Pink crystals along the shores; gold anywhere - silver on inverted
+		# worlds.
+		{"type": &"pink_crystal", "count": Vector2i(8, 13), "land": Vector2(0.0, 0.07), "slope": 0.6},
+		{"type": &"gold_ore", "count": Vector2i(8, 13), "except": ["inverted"]},
+		{"type": &"silver_ore", "count": Vector2i(8, 13), "only": ["inverted"],
+			"note": "Silver instead of gold where the seas run white"},
 	],
 	PlanetTerrain.Kind.QUAKE: [
-		# Scarce: a few finds, each in the middle of a hole, of any kind.
-		{"type": &"random", "count": Vector2i(2, 4), "except_types": [&"egg"], "feature": &"quake_hole", "slope": 2.0},
+		# Scarce: each find in the middle of a hole, of any kind.
+		{"type": &"random", "count": Vector2i(6, 10), "except_types": [&"egg", &"hel"], "feature": &"quake_hole", "slope": 2.0,
+			"except": ["terraced"]},
+		{"type": &"random", "count": Vector2i(10, 14), "except_types": [&"egg", &"hel"], "feature": &"quake_hole", "slope": 2.0,
+			"only": ["terraced"]},
 	],
 	PlanetTerrain.Kind.FROZEN: [
 		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
 		{"type": &"silver_ore", "count": Vector2i(4, 7)},
+		{"type": &"ice_wurm", "count": Vector2i(2, 4), "slope": 0.6, "except": ["pink"]},
+		{"type": &"ice_wurm", "count": Vector2i(2, 4), "slope": 0.6, "only": ["pink"], "color": Color(1.0, 0.55, 0.76),
+			"note": "Pink as the methane ice they burrow in"},
 	],
 	PlanetTerrain.Kind.ICE: [
 		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
 		{"type": &"scrap", "count": Vector2i(3, 5)},
-		{"type": &"geyser", "count": Vector2i(8, 14), "only": ["geysers"], "cluster": 0.35, "slope": 0.5},
+		{"type": &"ice_wurm", "count": Vector2i(8, 13), "only": ["geysers"], "cluster": 0.45, "slope": 0.8,
+			"note": "Crowded into one field, steaming like vents"},
+		# Groups in every hollow (per_feature: how many round each sigil).
+		{"type": &"ice_wurm", "per_feature": Vector2i(4, 5), "count": Vector2i(4, 5), "only": ["hollows"],
+			"slope": 2.0, "color": Color(0.8, 0.56, 0.66), "note": "Grey-pink, knotted together in the hollows"},
 	],
 }
 
@@ -277,6 +350,9 @@ static func place(kind: PlanetTerrain.Kind, ground: Ground, body_seed: int) -> A
 	for rule: Dictionary in SPAWNS[kind]:
 		if not _applies(rule, ground.params) or rng.randf() > rule.get("chance", 1.0):
 			continue
+		if rule.has("per_feature"):
+			_place_per_feature(deposits, rule, ground, rng)
+			continue
 		var count: int = rng.randi_range(rule["count"].x, rule["count"].y)
 		var placed: int = 0
 		var cluster_centre := Vector3.ZERO
@@ -291,6 +367,14 @@ static func place(kind: PlanetTerrain.Kind, ground: Ground, body_seed: int) -> A
 				dir = _quake_hole_centre(ground.params, dir)
 				if dir == Vector3.ZERO:
 					continue
+			elif rule.get("feature", &"") == &"snow_hump":
+				# Somewhere on top of a hump - they are too small a share of
+				# the world for random spots to find.
+				var humps: Array = ground.params.get("sigils", [])
+				if humps.is_empty():
+					continue
+				var hump: Dictionary = humps[rng.randi() % humps.size()]
+				dir = _near(hump["direction"], hump["size"] * 0.4, rng)
 			if cluster_centre != Vector3.ZERO and dir.angle_to(cluster_centre) > rule["cluster"]:
 				continue
 			var size: float = rng.randf_range(type["size"].x, type["size"].y)
@@ -298,27 +382,54 @@ static func place(kind: PlanetTerrain.Kind, ground: Ground, body_seed: int) -> A
 				continue
 			if rule.has("cluster") and cluster_centre == Vector3.ZERO:
 				cluster_centre = dir
-			var motion: DepositMotion = _motion_for(rule).new()
-			motion.setup(dir, rule, rng.randi())
-			var color: Color = rule.get("color", type["color"])
-			if type.has("color_param") and not rule.has("color") and ground.params.get("liquid", false):
-				# The planet's own colour, but well lighter, or it vanishes
-				# against the very liquid it came from.
-				var own: Color = ground.params[type["color_param"]]
-				color = Color.from_hsv(own.h, clampf(own.s + 0.15, 0.0, 1.0), clampf(own.v + 0.4, 0.0, 1.0))
-			deposits.append({
-				"type": type_name,
-				"direction": dir,
-				"lift": ground.lift(dir),
-				"size": size,
-				"seed": rng.randi(),
-				"color": color,
-				"glow": rule.get("glow", type.get("glow", 0.15)),
-				"collectible": type.get("collectible", true),
-				"motion": motion,
-			})
+			deposits.append(_deposit(rule, type_name, dir, size, ground, rng))
 			placed += 1
 	return deposits
+
+
+## One deposit of `type_name` at `dir`, its motion and look from the entry.
+static func _deposit(
+	rule: Dictionary, type_name: StringName, dir: Vector3, size: float, ground: Ground, rng: RandomNumberGenerator
+) -> Dictionary:
+	var type: Dictionary = TYPES[type_name]
+	var motion: DepositMotion = _motion_for(rule).new()
+	motion.setup(dir, rule, rng.randi())
+	var color: Color = rule.get("color", type["color"])
+	if type.has("color_param") and not rule.has("color") and ground.params.get("liquid", false):
+		# The planet's own colour, but well lighter, or it vanishes
+		# against the very liquid it came from.
+		var own: Color = ground.params[type["color_param"]]
+		color = Color.from_hsv(own.h, clampf(own.s + 0.15, 0.0, 1.0), clampf(own.v + 0.4, 0.0, 1.0))
+	return {
+		"type": type_name,
+		"direction": dir,
+		"lift": ground.lift(dir),
+		"size": size,
+		"seed": rng.randi(),
+		"color": color,
+		"glow": rule.get("glow", type.get("glow", 0.15)),
+		"collectible": type.get("collectible", true),
+		"motion": motion,
+	}
+
+
+## A `per_feature` entry: a group round every placed feature (sigil) of the
+## world - the middle half of it - `per_feature` strong each.
+static func _place_per_feature(deposits: Array, rule: Dictionary, ground: Ground, rng: RandomNumberGenerator) -> void:
+	for sigil: Dictionary in ground.params.get("sigils", []):
+		var want: int = rng.randi_range(rule["per_feature"].x, rule["per_feature"].y)
+		var placed: int = 0
+		for _attempt in range(300):
+			if placed >= want:
+				break
+			var type_name: StringName = _pick_type(rule, rng)
+			var type: Dictionary = TYPES[type_name]
+			var dir: Vector3 = _near(sigil["direction"], sigil["size"] * 0.55, rng)
+			var size: float = rng.randf_range(type["size"].x, type["size"].y)
+			if not _is_clear(deposits, dir, size) or not ground.allows(rule, dir):
+				continue
+			deposits.append(_deposit(rule, type_name, dir, size, ground, rng))
+			placed += 1
 
 
 ## Every spawn entry that can place `type_name`, as [kind, rule] pairs - a
@@ -345,6 +456,10 @@ static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
 			where.append("at the centres of the ring sets")
 		&"quake_hole":
 			where.append("at the bottom of the quake holes")
+		&"volcano":
+			where.append("on the scorched ground round the volcanoes")
+		&"snow_hump":
+			where.append("on top of the snow humps")
 	match rule.get("on", "land"):
 		"liquid":
 			where.append("out on the sea")
@@ -364,6 +479,8 @@ static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
 			where.append("on the low plains")
 	if rule.has("cluster"):
 		where.append("gathered in one field")
+	if rule.has("per_feature"):
+		where.append("in groups in the hollows")
 	if where.is_empty():
 		where.append("anywhere on land")
 	match rule.get("motion", &"still"):
@@ -384,9 +501,12 @@ static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
 			func(name: String) -> String: return PlanetLore.variant_name(kind, name)
 		))
 
-	var low: int = rule["count"].x
-	var high: int = rule["count"].y
-	var count: String = ("%d" % low if low == high else "%d-%d" % [low, high]) + " per world"
+	var range_of: Vector2i = rule.get("per_feature", rule["count"])
+	var low: int = range_of.x
+	var high: int = range_of.y
+	var count: String = ("%d" % low if low == high else "%d-%d" % [low, high]) + (
+		" in each hollow" if rule.has("per_feature") else " per world"
+	)
 	if rule["type"] == &"random":
 		count += ", as one of several finds"
 	if rule.get("chance", 1.0) < 1.0:
@@ -396,6 +516,15 @@ static func spawn_notes(kind: int, rule: Dictionary) -> Dictionary:
 		"where": place.left(1).to_upper() + place.substr(1), "variants": variants, "count": count,
 		"note": rule.get("note", ""),
 	}
+
+
+## The spawn entries that apply to a world of `kind` as it rolled (its full
+## terrain_params: variant and traits) - what it yields, whatever the counts
+## came out as this time.
+static func rules_for(kind: int, params: Dictionary) -> Array:
+	return (SPAWNS.get(kind, []) as Array).filter(
+		func(rule: Dictionary) -> bool: return _applies(rule, params)
+	)
 
 
 ## What a world of `kind` rolled as `variant` (plus the trait `flag`, if
@@ -559,6 +688,16 @@ static func _allows(ground: Ground, rule: Dictionary, dir: Vector3) -> bool:
 		&"quake_hole":
 			var centre: Vector3 = _quake_hole_centre(ground.params, dir)
 			return centre != Vector3.ZERO and dir.angle_to(centre) < 0.01
+		&"snow_hump":
+			# On top of a Terran snow hump.
+			for sigil: Dictionary in ground.params.get("sigils", []):
+				if dir.angle_to(sigil["direction"]) < sigil["size"] * 0.45:
+					return true
+			return false
+		&"volcano":
+			# On the scorched ring round a cone, off its steep flanks.
+			var distance: float = _volcano_distance(ground.params, dir)
+			return distance > 1.0 and distance < 1.45
 	return true
 
 
@@ -598,6 +737,39 @@ static func _quake_hole_centre(params: Dictionary, dir: Vector3) -> Vector3:
 				if angle < best_angle:
 					best_angle = angle
 					best = out.normalized()
+	return best
+
+
+## A random direction within `angle` radians of `centre`.
+static func _near(centre: Vector3, angle: float, rng: RandomNumberGenerator) -> Vector3:
+	var helper := Vector3.UP if absf(centre.y) < 0.9 else Vector3.RIGHT
+	var t: Vector3 = helper.cross(centre).normalized()
+	var b: Vector3 = centre.cross(t)
+	var spin: float = rng.randf() * TAU
+	var off: float = sqrt(rng.randf()) * angle
+	return (centre + (t * cos(spin) + b * sin(spin)) * tan(off)).normalized()
+
+
+## How far `dir` is from the nearest Rings volcano, in that cone's radii - the
+## planet shader's volcano_at() (and the bake's volcano_cones) on the CPU.
+static func _volcano_distance(params: Dictionary, dir: Vector3) -> float:
+	if params.get("volcano", 0.0) <= 0.0:
+		return INF
+	var density: float = params["volcano_density"]
+	var p: Vector3 = dir * float(params["volcano_scale"]) + Vector3.ONE * float(params["volcano_shift"])
+	var cell := p.floor()
+	var local: Vector3 = p - cell
+	var best := INF
+	for z in range(-1, 2):
+		for y in range(-1, 2):
+			for x in range(-1, 2):
+				var o := Vector3(x, y, z)
+				var roll: Vector3 = _shader_hash(cell + o + Vector3(0.0, 0.0, 6143.0))
+				if roll.x > density:
+					continue
+				var r: Vector3 = o + Vector3(0.5, 0.5, 0.5) + (_shader_hash(cell + o + Vector3(0.0, 31.0, 0.0)) - Vector3(0.5, 0.5, 0.5)) * 0.8 - local
+				var radius: float = lerpf(0.35, 0.6, roll.x / maxf(density, 1e-3))
+				best = minf(best, r.length() / radius)
 	return best
 
 

@@ -47,6 +47,12 @@ static func build(style: StringName, mesh_seed: int) -> ArrayMesh:
 			_bones(st, rng)
 		&"slabs":
 			_slabs(st, rng)
+		&"wind_crystals":
+			_wind_crystals(st, rng)
+		&"bubbles":
+			_bubbles(st, rng)
+		&"sphere_arch":
+			_sphere_arch(st, rng)
 		_:
 			push_error("DepositMeshes: no look called %s" % style)
 	return st.commit()
@@ -198,6 +204,72 @@ static func _geyser(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
 		path.append(Vector3(0.0, 0.1 + t * height, 0.0) + lean * t * t * height)
 		radii.append(lerpf(0.1, 0.38, pow(t, 0.7)) * (1.0 - smoothstep(0.85, 1.0, t) * 0.7))
 	_tube(st, path, radii, 8, Color(0.97, 0.98, 1.0))
+
+
+## Thin crystal blades all leaning the same way, as if blown flat by a wind
+## that never stops.
+static func _wind_crystals(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	var wind := Vector3(cos(rng.randf() * TAU), 0.0, sin(rng.randf() * TAU)).normalized()
+	for i in range(rng.randi_range(5, 8)):
+		var around: float = rng.randf_range(0.0, TAU)
+		var reach: float = 0.0 if i == 0 else rng.randf_range(0.08, 0.32)
+		var base := Vector3(cos(around) * reach, -0.1, sin(around) * reach)
+		var lean: float = rng.randf_range(0.45, 0.8)
+		var axis: Vector3 = (Vector3.UP * (1.0 - lean) + wind * lean + Vector3(rng.randf_range(-0.1, 0.1), 0.0, rng.randf_range(-0.1, 0.1))).normalized()
+		var length: float = rng.randf_range(0.45, 0.95) * (1.25 if i == 0 else 1.0)
+		var tone: float = rng.randf_range(0.8, 1.0)
+		_spike(st, base, axis, rng.randf_range(0.05, 0.09), length, rng.randf_range(0.0, TAU), Color(tone, tone, tone))
+
+
+## Glowing bubbles of gas, big and small, floating clear of the cloud tops.
+static func _bubbles(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	for i in range(rng.randi_range(4, 7)):
+		var around: float = rng.randf_range(0.0, TAU)
+		var reach: float = 0.0 if i == 0 else rng.randf_range(0.15, 0.4)
+		var radius: float = rng.randf_range(0.22, 0.32) if i == 0 else rng.randf_range(0.08, 0.2)
+		var at := Vector3(cos(around) * reach, rng.randf_range(0.3, 0.9), sin(around) * reach)
+		var tone: float = rng.randf_range(0.85, 1.0)
+		_ball(st, at, radius, Color(tone, tone, tone))
+
+
+## Silver spheres threaded on one rod bent into a half circle, both its ends
+## in the ground, the spheres strung along the arch.
+static func _sphere_arch(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
+	var turn := Basis(Vector3.UP, rng.randf_range(0.0, TAU))
+	var radius: float = rng.randf_range(0.38, 0.48)
+	var path := PackedVector3Array()
+	var radii := PackedFloat32Array()
+	for k in range(25):
+		var a: float = PI * float(k) / 24.0
+		path.append(turn * Vector3(cos(a) * radius, sin(a) * radius * 1.1 - 0.08, 0.0))
+		radii.append(0.022)
+	_tube(st, path, radii, 6, Color(0.5, 0.52, 0.56))
+	var count: int = rng.randi_range(5, 7)
+	for i in range(count):
+		var a: float = PI * lerpf(0.12, 0.88, (float(i) + rng.randf_range(-0.2, 0.2)) / float(count - 1))
+		var at: Vector3 = turn * Vector3(cos(a) * radius, sin(a) * radius * 1.1 - 0.08, 0.0)
+		_ball(st, at, rng.randf_range(0.07, 0.11), Color(1.0, 1.0, 1.0))
+
+
+## A whole smooth sphere.
+static func _ball(st: SurfaceTool, centre: Vector3, radius: float, color: Color) -> void:
+	var rings := 10
+	var sides := 14
+	var points: Array[PackedVector3Array] = []
+	var normals: Array[PackedVector3Array] = []
+	for i in range(rings + 1):
+		var y: float = cos(PI * (1.0 - float(i) / float(rings)))
+		var r: float = sqrt(maxf(1.0 - y * y, 0.0))
+		var ring := PackedVector3Array()
+		var ring_normals := PackedVector3Array()
+		for k in range(sides + 1):
+			var a: float = TAU * float(k) / float(sides)
+			var unit := Vector3(cos(a) * r, y, sin(a) * r)
+			ring.append(centre + unit * radius)
+			ring_normals.append(unit)
+		points.append(ring)
+		normals.append(ring_normals)
+	_grid(st, points, normals, color)
 
 
 ## Golden columns of different heights rising out of the water, their tops

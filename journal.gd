@@ -8,8 +8,12 @@ extends RefCounted
 ## travel and scene reloads; there is no save system yet.
 ##
 ## A "variant" is terrain_params.variant ("" for kinds without one); a "trait"
-## is a flag a roll can set beside it (PlanetLore.FLAG_LABELS: blind, julia,
-## rings).
+## is a flag a roll can set beside it (PlanetLore.FLAG_LABELS: blind, rings).
+
+## TEMPORARY: the whole journal unlocked - every planet charted, every variant
+## and trait seen, every resource known and found everywhere. Discovery is
+## still recorded underneath; set false to go back to it.
+static var reveal_all := true
 
 ## body name -> {variant: true}
 static var _variants: Dictionary = {}
@@ -42,20 +46,22 @@ static func record_find(body_name: String, params: Dictionary, type_name: String
 
 
 static func has_seen(body_name: String, variant: String) -> bool:
-	return _variants.get(body_name, {}).has(variant)
+	return reveal_all or _variants.get(body_name, {}).has(variant)
 
 
 static func has_seen_trait(body_name: String, flag: String) -> bool:
-	return _traits.get(body_name, {}).has(flag)
+	return reveal_all or _traits.get(body_name, {}).has(flag)
 
 
-## How many of `body_name`'s variants have been seen.
-static func seen_count(body_name: String) -> int:
-	return _variants.get(body_name, {}).size()
+## How many of `body_name`'s variants (a planet of `kind`) have been seen.
+static func seen_count(body_name: String, kind: int) -> int:
+	return PlanetLore.variants_of(kind).filter(
+		func(variant: String) -> bool: return has_seen(body_name, variant)
+	).size()
 
 
 static func is_found(body_name: String, variant: String, type_name: StringName) -> bool:
-	return _finds.get(body_name, {}).get(variant, {}).has(type_name)
+	return reveal_all or _finds.get(body_name, {}).get(variant, {}).has(type_name)
 
 
 ## Whether this type was found on `body_name` while it had the trait `flag`.
@@ -74,7 +80,7 @@ static func variants_found_on(body_name: String, type_name: StringName) -> Array
 
 
 static func is_known(type_name: StringName) -> bool:
-	return _known.has(type_name)
+	return reveal_all or _known.has(type_name)
 
 
 ## Forgets everything - a new game.

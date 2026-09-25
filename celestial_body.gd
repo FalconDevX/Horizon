@@ -239,6 +239,11 @@ var terrain_kind: int = 0
 ## each kind's variants and flags in planet_terrain.gd. Empty = rolled.
 @export var terrain_variant: String = ""
 
+## Where world settings (seed, chaos, time scale) are read from, if not the
+## scene owner - for a copy made outside the scene, which has no owner by the
+## time it builds (the log's variant previews).
+var world_source: Node = null
+
 ## Texels along one edge of each of the six heightmap faces.
 @export_range(32, 1024, 16) var terrain_resolution: int = 1024
 
@@ -986,6 +991,13 @@ func _push_terrain_effects(p: Dictionary) -> void:
 	m.set_shader_parameter("sigil_color_b", p["sigil_color_b"])
 	m.set_shader_parameter("sigil_glow", p["sigil_glow"])
 
+	m.set_shader_parameter("volcano_strength", p["volcano"])
+	m.set_shader_parameter("volcano_scale", p["volcano_scale"])
+	m.set_shader_parameter("volcano_density", p["volcano_density"])
+	m.set_shader_parameter("volcano_shift", p["volcano_shift"])
+	m.set_shader_parameter("volcano_ground", p["volcano_ground"])
+	m.set_shader_parameter("lava_color", p["lava_color"])
+	m.set_shader_parameter("volcano_glow", p["volcano_glow"])
 	m.set_shader_parameter("quake_strength", p["quake"])
 	m.set_shader_parameter("quake_color", p["quake_color"])
 	m.set_shader_parameter("quake_scale", p["quake_scale"])
@@ -1145,10 +1157,11 @@ func get_world_chaos() -> float:
 ## Read from the scene root, which owns every body in solar_system.tscn.
 ## A body with no world gets the fallback.
 func _world_setting(setting: StringName, fallback: Variant) -> Variant:
-	if owner == null:
+	var source: Node = world_source if world_source != null else owner
+	if source == null:
 		return fallback
 
-	var value: Variant = owner.get(setting)
+	var value: Variant = source.get(setting)
 	return fallback if value == null else value
 
 
