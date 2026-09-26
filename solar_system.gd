@@ -68,6 +68,8 @@ var _builder_controller: ShipBuilderController
 ## Module tech tree window (T), created in _ready next to the planet catalog.
 var tech_tree_window: TechTreeWindow
 var galaxy_map_window: GalaxyMapWindow
+## The new-game tutorial card (tutorial_panel.gd), or null once it ends.
+var tutorial_panel: Control = null
 ## Enemies the radars see (top right) and the mounted guns
 ## (bottom, beside the resource bars); the enemy picked there is the target.
 var enemy_contacts_panel: Control
@@ -1439,7 +1441,19 @@ func _ready() -> void:
 	# puts its own back in _apply_pending_save).
 	if SaveGame.pending.is_empty():
 		_build_starter_ship()
+		if settings_mgr.show_tutorial:
+			_start_tutorial()
 	_apply_pending_save()
+
+
+## Puts up the step-by-step tutorial (new games only; see tutorial_panel.gd).
+func _start_tutorial() -> void:
+	if tutorial_panel != null:
+		return
+	tutorial_panel = preload("res://tutorial_panel.gd").new()
+	tutorial_panel.setup(self)
+	tutorial_panel.finished.connect(func() -> void: tutorial_panel = null)
+	$HUD.add_child(tutorial_panel)
 
 
 ## A loaded game names its system before the planets generate: they read
@@ -2724,6 +2738,11 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 			_push_starfield_to_black_holes()
 		"camera_smoothing":
 			pass
+		"show_tutorial":
+			# Switching it off ends a tutorial under way; on waits for a new game.
+			if not value and tutorial_panel != null:
+				tutorial_panel.queue_free()
+				tutorial_panel = null
 		"god_mode":
 			# Everything the catalog and tree show may have changed.
 			if planet_info_panel.visible:
