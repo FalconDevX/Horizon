@@ -8,6 +8,7 @@
 script = ExtResource("1_enemy")
 ship_texture = ExtResource("2_tank")
 visual_length = 36.0
+max_health = 55.0
 move_speed = 110.0
 turn_speed = 1.8
 fire_cooldown = 0.55

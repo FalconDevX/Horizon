@@ -16,6 +16,12 @@ var core_color: Color = Color(1.0, 0.97, 0.75)
 var grow_fraction: float = 0.08
 ## Skip the sniper that fired this beam.
 var ignore_enemy: Enemy = null
+## False for the player's own beams: they never hurt the player's ship.
+var hits_player: bool = true
+## When set, the beam's root rides along with this node (the player's ship),
+## `carrier_offset` off its position in its unrotated frame.
+var carrier: Node2D = null
+var carrier_offset: Vector2 = Vector2.ZERO
 
 var _age := 0.0
 var _did_hit_check := false
@@ -23,6 +29,8 @@ var _did_hit_check := false
 
 func _process(delta: float) -> void:
 	_age += delta
+	if carrier != null and is_instance_valid(carrier):
+		global_position = carrier.global_position + carrier_offset.rotated(carrier.rotation)
 	if not _did_hit_check:
 		_did_hit_check = true
 		_hit_along_beam()
@@ -48,7 +56,7 @@ func _hit_along_beam() -> void:
 				global_position, tip, enemy.global_position, enemy.collision_radius
 			):
 				enemy.take_hit(damage)
-		elif child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
+		elif hits_player and child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
 			var ship := child as Node2D
 			if LaserBolt._segment_hits_circle(
 				global_position, tip, ship.global_position, float(ship.get("collision_radius"))

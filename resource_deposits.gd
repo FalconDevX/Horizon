@@ -104,6 +104,10 @@ const TYPES := {
 		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
 		"color": Color(0.64, 0.5, 0.32), "shine": 0.1, "glow": 0.02, "collectible": false,
 	},
+	&"geyser": {
+		"name": "Geyser", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
+		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04, "collectible": false,
+	},
 	&"ice_wurm": {
 		"name": "Ice wurm", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
 		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04,
@@ -154,12 +158,11 @@ const SPAWNS := {
 		{"type": &"gold_ore", "count": Vector2i(5, 9)},
 		{"type": &"silver_ore", "count": Vector2i(5, 9)},
 		{"type": &"sky_stone", "count": Vector2i(0, 2), "only": ["temperate"]},
-		{"type": &"pink_crystal", "count": Vector2i(0, 2), "only": ["autumn"],
-			"note": "A few stray crystals among the autumn woods"},
 		{"type": &"ice_crystal", "count": Vector2i(0, 2), "only": ["snowy"], "feature": &"snow_hump", "slope": 2.0},
 	],
 	PlanetTerrain.Kind.DESERT: [
-		{"type": &"gold_ore", "count": Vector2i(8, 15)},
+		{"type": &"gold_ore", "count": Vector2i(14, 20), "only": ["glass"]},
+		{"type": &"gold_ore", "count": Vector2i(8, 15), "except": ["glass"]},
 		{"type": &"scrap", "count": Vector2i(2, 4)},
 		{"type": &"bone", "count": Vector2i(1, 1), "chance": 0.25},
 		{"type": &"tumbleweed", "count": Vector2i(4, 7), "only": ["open"], "motion": &"roll"},
@@ -170,16 +173,10 @@ const SPAWNS := {
 		{"type": &"wind_crystal", "count": Vector2i(5, 6), "only": ["lava"],
 			"note": "Grown in the hot winds off the lava canyons"},
 	],
-	PlanetTerrain.Kind.VOLCANIC: [
-		{"type": &"scrap", "count": Vector2i(8, 10)},
-		{"type": &"pink_crystal", "count": Vector2i(7, 10), "only": ["lava"]},
-		{"type": &"ice_crystal", "count": Vector2i(7, 10), "only": ["cryo"]},
-		{"type": &"wind_crystal", "count": Vector2i(3, 6), "only": ["cryo"]},
-	],
 	PlanetTerrain.Kind.BARREN: [
 		{"type": &"gold_ore", "count": Vector2i(2, 4)},
 		{"type": &"silver_ore", "count": Vector2i(2, 4)},
-		{"type": &"scrap", "count": Vector2i(12, 20), "only": ["spiked"],
+		{"type": &"scrap", "count": Vector2i(1, 3), "only": ["spiked"],
 			"note": "Strewn round the jagged crater rims"},
 		{"type": &"scrap", "count": Vector2i(10, 12), "except": ["spiked"]},
 	],
@@ -187,21 +184,12 @@ const SPAWNS := {
 		{"type": &"toxic_ore", "count": Vector2i(3, 5), "only": ["crystal"]},
 		{"type": &"pink_crystal", "count": Vector2i(8, 10), "only": ["crystal"]},
 		{"type": &"wind_crystal", "count": Vector2i(3, 7), "only": ["crystal"]},
-		{"type": &"toxic_ore", "count": Vector2i(4, 7), "except": ["crystal"]},
-		{"type": &"bone", "count": Vector2i(5, 9), "except": ["crystal"]},
-	],
-	PlanetTerrain.Kind.GAS_GIANT: [
-		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
-			"note": "Bubbles of fuel gas drifting over the cloud tops"},
-	],
-	PlanetTerrain.Kind.ICE_GIANT: [
-		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
-			"note": "Bubbles of fuel gas drifting over the cloud tops"},
+		{"type": &"toxic_ore", "count": Vector2i(6, 10), "except": ["crystal"]},
 	],
 	PlanetTerrain.Kind.SLIME: [
 		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"],
 			"tint": Vector3(0.75, 1.0, 1.0), "note": "Sickly green here, soaked in slime"},
-		{"type": &"toxic_ore", "count": Vector2i(6, 12), "except": ["petrified"]},
+		{"type": &"toxic_ore", "count": Vector2i(5, 8), "except": ["petrified"]},
 		{"type": &"toxic_ore", "count": Vector2i(15, 20), "only": ["petrified"],
 			"note": "Far more of it once the slime has dried off it"},
 		{"type": &"slime_jelly", "count": Vector2i(4, 7), "on": "any", "except": ["petrified"], "motion": &"hop"},
@@ -209,22 +197,17 @@ const SPAWNS := {
 	PlanetTerrain.Kind.OCCULT: [
 		{"type": &"silver_ore", "count": Vector2i(4, 9), "only": ["obsidian_yellow"],
 			"note": "Silver, not gold, where the eyes are gold"},
-		{"type": &"gold_ore", "count": Vector2i(4, 9), "except": ["obsidian_yellow"]},
-		{"type": &"bone", "count": Vector2i(10, 15), "except": ["blind"]},
+		{"type": &"gold_ore", "count": Vector2i(8, 14), "except": ["obsidian_yellow"]},
+		{"type": &"bone", "count": Vector2i(5, 9), "except": ["blind"]},
 		# Blind worlds hide their bones: near-black, no glow.
-		{"type": &"bone", "count": Vector2i(10, 15), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0,
+		{"type": &"bone", "count": Vector2i(5, 9), "only": ["blind"], "color": Color(0.1, 0.085, 0.09), "glow": 0.0,
 			"note": "Near-black and dull here - hard to tell from the dust"},
 	],
-	PlanetTerrain.Kind.GLOOM: [
-		{"type": &"silver_spheres", "count": Vector2i(5, 7)},
-	],
 	PlanetTerrain.Kind.BLOOM: [
-		# The valley floors only - the flower fields stay bare, bar some
-		# silver on dried worlds.
+		# Stalks grow on valley floors; dry worlds expose silver uphill.
 		{"type": &"beanstalk", "count": Vector2i(15, 25), "lowest": 0.1, "slope": 0.7, "only": ["fields"]},
-		{"type": &"frozen_beanstalk", "count": Vector2i(10, 18), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
-		{"type": &"ice_crystal", "count": Vector2i(8, 16), "only": ["winter"], "feature": &"snow_hump", "slope": 2.0},
-		{"type": &"scrap", "count": Vector2i(5, 15), "except": ["dried"]},
+		{"type": &"frozen_beanstalk", "count": Vector2i(8, 14), "lowest": 0.1, "slope": 0.7, "only": ["winter"]},
+		{"type": &"scrap", "count": Vector2i(5, 15), "only": ["fields"]},
 		{"type": &"dried_beanstalk", "count": Vector2i(50, 70), "lowest": 0.35, "slope": 0.9, "only": ["dried"],
 			"note": "Everywhere in the low ground - the dead stalks choke it"},
 		{"type": &"beanstalk", "count": Vector2i(0, 18), "lowest": 0.35, "slope": 0.9, "only": ["dried"],
@@ -233,49 +216,50 @@ const SPAWNS := {
 			"note": "Laid bare where the flowers withered"},
 	],
 	PlanetTerrain.Kind.OASIS: [
-		{"type": &"scrap", "count": Vector2i(14, 20)},
-		{"type": &"silver_ore", "count": Vector2i(5, 8)},
-		{"type": &"gold_pillar", "count": Vector2i(0, 3)},
+		{"type": &"scrap", "count": Vector2i(5, 8), "only": ["monsoon"]},
+		{"type": &"scrap", "count": Vector2i(14, 20), "except": ["monsoon"]},
+		{"type": &"silver_ore", "count": Vector2i(14, 20), "only": ["monsoon"]},
+		{"type": &"silver_ore", "count": Vector2i(5, 8), "except": ["monsoon"]},
+		{"type": &"gold_pillar", "count": Vector2i(0, 3), "except": ["monsoon"]},
 		{"type": &"tumbleweed", "count": Vector2i(3, 6), "motion": &"roll"},
 	],
 	PlanetTerrain.Kind.LOTUS: [
 		{"type": &"gold_pillar", "count": Vector2i(10, 13), "on": "liquid", "except": ["giant"]},
-		{"type": &"gold_pillar", "count": Vector2i(6, 10), "on": "liquid", "only": ["giant"],
+		{"type": &"gold_pillar", "count": Vector2i(5, 9), "on": "liquid", "only": ["giant"],
 			"note": "Fewer, where the giant flowers crowd the sea"},
 		{"type": &"toxic_ore", "count": Vector2i(2, 8), "slope": 0.9, "only": ["night"],
 			"note": "Only while the flowers are closed for the night"},
+		{"type": &"toxic_ore", "count": Vector2i(1, 3), "slope": 0.9, "only": ["giant"]},
 	],
 	PlanetTerrain.Kind.SWIRL: [
 		{"type": &"sky_stone", "count": Vector2i(8, 14), "feature": &"swirl_ridge"},
 		{"type": &"silver_ore", "count": Vector2i(6, 10)},
-		{"type": &"scrap", "count": Vector2i(0, 2)},
-		{"type": &"bone", "count": Vector2i(0, 2), "chance": 0.5},
 	],
 	PlanetTerrain.Kind.RINGS: [
-		{"type": &"bone", "count": Vector2i(0, 4), "feature": &"ring_centre", "slope": 0.8},
+		{"type": &"bone", "count": Vector2i(2, 4), "feature": &"ring_centre", "slope": 0.8, "only": ["flooded"]},
+		{"type": &"bone", "count": Vector2i(0, 4), "feature": &"ring_centre", "slope": 0.8, "except": ["flooded"]},
 		{"type": &"gold_ore", "count": Vector2i(13, 20), "only": ["sandy"],
 			"note": "Twice as rich where the sand has spread"},
-		{"type": &"gold_ore", "count": Vector2i(5, 9), "except": ["sandy"]},
+		{"type": &"gold_ore", "count": Vector2i(6, 10), "only": ["flooded"]},
+		{"type": &"gold_ore", "count": Vector2i(5, 9), "except": ["sandy", "flooded"]},
 		{"type": &"scrap", "count": Vector2i(3, 6)},
 		{"type": &"sky_stone", "count": Vector2i(2, 5), "only": ["volcanic"], "feature": &"volcano", "slope": 2.0},
 	],
 	PlanetTerrain.Kind.FRACTAL: [
 		# On the massifs: the plains stay below ~0.25.
-		{"type": &"egg", "count": Vector2i(3, 6), "land": Vector2(0.45, 1.0), "slope": 0.45},
+		{"type": &"egg", "count": Vector2i(1, 3), "land": Vector2(0.45, 1.0), "slope": 0.45},
 		{"type": &"silver_ore", "count": Vector2i(8, 14), "land": Vector2(0.0, 0.25)},
-		{"type": &"scrap", "count": Vector2i(6, 15), "land": Vector2(0.0, 0.25)},
 	],
 	PlanetTerrain.Kind.MERIDIAN: [
-		# Pink crystals along the shores; gold anywhere - silver on inverted
-		# worlds.
-		{"type": &"pink_crystal", "count": Vector2i(8, 13), "land": Vector2(0.0, 0.07), "slope": 0.6},
+		# Pink crystals along the shores; gold anywhere.
+		{"type": &"pink_crystal", "count": Vector2i(6, 10), "only": ["inverted"], "land": Vector2(0.0, 0.07), "slope": 0.6},
+		{"type": &"pink_crystal", "count": Vector2i(8, 13), "except": ["inverted"], "land": Vector2(0.0, 0.07), "slope": 0.6},
+		{"type": &"gold_ore", "count": Vector2i(5, 8), "only": ["inverted"]},
 		{"type": &"gold_ore", "count": Vector2i(8, 13), "except": ["inverted"]},
-		{"type": &"silver_ore", "count": Vector2i(8, 13), "only": ["inverted"],
-			"note": "Silver instead of gold where the seas run white"},
 	],
 	PlanetTerrain.Kind.QUAKE: [
 		# Scarce: each find in the middle of a hole, of any kind.
-		{"type": &"random", "count": Vector2i(6, 10), "except_types": [&"egg", &"hel"], "feature": &"quake_hole", "slope": 2.0,
+		{"type": &"random", "count": Vector2i(2, 4), "except_types": [&"egg", &"hel"], "feature": &"quake_hole", "slope": 2.0,
 			"except": ["terraced"]},
 		{"type": &"random", "count": Vector2i(10, 14), "except_types": [&"egg", &"hel"], "feature": &"quake_hole", "slope": 2.0,
 			"only": ["terraced"]},
@@ -284,14 +268,11 @@ const SPAWNS := {
 		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
 		{"type": &"silver_ore", "count": Vector2i(4, 7)},
 		{"type": &"ice_wurm", "count": Vector2i(2, 4), "slope": 0.6, "except": ["pink"]},
-		{"type": &"ice_wurm", "count": Vector2i(2, 4), "slope": 0.6, "only": ["pink"], "color": Color(1.0, 0.55, 0.76),
-			"note": "Pink as the methane ice they burrow in"},
 	],
 	PlanetTerrain.Kind.ICE: [
 		{"type": &"ice_crystal", "count": Vector2i(6, 10)},
 		{"type": &"scrap", "count": Vector2i(3, 5)},
-		{"type": &"ice_wurm", "count": Vector2i(8, 13), "only": ["geysers"], "cluster": 0.45, "slope": 0.8,
-			"note": "Crowded into one field, steaming like vents"},
+		{"type": &"geyser", "count": Vector2i(8, 14), "only": ["geysers"], "cluster": 0.35, "slope": 0.5},
 		# Groups in every hollow (per_feature: how many round each sigil).
 		{"type": &"ice_wurm", "per_feature": Vector2i(4, 5), "count": Vector2i(4, 5), "only": ["hollows"],
 			"slope": 2.0, "color": Color(0.8, 0.56, 0.66), "note": "Grey-pink, knotted together in the hollows"},

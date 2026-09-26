@@ -76,6 +76,15 @@ func center_view() -> void:
 	var view := size
 	scroll_horizontal = maxi(0, int((content.x - view.x) * 0.5))
 	scroll_vertical = maxi(0, int((content.y - view.y) * 0.5))
+	# With a ship built, put the ship itself in the middle rather than the
+	# middle of the grid (the grid may be turned by Rotate View about its centre).
+	var grid := host.get_node_or_null(host.grid_path) as Control if host != null else null
+	if grid != null and grid.has_method("ship_center_local"):
+		var local: Vector2 = grid.call("ship_center_local")
+		if local.x != INF:
+			var in_host: Vector2 = grid.position + grid.pivot_offset + (local - grid.pivot_offset).rotated(grid.rotation)
+			scroll_horizontal = maxi(0, int(in_host.x - view.x * 0.5))
+			scroll_vertical = maxi(0, int(in_host.y - view.y * 0.5))
 
 
 func _notification(what: int) -> void:

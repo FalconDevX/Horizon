@@ -70,3 +70,4 @@ static func entry_for(enemy_id: String) -> Dictionary:
 
 static func scene_for(enemy_id: String) -> PackedScene:
 	return entry_for(enemy_id).get("scene") as PackedScene
+

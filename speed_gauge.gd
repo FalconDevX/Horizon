@@ -1,6 +1,6 @@
 extends Control
 
-@export var max_speed: float = 1000.0
+@export var max_speed: float = 2000.0
 @export var gauge_color := HudPanelStyle.COLOR_CYAN
 @export var track_color := Color(1.0, 1.0, 1.0, 0.08)
 
@@ -83,7 +83,7 @@ func _draw_text(center: Vector2, radius: float) -> void:
 	)
 	draw_string(
 		font, center + Vector2(-text_width * 0.5, radius * 0.18),
-		"%.1f" % speed, HORIZONTAL_ALIGNMENT_CENTER, text_width,
+		"%d" % roundi(speed), HORIZONTAL_ALIGNMENT_CENTER, text_width,
 		maxi(20, roundi(radius * 0.5)), Color(0.9, 0.95, 1.0)
 	)
 	draw_string(

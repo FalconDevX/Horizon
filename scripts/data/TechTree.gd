@@ -13,7 +13,14 @@ extends RefCounted
 ## silver ore, copper → gold ore, silicon → pink crystal, nickel → sky stone,
 ## titanium → bone, lithium → beanstalk, xenon → slime jelly, uranium → toxic
 ## ore, tungsten → gold pillar, neodymium → egg). The `requires` links are not
-## on the board - they follow each branch's natural progression.
+## on the board - they follow each branch's natural progression. Branches
+## follow the board's "Receptury modułów" table (fuel tanks under propulsion,
+## shields under structure).
+##
+## Substitutes, from the board's "Surowce → moduły" table (PlayerProgress
+## pays with them when the named resource runs short): frozen beanstalk for
+## beanstalk; slime jelly for anything in a weapon or structure recipe; egg
+## for anything at all.
 
 enum Branch { STRUCTURE, WEAPONS, PROPULSION, POWER, SUPPORT }
 
@@ -57,6 +64,11 @@ const NODES := [
 	{"id": &"hull_heavy", "title": "Heavy Hull", "branch": Branch.STRUCTURE, "tier": 3,
 		"recipe": [&"bone", &"gold_pillar"], "requires": [&"hull_standard"], "modules": [&"hull_heavy"]},
 
+	{"id": &"shields", "title": "Shields", "branch": Branch.STRUCTURE, "tier": 2,
+		"recipe": [&"gold_ore", &"beanstalk"], "requires": [&"hull_light"],
+		"modules": [&"shield_deflector", &"shield_barrier", &"shield_aegis"],
+		"note": "An extra shield bar on top of HP; switchable, costs power."},
+
 	# --- Weapons ---
 	{"id": &"revolver", "title": "Revolver Cannon", "branch": Branch.WEAPONS, "tier": 1,
 		"recipe": [&"scrap", &"gold_ore", &"slime_jelly"], "requires": [], "modules": [&"weapon_revolver"]},
@@ -95,6 +107,10 @@ const NODES := [
 		"recipe": [&"gold_pillar", &"egg", &"beanstalk"], "requires": [&"engine_plasma"],
 		"modules": [&"engine_fusion_s", &"engine_fusion_m", &"engine_fusion_l"]},
 
+	{"id": &"fuel_tank", "title": "Fuel Tank", "branch": Branch.PROPULSION, "tier": 1,
+		"recipe": [&"scrap", &"silver_ore"], "requires": [],
+		"modules": [&"fuel_s", &"fuel_s_armored", &"fuel_m", &"fuel_m_armored", &"fuel_l", &"fuel_l_armored"]},
+
 	# --- Power & storage ---
 	{"id": &"generator", "title": "Generator (fuel)", "branch": Branch.POWER, "tier": 1,
 		"recipe": [&"scrap", &"gold_ore"], "requires": [], "modules": [&"util_generator"]},
@@ -104,9 +120,6 @@ const NODES := [
 		"recipe": [&"silver_ore", &"gold_ore", &"bone", &"beanstalk"], "requires": [],
 		"modules": [&"battery_s", &"battery_s_armored", &"battery_m", &"battery_m_armored",
 			&"battery_l", &"battery_l_armored"]},
-	{"id": &"fuel_tank", "title": "Fuel Tank", "branch": Branch.POWER, "tier": 1,
-		"recipe": [&"scrap", &"silver_ore"], "requires": [],
-		"modules": [&"fuel_s", &"fuel_s_armored", &"fuel_m", &"fuel_m_armored", &"fuel_l", &"fuel_l_armored"]},
 
 	# --- Support ---
 	{"id": &"sonar", "title": "Sonar / Radar", "branch": Branch.SUPPORT, "tier": 1,
@@ -116,10 +129,6 @@ const NODES := [
 	{"id": &"repair", "title": "Repair Module", "branch": Branch.SUPPORT, "tier": 2,
 		"recipe": [&"gold_ore", &"sky_stone", &"bone"], "requires": [&"sonar"], "modules": [&"util_repair"],
 		"note": "Repairs neighbouring modules; power hungry, can be switched off."},
-	{"id": &"shields", "title": "Shields", "branch": Branch.SUPPORT, "tier": 2,
-		"recipe": [&"gold_ore", &"beanstalk"], "requires": [&"generator"],
-		"modules": [&"shield_deflector", &"shield_barrier", &"shield_aegis"],
-		"note": "An extra shield bar on top of HP; switchable, costs power."},
 	{"id": &"fabricator", "title": "Fabricator", "branch": Branch.SUPPORT, "tier": 2,
 		"recipe": [&"scrap", &"gold_ore", &"pink_crystal"], "requires": [&"repair"], "modules": [&"util_fabricator"],
 		"note": "No recipe on the board yet - this one is a placeholder."},
@@ -150,6 +159,23 @@ static func node_for_module(module_id: StringName) -> Dictionary:
 
 
 ## Resource id → amount needed to unlock `node` (empty for tier 1).
+## Resources that can stand in for one short in a recipe, in the order they
+## are spent (see the header).
+const SUBSTITUTES := {&"beanstalk": [&"frozen_beanstalk"]}
+const SLIME_BRANCHES: Array[Branch] = [Branch.WEAPONS, Branch.STRUCTURE]
+
+
+static func substitutes_for(node: Dictionary, resource: StringName) -> Array[StringName]:
+	var list: Array[StringName] = []
+	for sub: StringName in SUBSTITUTES.get(resource, []):
+		list.append(sub)
+	if resource != &"slime_jelly" and SLIME_BRANCHES.has(node["branch"]):
+		list.append(&"slime_jelly")
+	if resource != &"egg":
+		list.append(&"egg")
+	return list
+
+
 static func unlock_cost(node: Dictionary) -> Dictionary:
 	var amount: int = UNLOCK_COST.get(int(node["tier"]), 0)
 	var cost: Dictionary = {}

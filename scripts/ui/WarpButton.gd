@@ -8,6 +8,8 @@ extends Control
 
 signal warp_pressed
 
+## Colour of the lit button (cyan for the hyperdrive, violet for the warp).
+var lit_color: Color = HudPanelStyle.COLOR_CYAN
 var _ready_to_jump: bool = false
 var _title: String = "WARP"
 var _detail: String = ""
@@ -46,7 +48,7 @@ func _draw() -> void:
 	var pulse: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.005)
 	var accent: Color
 	if _ready_to_jump:
-		accent = HudPanelStyle.COLOR_CYAN
+		accent = lit_color
 		draw_rect(rect, Color(accent, (0.22 if _hovered else 0.12) + 0.08 * pulse))
 		draw_rect(rect.grow(2.0), Color(accent, 0.25 * pulse), false, 2.0)
 		draw_rect(rect, accent, false, 1.0)

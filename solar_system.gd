@@ -1,9 +1,11 @@
 extends Node2D
 
 ## World scale: every distance in the scene is 4x what the system was first
-## built at, and G is 4^3 = 64x, so every orbital period is unchanged while
-## speeds are 4x. Distance constants below were scaled with it.
-const G: float = 192000.0
+## built at, and G was 4^3 = 64x (periods unchanged, speeds 4x). With time
+## warp gone G is another 16x on top: orbital speeds 4x again, every period a
+## quarter as long, so planets visibly move in real time. SOI sizes depend
+## only on mass ratios and are unaffected.
+const G: float = 3072000.0
 const AUTOPILOT_OFF_SOUND := preload("res://sounds/autopilot_off.wav")
 const PlanetGuardsScript := preload("res://scripts/enemy/PlanetGuards.gd")
 
@@ -101,6 +103,13 @@ var galaxy_map_window: GalaxyMapWindow
 var enemy_contacts_panel: Control
 var weapons_panel: Control
 var targeted_enemy: Enemy = null
+## Reload times below this are rapid fire: the weapons panel shows them loaded.
+const RAPID_FIRE_RELOAD := 0.3
+## LMB went down over the map (not a HUD panel) with a weapon selected: the
+## selected weapon fires for as long as it stays held.
+var _firing_held := false
+## Railgun and other multi-barrel guns: which barrel fires next, by instance id.
+var _next_barrel: Dictionary = {}
 
 ## HUD button that fires the hyperdrive (lit once a course is set and the ship
 ## is past the last asteroid belt).
@@ -112,6 +121,46 @@ var _warp_run_start: Vector2 = Vector2.ZERO
 var _warp_run_dir: Vector2 = Vector2.RIGHT
 ## How far (in screen pixels) the ship shoots ahead during the run-up.
 const WARP_RUN_PX := 2600.0
+
+## Warp: the fast way between planets of one system (there is no time
+## acceleration). Ctrl+LMB on a planet locks it as the warp target - if the
+## straight path to it is clear and it is not too close - which lights the
+## WARP button (or Q). The jump: the ship first turns its nose onto the
+## target at its own turn rate (ALIGN), then surges
+## ahead while space bends round it (WarpFX), crosses in a blink, and drops
+## into a circular orbit next to the planet. Costs ship.warp_fuel by distance.
+## (The jump between star systems is the HYPER WARP button below it.)
+enum WarpPhase { NONE, ALIGN, SPOOL, JUMP, EXIT }
+var warp_phase: WarpPhase = WarpPhase.NONE
+## True while the ship is on rails in a jump (spool and crossing).
+var warp_active := false
+var warp_target: Node2D = null
+var local_warp_button: WarpButton
+var warp_fx: WarpFX
+var warp_path_line: Line2D
+var _warp_time := 0.0
+var _warp_jump_time := 1.0
+var _warp_start := Vector2.ZERO
+var _warp_spool_end := Vector2.ZERO
+var _warp_dir := Vector2.RIGHT
+var _warp_arrive_distance := 0.0
+## Why the last lock or jump failed (HUD panel text), for a few seconds.
+var warp_notice := ""
+var _warp_notice_time := 0.0
+const WARP_SPOOL_TIME := 1.1
+## The nose must be within this of the target before the spool starts.
+const WARP_ALIGN_TOLERANCE := deg_to_rad(2.0)
+## How far the ship surges ahead during the spool, in screen pixels.
+const WARP_SPOOL_PX := 260.0
+## A target must be at least this far off (and outside its SOI).
+const WARP_MIN_DISTANCE := 20000.0
+## The ship drops out this many radii off the target's centre (at least
+## WARP_ARRIVE_MIN above its surface), in a circular orbit.
+const WARP_ARRIVE_RADII := 4.0
+const WARP_ARRIVE_MIN := 3000.0
+## Other bodies block the path within this many of their radii.
+const WARP_CLEARANCE_RADII := 1.6
+const WARP_PATH_COLOR := Color(0.62, 0.55, 1.0, 0.55)
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -132,14 +181,14 @@ const LANDING_RANGE_RADII := 1.0
 ## by ZOOM_MAX, so the ship can be seen at true scale over the surface.
 const LANDED_VIEW_RADII := 1.1
 const LANDED_VIEW_MAX_RADII := 3.0
-## Driving over a surface: no inertia. WASD / arrows move in screen
-## directions, RMB heads for the cursor, Shift is slow. Top speed in planet
-## radii per second; how fast the ship reaches it or stops (seconds, a short
-## ease so starts and stops are smooth, not jerky); how fast the nose turns
-## to face the way it goes; how sharply it slows as it nears the cursor.
-const GROUND_SPEED_RADII := 0.5
-const GROUND_RESPONSE := 0.08
-const GROUND_TURN_RESPONSE := 14.0
+## Driving over a surface: WASD / arrows move in screen directions, RMB
+## heads for the cursor, Shift is slow. Top speed in planet radii per second
+## (slow, so the ground can be read); how long the ship takes to reach it,
+## stop or change course (seconds - a heavy, sluggish ease); how fast the nose
+## turns to face the way it goes; how sharply it slows nearing the cursor.
+const GROUND_SPEED_RADII := 0.2
+const GROUND_RESPONSE := 0.6
+const GROUND_TURN_RESPONSE := 3.0
 const GROUND_FOLLOW_GAIN := 3.0
 ## Taking off drops the ship into a circular orbit at least this many radii
 ## out, and inside the SOI.
@@ -166,6 +215,9 @@ var trajectory_candidate_status := ""
 var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
+var _user_paused := false
+## Node2D -> [position at the previous physics tick, at the last one].
+var _tick_positions: Dictionary = {}
 
 ## Game calendar. One second of simulation is one hour on the clock, which
 ## happens to give Coralyss a year of about 345 days and a 25-hour day.
@@ -185,7 +237,6 @@ const PLANET_VISUAL_MAX_RATE := 1.0
 var _clock_epoch_unix: int = 0
 var _clock_date_label: Label = null
 var _clock_day_label: Label = null
-var previous_time_scale := 1.0
 var simulation_accumulator := 0.0
 var prediction_update_accumulator := 1.0
 var current_periapsis := 0.0
@@ -299,17 +350,20 @@ const ZOOM_STEP := 1.2
 const PLANET_GRAVITY_SCALE := 0.4
 ## Smallest a planet's SOI may be, in planet radii (see get_soi_radius).
 const MIN_SOI_RADII := 5.0
+## Finer and shorter than under the old time warp (orbits are 4x faster now,
+## G): 6000 x 0.4 s looks 40 min ahead.
 const PREDICTION_STEPS := 6000
-const PREDICTION_DT := 0.8
+const PREDICTION_DT := 0.4
 ## A predicted point is kept at least every this many steps...
-const PREDICTION_DRAW_INTERVAL := 20
+const PREDICTION_DRAW_INTERVAL := 10
 ## ...and sooner wherever the path has turned by this much (radians), so tight
 ## loops round a planet come out round instead of as a polygon.
 const PREDICTION_DRAW_TURN := 0.025
 const SIM_DT := 1.0 / 120.0
 const MAX_SIM_STEPS_PER_FRAME := 6000
 const TRAJECTORY_CONFIRM_FRAMES := 10
-const PREDICTION_UPDATE_INTERVAL := 0.1
+## Re-predicted about every other frame, so the line keeps up with the ship.
+const PREDICTION_UPDATE_INTERVAL := 0.03
 const ORBIT_LINE_SCREEN_WIDTH := 1.0
 const TRAJECTORY_LINE_SCREEN_WIDTH := 2.0
 const SOI_LINE_SCREEN_WIDTH := 1.0
@@ -378,6 +432,8 @@ class PhysicsBody:
 func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 	ship.position = new_position
 	ship.velocity = new_velocity
+	# A teleport: no drawing it as a slide from where it was.
+	_tick_positions.erase(ship)
 	if physics_ship != null:
 		physics_ship.pull_from_node()
 
@@ -564,27 +620,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		cycle_autopilot_target_body()
 
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_W:
-			if settings_mgr != null and settings_mgr.auto_drop_warp_on_thrust and time_scale > 1.0:
-				set_time_scale(1.0)
+		if event.keycode == KEY_Q:
+			start_warp_jump()
 		elif event.keycode == KEY_P or event.keycode == KEY_0:
 			toggle_pause()
 		elif event.keycode == KEY_SPACE and _test_enemy == null:
 			toggle_pause()
-		elif event.keycode == KEY_1:
-			set_time_scale(1.0)
-		elif event.keycode == KEY_2:
-			set_time_scale(2.0)
-		elif event.keycode == KEY_3:
-			set_time_scale(5.0)
-		elif event.keycode == KEY_4:
-			set_time_scale(10.0)
-		elif event.keycode == KEY_5:
-			set_time_scale(50.0)
-		elif event.keycode == KEY_6:
-			set_time_scale(100.0)
-		elif event.keycode == KEY_7:
-			set_time_scale(200.0)
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_9:
+			# 1-9 pick a weapon, in the weapons panel's order (again to put it away).
+			_select_weapon_slot(event.keycode - KEY_1)
 		elif event.keycode == KEY_PERIOD:
 			if camera_follow_body != null:
 				camera_follow_body = null
@@ -630,6 +674,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				camera_follow_ship = false
 				camera_follow_body = null
 
+		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+			_firing_held = false
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed and event.ctrl_pressed:
+			# Ctrl+LMB on a planet: lock (or drop) the warp target.
+			var warp_pick: Node2D = _body_under_mouse()
+			if warp_pick != null and planets.has(warp_pick):
+				toggle_warp_target(warp_pick)
+				get_viewport().set_input_as_handled()
+				return
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed and ship.selected_weapon >= 0:
+			# A weapon is picked: LMB fires it instead of picking bodies.
+			_firing_held = true
+			get_viewport().set_input_as_handled()
+			return
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			var picked: Node2D = _body_under_mouse()
 			if picked != null:
@@ -714,6 +772,269 @@ func _on_course_set(system_seed: int) -> void:
 	)
 
 
+## Ctrl+LMB on a planet: lock it as the warp target, or let go of it.
+func toggle_warp_target(body: Node2D) -> void:
+	if body == null or not planets.has(body):
+		return
+	if body == warp_target:
+		warp_target = null
+		return
+	var problem: String = _warp_problem(body)
+	if problem != "":
+		_warp_notify(problem)
+		music_toast.show_message("WARP: %s" % problem.to_upper())
+		return
+	warp_target = body
+	music_toast.show_message("WARP TARGET LOCKED: %s" % String(body.get("body_name")).to_upper())
+
+
+## "" when a jump to `body` can go now, else why not.
+func _warp_problem(body: Node2D) -> String:
+	if landed_body != null:
+		return "Take off first"
+	var index: int = planets.find(body)
+	var target := Vector2(physics_planets[index].x, physics_planets[index].y)
+	var from := Vector2(physics_ship.x, physics_ship.y)
+	var inside: int = _ship_soi_index_precise()
+	if inside >= 0:
+		return "Leave %s's SOI first" % String(planets[inside].get("body_name"))
+	var distance: float = from.distance_to(target)
+	var soi: float = soi_radii_cache[index] if index < soi_radii_cache.size() else 0.0
+	if distance < maxf(soi, WARP_MIN_DISTANCE):
+		return "Too close to %s" % String(body.get("body_name"))
+	var arrive: Vector2 = target - (target - from).normalized() * _warp_arrive_radius(index)
+	if not ship.has_warp_fuel_for(from.distance_to(arrive)):
+		return "Not enough warp fuel"
+	# Anything else within reach of the straight path blocks it.
+	var sun_reach: float = float(sun.get("radius")) * WARP_CLEARANCE_RADII
+	if LaserBolt._segment_hits_circle(from, arrive, sun.position, sun_reach):
+		return "Path blocked by %s" % String(sun.get("body_name"))
+	for i in range(planets.size()):
+		if i == index:
+			continue
+		var reach: float = float(planets[i].get("radius")) * WARP_CLEARANCE_RADII
+		if LaserBolt._segment_hits_circle(from, arrive, Vector2(physics_planets[i].x, physics_planets[i].y), reach):
+			return "Path blocked by %s" % String(planets[i].get("body_name"))
+	return ""
+
+
+## Share of a full warp tank the jump to the locked target would burn now
+## (0 with no target).
+func _warp_cost_share() -> float:
+	if warp_target == null or PlayerProgress.god_mode:
+		return 0.0
+	var index: int = planets.find(warp_target)
+	if index < 0:
+		return 0.0
+	var target := Vector2(physics_planets[index].x, physics_planets[index].y)
+	var distance: float = Vector2(physics_ship.x, physics_ship.y).distance_to(target) - _warp_arrive_radius(index)
+	return maxf(distance, 0.0) / ship.WARP_RANGE
+
+
+func _warp_arrive_radius(index: int) -> float:
+	var radius: float = float(planets[index].get("radius"))
+	var arrive: float = maxf(radius * WARP_ARRIVE_RADII, radius + WARP_ARRIVE_MIN)
+	if index < soi_radii_cache.size() and soi_radii_cache[index] > 0.0:
+		arrive = minf(arrive, soi_radii_cache[index] * AUTOPILOT_MAX_SOI_FACTOR)
+	return arrive
+
+
+## The WARP button (or Q): jump to the locked target.
+func start_warp_jump() -> void:
+	if warp_phase != WarpPhase.NONE or hyperspace_jump != null or loading_screen != null:
+		return
+	if warp_target == null:
+		_warp_notify("No target. Ctrl+click a planet")
+		return
+	var problem: String = _warp_problem(warp_target)
+	if problem != "":
+		_warp_notify(problem)
+		return
+	if autopilot_active:
+		disengage_autopilot(false)
+	autopilot_selecting = false
+	ship.disengage_manual_main_engine()
+	ship.attitude_hold = ship.AttitudeHold.NONE
+	warp_phase = WarpPhase.ALIGN
+	_warp_time = 0.0
+	camera_follow_ship = true
+	camera_follow_body = null
+
+
+## Aligned: the fuel is paid and the ship leaves its orbit for the rails.
+func _begin_warp_spool() -> void:
+	var index: int = planets.find(warp_target)
+	var target := Vector2(physics_planets[index].x, physics_planets[index].y)
+	_warp_start = Vector2(physics_ship.x, physics_ship.y)
+	_warp_spool_end = _warp_start
+	_warp_dir = (target - _warp_start).normalized()
+	_warp_arrive_distance = _warp_arrive_radius(index)
+	var distance: float = _warp_start.distance_to(target) - _warp_arrive_distance
+	ship.burn_warp_fuel(distance)
+	# Longer hops take a little longer, never more than two seconds.
+	_warp_jump_time = clampf(0.45 + distance / 3000000.0, 0.5, 2.0)
+	warp_phase = WarpPhase.SPOOL
+	warp_active = true
+	_warp_time = 0.0
+	trajectory_prediction.visible = false
+	warp_fx.play()
+
+
+## One sim step of aligning: the nose turns onto the target at the ship's
+## normal turn rate while it flies on as usual; any manual turn or burn
+## calls the warp off.
+func _advance_warp_align(dt: float) -> void:
+	if warp_target == null or _warp_problem(warp_target) != "":
+		_warp_notify(_warp_problem(warp_target) if warp_target != null else "Target lost")
+		warp_phase = WarpPhase.NONE
+		return
+	var wanted: float = (warp_target.position - ship.position).angle()
+	ship.rotation = rotate_toward(ship.rotation, wanted, ship.get_turn_rate() * dt)
+	if absf(angle_difference(ship.rotation, wanted)) <= WARP_ALIGN_TOLERANCE:
+		_begin_warp_spool()
+
+
+## Stops a jump where it is (respawn, hyperspace).
+func cancel_warp() -> void:
+	if warp_phase == WarpPhase.NONE:
+		return
+	var was_on_rails: bool = warp_active
+	warp_phase = WarpPhase.NONE
+	warp_active = false
+	warp_fx.stop()
+	if was_on_rails:
+		set_ship_state(Vector2(physics_ship.x, physics_ship.y), _warp_frame_velocity())
+	trajectory_prediction.visible = settings_mgr == null or settings_mgr.show_trajectory
+	_restart_trajectory_prediction()
+
+
+func _warp_notify(text: String) -> void:
+	warp_notice = text
+	_warp_notice_time = 3.0
+
+
+## Velocity of the body whose SOI holds the ship (zero for the sun).
+func _warp_frame_velocity() -> Vector2:
+	var index: int = _ship_soi_index_precise()
+	if index < 0:
+		return Vector2.ZERO
+	return Vector2(physics_planets[index].vx, physics_planets[index].vy)
+
+
+## One sim step of a jump: the ship on rails, planets moving on as usual.
+func _advance_warp(dt: float) -> void:
+	_warp_time += dt
+	var index: int = planets.find(warp_target)
+	if index < 0:
+		cancel_warp()
+		return
+	if warp_phase == WarpPhase.SPOOL:
+		# Swing onto the target and surge ahead, faster and faster.
+		var s: float = clampf(_warp_time / WARP_SPOOL_TIME, 0.0, 1.0)
+		var surge: float = WARP_SPOOL_PX / camera_zoom
+		ship.rotation = lerp_angle(ship.rotation, _warp_dir.angle(), 1.0 - exp(-dt * 8.0))
+		ship.throttle = s
+		_warp_spool_end = _warp_start + _warp_dir * surge * s * s * s
+		_place_warping_ship(_warp_spool_end, _warp_dir * surge * 3.0 * s * s / WARP_SPOOL_TIME)
+		if s >= 1.0:
+			warp_phase = WarpPhase.JUMP
+			_warp_time = 0.0
+		return
+	# The crossing: eased from the spool's end to the arrival point, which
+	# rides along with the planet.
+	var planet: PhysicsBody = physics_planets[index]
+	var u: float = clampf(_warp_time / _warp_jump_time, 0.0, 1.0)
+	var eased: float = u * u * (3.0 - 2.0 * u)
+	var arrive: Vector2 = Vector2(planet.x, planet.y) - _warp_dir * _warp_arrive_distance
+	var previous := Vector2(physics_ship.x, physics_ship.y)
+	var now: Vector2 = _warp_spool_end.lerp(arrive, eased)
+	ship.rotation = _warp_dir.angle()
+	_place_warping_ship(now, (now - previous) / dt)
+	if u >= 1.0:
+		_arrive_from_warp(index)
+
+
+func _place_warping_ship(position_now: Vector2, velocity_now: Vector2) -> void:
+	physics_ship.x = position_now.x
+	physics_ship.y = position_now.y
+	physics_ship.vx = velocity_now.x
+	physics_ship.vy = velocity_now.y
+	physics_ship.push_to_node()
+
+
+## Drops out into a circular orbit round the target, going round the way the
+## ship was already heading.
+func _arrive_from_warp(index: int) -> void:
+	var planet: PhysicsBody = physics_planets[index]
+	var offset: Vector2 = -_warp_dir * _warp_arrive_distance
+	var along: Vector2 = offset.orthogonal().normalized()
+	if along.dot(_warp_dir) < 0.0:
+		along = -along
+	var speed: float = sqrt(mu_planets[index] / _warp_arrive_distance)
+	set_ship_state(Vector2(planet.x, planet.y) + offset, Vector2(planet.vx, planet.vy) + along * speed)
+	ship.rotation = along.angle()
+	ship.throttle = 0.0
+	ship.reset_physics_interpolation()
+	camera.position = ship.position
+	warp_active = false
+	warp_phase = WarpPhase.EXIT
+	_warp_time = 0.0
+	warp_fx.arrive()
+	music_toast.show_message("ARRIVED: %s" % String(warp_target.get("body_name")).to_upper())
+	warp_target = null
+	trajectory_prediction.visible = settings_mgr == null or settings_mgr.show_trajectory
+	_restart_trajectory_prediction()
+
+
+## Every frame: the effect follows the ship, the exit runs out, and the
+## WARP button and the path line show whether a jump can go.
+func _update_warp(delta: float) -> void:
+	_warp_notice_time = maxf(_warp_notice_time - delta, 0.0)
+	if warp_phase == WarpPhase.EXIT and warp_fx.is_idle():
+		warp_phase = WarpPhase.NONE
+	if warp_target != null and not is_instance_valid(warp_target):
+		warp_target = null
+	var screen_size: Vector2 = get_viewport().get_visible_rect().size
+	warp_fx.set_center(ship.get_global_transform_with_canvas().origin / screen_size, screen_size)
+	if warp_phase == WarpPhase.ALIGN and (
+		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_A)
+		or Input.is_key_pressed(KEY_D)
+	):
+		warp_phase = WarpPhase.NONE
+		_warp_notify("Warp aborted")
+	if warp_phase == WarpPhase.SPOOL:
+		warp_fx.set_spool(clampf(_warp_time / WARP_SPOOL_TIME, 0.0, 1.0))
+	elif warp_phase == WarpPhase.JUMP:
+		warp_fx.set_jump(clampf(_warp_time / _warp_jump_time, 0.0, 1.0))
+
+	var show_path: bool = warp_target != null and warp_phase == WarpPhase.NONE and landed_body == null
+	warp_path_line.visible = show_path
+	if show_path:
+		warp_path_line.width = 1.5 / camera_zoom
+		warp_path_line.points = PackedVector2Array([ship.position, warp_target.position])
+
+	var panel: Control = $HUD/PanelContainer
+	local_warp_button.position = Vector2(panel.position.x, panel.position.y + panel.size.y + 10.0)
+	local_warp_button.visible = hyperspace_jump == null
+	if warp_phase == WarpPhase.ALIGN:
+		local_warp_button.set_state(false, "ALIGNING", "Turning onto %s" % String(warp_target.get("body_name")))
+	elif warp_phase != WarpPhase.NONE:
+		local_warp_button.set_state(false, "WARPING", "")
+	elif warp_target == null:
+		local_warp_button.set_state(false, "WARP", "Ctrl+click a planet to lock a target")
+	else:
+		var title: String = "WARP TO %s" % String(warp_target.get("body_name")).to_upper()
+		var problem: String = _warp_problem(warp_target)
+		if problem != "":
+			local_warp_button.set_state(false, title, problem)
+		else:
+			var cost: float = _warp_cost_share()
+			var left: float = ship.warp_fuel / ship.WARP_FUEL_CAPACITY - cost
+			local_warp_button.set_state(
+				true, title, "Fuel -%d%%, %d%% left after" % [maxi(roundi(cost * 100.0), 1), roundi(left * 100.0)]
+			)
+
+
 ## How far from the sun the hyperdrive may fire: past the outer edge of the
 ## last asteroid belt.
 func _warp_clearance() -> float:
@@ -725,12 +1046,14 @@ func _warp_clearance() -> float:
 
 func _update_warp_button() -> void:
 	var panel: Control = $HUD/PanelContainer
-	warp_button.position = Vector2(panel.position.x, panel.position.y + panel.size.y + 10.0)
+	warp_button.position = Vector2(
+		panel.position.x, panel.position.y + panel.size.y + 10.0 + local_warp_button.size.y + 6.0
+	)
 	warp_button.visible = hyperspace_jump == null
 	if not GalaxyMap.has_target():
-		warp_button.set_state(false, "WARP", "No course set. Open the map (M)")
+		warp_button.set_state(false, "HYPER WARP", "No course set. Open the map (M)")
 		return
-	var title: String = "WARP TO %s" % GalaxyMap.system_name(GalaxyMap.target_seed()).to_upper()
+	var title: String = "HYPER WARP TO %s" % GalaxyMap.system_name(GalaxyMap.target_seed()).to_upper()
 	if landed_body != null:
 		warp_button.set_state(false, title, "Take off first")
 		return
@@ -760,7 +1083,7 @@ func start_hyperspace_jump() -> void:
 	if autopilot_active:
 		disengage_autopilot(false)
 	autopilot_selecting = false
-	set_time_scale(1.0)
+	cancel_warp()
 	camera_follow_ship = true
 	camera_follow_body = null
 	_warp_run_start = ship.position
@@ -841,6 +1164,9 @@ func _arrive_in_system(system_seed: int) -> void:
 
 
 func _ready() -> void:
+	# Moved every frame in _process (after the ship's interpolated pose), so
+	# it must not be interpolated between physics ticks itself.
+	camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	for child in planets_container.get_children():
 		if child is Node2D:
 			planets.append(child)
@@ -938,7 +1264,13 @@ func _ready() -> void:
 	physics_ship = PhysicsBody.new(ship)
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
-	time_warp_panel.time_scale_selected.connect(_on_time_scale_selected)
+	# The live local view, bottom right, with the resource bars and weapons
+	# panel moved left to make room for it.
+	ship_blueprint_panel.setup(self)
+	ship_blueprint_panel.offset_left = -278.0
+	ship_blueprint_panel.offset_top = -448.0
+	resource_bars_panel.offset_left = -538.0
+	resource_bars_panel.offset_right = -298.0
 	time_warp_panel.pause_toggled.connect(toggle_pause)
 	time_warp_panel.step_requested.connect(step_simulation_once)
 	pe_gauge.scrolled.connect(change_autopilot_target_pe)
@@ -976,10 +1308,16 @@ func _ready() -> void:
 	weapons_panel = preload("res://weapons_panel.gd").new()
 	weapons_panel.name = "WeaponsPanel"
 	weapons_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	weapons_panel.offset_left = -648.0
-	weapons_panel.offset_right = -438.0
+	weapons_panel.offset_left = -750.0
+	weapons_panel.offset_right = -548.0
 	weapons_panel.offset_top = -324.0
 	weapons_panel.offset_bottom = -28.0
+	weapons_panel.weapon_picked.connect(_select_weapon)
+	weapons_panel.order_changed.connect(func(ids: Array) -> void:
+		ship.weapon_order.clear()
+		for id: int in ids:
+			ship.weapon_order.append(id)
+	)
 	$HUD.add_child(weapons_panel)
 	$HUD.move_child(weapons_panel, $HUD/ResourceBarsPanel.get_index() + 1)
 	warp_button = WarpButton.new()
@@ -989,6 +1327,23 @@ func _ready() -> void:
 	$HUD.add_child(warp_button)
 	# Under every window and menu in the HUD, just above the left panel.
 	$HUD.move_child(warp_button, $HUD/PanelContainer.get_index() + 1)
+	local_warp_button = WarpButton.new()
+	local_warp_button.name = "LocalWarpButton"
+	local_warp_button.size = Vector2(266.0, 44.0)
+	local_warp_button.lit_color = WarpFX.COLOR
+	local_warp_button.warp_pressed.connect(start_warp_jump)
+	$HUD.add_child(local_warp_button)
+	$HUD.move_child(local_warp_button, warp_button.get_index())
+	# The warp's space-bending effect draws between the world and the HUD.
+	$HUD.layer = 2
+	warp_fx = WarpFX.new()
+	warp_fx.name = "WarpFX"
+	add_child(warp_fx)
+	warp_path_line = Line2D.new()
+	warp_path_line.name = "WarpPath"
+	warp_path_line.default_color = WARP_PATH_COLOR
+	warp_path_line.visible = false
+	$BehindWorld.add_child(warp_path_line)
 	target_orbit.visible = false
 	target_orbit.default_color = TARGET_ORBIT_COLOR
 
@@ -1030,6 +1385,10 @@ func _ready() -> void:
 
 	_apply_all_settings()
 	pause_menu.save_requested.connect(save_game)
+	# A new game starts with the stock layout in the yard (a loaded one
+	# puts its own back in _apply_pending_save).
+	if SaveGame.pending.is_empty():
+		_build_starter_ship()
 	_apply_pending_save()
 
 
@@ -1075,6 +1434,7 @@ func build_save_data() -> Dictionary:
 		"system_state": _capture_system_state(),
 		"hull": hull_modules,
 		"ship_resources": [ship.fuel, ship.energy, ship.shield, ship.hull_hp],
+		"warp_fuel": ship.warp_fuel,
 	}
 
 
@@ -1136,6 +1496,7 @@ func _apply_pending_save() -> void:
 		planets[i].call("drop_collected_deposits")
 
 	_restore_hull(data.get("hull", []))
+	ship.warp_fuel = clampf(float(data.get("warp_fuel", ship.WARP_FUEL_CAPACITY)), 0.0, ship.WARP_FUEL_CAPACITY)
 	var resources: Array = data.get("ship_resources", [])
 	if resources.size() >= 4 and ship.resources_enabled:
 		ship.fuel = minf(float(resources[0]), ship.fuel_capacity)
@@ -1159,6 +1520,30 @@ func _apply_pending_save() -> void:
 		land_on(planet)
 	_restart_trajectory_prediction()
 	_update_system_title()
+
+
+## The ship a new game starts with: a light hull holding a fabricator,
+## generator, repair module and battery, a chemical engine aft, a DEW laser
+## on the ring, and the cockpit forward on a connector. [module id, cell,
+## rotation], laid out round the middle of the 40x40 yard.
+const STARTER_SHIP := [
+	[&"hull_light", Vector2i(18, 18), 0],
+	[&"engine_chemical_s", Vector2i(17, 20), 0],
+	[&"util_fabricator", Vector2i(18, 20), 0],
+	[&"util_generator", Vector2i(20, 20), 0],
+	[&"util_repair", Vector2i(22, 20), 0],
+	[&"battery_s", Vector2i(22, 21), 0],
+	[&"weapon_laser", Vector2i(23, 19), 0],
+	[&"connector_straight", Vector2i(23, 21), 0],
+	[&"cockpit", Vector2i(24, 20), 0],
+]
+
+
+func _build_starter_ship() -> void:
+	var saved: Array = []
+	for entry: Array in STARTER_SHIP:
+		saved.append({"id": entry[0], "origin": entry[1], "rotation": entry[2]})
+	_restore_hull(saved)
 
 
 ## Rebuilds the ship's modules in the builder. Placement rules depend on what
@@ -1195,6 +1580,7 @@ func _restore_hull(saved: Array) -> void:
 
 
 func _process(delta: float) -> void:
+	_refresh_time_scale()
 	planet_visual_time += delta * minf(time_scale, PLANET_VISUAL_MAX_RATE)
 	RenderingServer.global_shader_parameter_set("planet_time", planet_visual_time)
 	if _clock_date_label != null:
@@ -1216,22 +1602,53 @@ func _process(delta: float) -> void:
 	update_fov_gameplay()
 	update_hud()
 	_update_landing_prompt()
+	_update_warp(delta)
 	_update_warp_button()
 	_update_combat_panels()
+	_update_weapon_control(delta)
 	if hyperspace_jump != null:
 		_advance_warp_run_up()
 
 	if camera_follow_body != null:
-		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
-		camera.position = camera.position.lerp(camera_follow_body.global_position, catch_up_body)
+		var catch_up_body: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta, 0.0, 1.0)
+		camera.position = camera.position.lerp(_drawn_position(camera_follow_body), catch_up_body)
 	elif camera_follow_ship:
-		var catch_up: float = 1.0 if (settings_mgr != null and not settings_mgr.camera_smoothing) else clampf(5.0 * delta * maxf(time_scale, 1.0), 0.0, 1.0)
-		var follow_pos: Vector2 = _test_enemy.position if _test_enemy != null else ship.position
-		camera.position = camera.position.lerp(follow_pos, catch_up)
+		# Locked dead on the ship: at any speed it stays in the middle of the
+		# screen (smoothing only eases the camera onto a planet it follows).
+		camera.position = _drawn_position(_test_enemy if _test_enemy != null else ship)
 
 	_sync_camera_3d()
 	asteroid_belts.update_view(total_sim_time, camera_zoom)
 	asteroid_belt_map.set_zoom(camera_zoom)
+
+
+## Where `node` is drawn this frame. The ship and planets move in physics
+## ticks and are drawn interpolated between the last two; following their
+## raw position instead (a tick ahead of the picture) made the ship shake on
+## screen when the camera was locked on it, zoomed in. 2D nodes have no
+## interpolated-transform getter, so the two tick positions are kept here
+## (_record_tick_positions) for whatever the cameras follow.
+func _drawn_position(node: Node2D) -> Vector2:
+	if node == null or not node.is_physics_interpolated_and_enabled():
+		return node.global_position if node != null else Vector2.ZERO
+	var ticks: Array = _tick_positions.get(node, [])
+	# Unknown, or moved since the tick (a teleport): no in-between to show.
+	if ticks.is_empty() or ticks[1] != node.global_position:
+		return node.global_position
+	return (ticks[0] as Vector2).lerp(ticks[1], Engine.get_physics_interpolation_fraction())
+
+
+## End of each physics tick: the positions the followed nodes are drawn
+## between until the next one.
+func _record_tick_positions() -> void:
+	var tracked: Dictionary = {}
+	for node: Node2D in [ship, camera_follow_body, _test_enemy]:
+		if node == null or not is_instance_valid(node):
+			continue
+		var ticks: Array = _tick_positions.get(node, [])
+		var now: Vector2 = node.global_position
+		tracked[node] = [ticks[1] if not ticks.is_empty() else now, now]
+	_tick_positions = tracked
 
 
 # The top-down orthographic 3D camera shows exactly what the Camera2D shows:
@@ -1411,12 +1828,10 @@ func change_autopilot_target_ap(direction: float) -> void:
 	flash_target_orbit()
 
 
-## W / A / S / D, the turn arrows, or RMB (turn toward the cursor).
+## W / A / S / D or the turn arrows.
 func _is_manual_flight_input(event: InputEvent) -> bool:
 	if event is InputEventKey and event.pressed and not event.echo:
 		return event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_LEFT, KEY_RIGHT]
-	if event is InputEventMouseButton and event.pressed:
-		return event.button_index == MOUSE_BUTTON_RIGHT
 	return false
 
 
@@ -2810,7 +3225,19 @@ func update_hud() -> void:
 	distance_label.add_theme_color_override("font_color", COLOR_MONO)
 
 	hud_status.set_state(autopilot_active, ship.throttle_locked, ship.throttle)
-	time_warp_panel.set_state(time_scale)
+	var warp_share: float = ship.warp_fuel / ship.WARP_FUEL_CAPACITY
+	var warp_cost: float = _warp_cost_share() if warp_phase == WarpPhase.NONE or warp_phase == WarpPhase.ALIGN else 0.0
+	var warp_state: String = ""
+	match warp_phase:
+		WarpPhase.ALIGN:
+			warp_state = "ALIGNING"
+		WarpPhase.SPOOL, WarpPhase.JUMP:
+			warp_state = "WARPING"
+	time_warp_panel.set_state(
+		time_scale, warp_state, String(warp_target.get("body_name")) if warp_target != null else "",
+		warp_cost, warp_share, warp_notice if _warp_notice_time > 0.0 else ""
+	)
+	resource_bars_panel.set_warp(warp_share, warp_cost)
 	var main_engine_display: float = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship_blueprint_panel.set_state(main_engine_display)
 	# Placeholder demo values - no fuel/energy/shield gameplay system exists yet.
@@ -2835,9 +3262,6 @@ func update_hud() -> void:
 	if time_scale == 0.0:
 		thrust_label.text = hud_row("Thrust", "PAUSED" + lock_suffix)
 		thrust_label.add_theme_color_override("font_color", COLOR_WARN)
-	elif ship.throttle > 0.0 and time_scale > 1.0:
-		thrust_label.text = hud_row("Thrust", "OFF (time warp)" + lock_suffix)
-		thrust_label.add_theme_color_override("font_color", COLOR_DIM)
 	elif ship.throttle > 0.0:
 		thrust_label.text = hud_row(
 			"Thrust", "%.1f/%.1f%s" % [ship.thrust_force * ship.throttle, ship.thrust_force, lock_suffix]
@@ -3132,8 +3556,8 @@ func update_trajectory_prediction_async(delta: float) -> void:
 		apply_trajectory_result(trajectory_task_holder.get("result", {}))
 
 	# Nothing to predict with the ship pinned inside a planet; take_off()
-	# starts a fresh prediction.
-	if landed_body != null:
+	# starts a fresh prediction. None in warp either (on rails, no gravity).
+	if landed_body != null or warp_active:
 		return
 	prediction_update_accumulator += delta
 	if prediction_update_accumulator < PREDICTION_UPDATE_INTERVAL:
@@ -3678,8 +4102,9 @@ func open_ship_builder() -> void:
 
 
 func close_ship_builder() -> void:
-	# A built ship needs a cockpit and at least one main engine to fly; with
-	# nothing built the stock ship flies as before.
+	# A built ship needs a cockpit, at least one main engine, and all its
+	# hulls and the cockpit joined into one; with nothing built the stock ship
+	# flies as before.
 	var problem: String = _builder_launch_problem()
 	if problem != "":
 		if _builder_controller != null:
@@ -3703,6 +4128,19 @@ func _builder_launch_problem() -> String:
 		return "The ship needs a cockpit before it can leave the yard."
 	if not engine:
 		return "The ship needs an engine before it can leave the yard."
+	# Hull pieces and the cockpit must form one ship, joined by connectors.
+	var loose: Array[PlacedModule] = _builder_controller.get_hull().unconnected_hull_like()
+	if loose.any(func(m: PlacedModule) -> bool: return m.data.category == ModuleData.Category.COCKPIT):
+		return "The cockpit is not joined to the hull: put a connector between them."
+	if not loose.is_empty():
+		return "%d hull%s not joined to the rest: link them with connectors." % [loose.size(), "" if loose.size() == 1 else "s"]
+	var floating: Array[PlacedModule] = _builder_controller.get_hull().unattached_modules()
+	if not floating.is_empty():
+		var names: PackedStringArray = []
+		for m: PlacedModule in floating:
+			if not names.has(m.data.title):
+				names.append(m.data.title)
+		return "Not attached to the ship: %s. Move or remove %s." % [", ".join(names), "it" if floating.size() == 1 else "them"]
 	return ""
 
 
@@ -3764,6 +4202,7 @@ func _on_enemy_selected(enemy_id: String) -> void:
 
 	var enemy := scene.instantiate() as Enemy
 	enemy.title = str(entry.get("title", enemy.title))
+	enemy.type_id = enemy_id
 	ship.get_parent().add_child(enemy)
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
@@ -3874,9 +4313,7 @@ func _try_fire_fov_weapon() -> void:
 				target = child
 				target_dist = dist
 	if target != null:
-		for shot: Dictionary in ship.fire_weapons_at(target.global_position, target.collision_radius):
-			if is_instance_valid(target) and target.is_alive():
-				target.take_hit(float(shot.get("damage", 0.0)))
+		_spawn_weapon_shots(ship.fire_weapons_at(target.global_position), target.global_position, target)
 		return
 	if ship.weapon_locks.is_empty():
 		return
@@ -3891,7 +4328,9 @@ func _try_fire_fov_weapon() -> void:
 			best_dist = dist
 			best_body = body
 	if best_body != null:
-		ship.try_fire_at(best_body.position, float(best_body.get("visual_radius")))
+		_spawn_weapon_shots(
+			ship.fire_weapons_at(best_body.position), best_body.position, null
+		)
 
 
 func _on_setting_changed(key: String, value: Variant) -> void:
@@ -3940,33 +4379,48 @@ func _apply_all_settings() -> void:
 	_push_starfield_to_black_holes()
 
 
-func _on_time_scale_selected(value: float) -> void:
-	set_time_scale(value)
-
-
+## Time runs at 1x or not at all: there is no time acceleration - long
+## trips are made with the warp drive instead. `time_scale` is 0 while the
+## player paused (P / Space / the panel) or while a full-screen panel is open
+## (_is_menu_open), 1 otherwise.
 func set_time_scale(value: float) -> void:
-	# No warp on a planet's surface - only real time or paused.
-	if landed_body != null:
-		value = minf(value, 1.0)
-	if value > 0.0:
-		previous_time_scale = value
-	time_scale = value
-	if ship != null:
-		ship.paused = (time_scale == 0.0)
+	_user_paused = value <= 0.0
+	_refresh_time_scale()
 
 
 func toggle_pause() -> void:
-	if time_scale > 0.0:
-		previous_time_scale = time_scale
-		set_time_scale(0.0)
-	else:
-		set_time_scale(previous_time_scale if previous_time_scale > 0.0 else 1.0)
+	set_time_scale(1.0 if _user_paused else 0.0)
+
+
+## Galaxy map, builder, tech tree, catalog, cargo hold, settings, pause and
+## enemy menus all hold the game while they are up.
+func _is_menu_open() -> bool:
+	for panel: Control in [
+		galaxy_map_window, tech_tree_window, ship_builder_panel, planet_info_panel,
+		inventory_screen, settings_menu, pause_menu, enemy_menu_panel,
+	]:
+		if panel != null and panel.visible:
+			return true
+	return false
+
+
+func _refresh_time_scale() -> void:
+	var held: bool = _user_paused or _is_menu_open()
+	var scale: float = 0.0 if held else 1.0
+	if scale == time_scale:
+		return
+	time_scale = scale
+	if ship != null:
+		ship.paused = held
+	# Enemies, their shots and the player's shots run on their own _process
+	# and know nothing of the sim clock: freeze them with it.
+	for child in get_children():
+		if child is Enemy or child is PlayerShot or child is LaserBolt or child is SniperBeam or child is DamageZone:
+			child.process_mode = Node.PROCESS_MODE_DISABLED if held else Node.PROCESS_MODE_INHERIT
 
 
 func step_simulation_once() -> void:
-	if time_scale > 0.0:
-		previous_time_scale = time_scale
-		set_time_scale(0.0)
+	set_time_scale(0.0)
 
 	if soi_radii_cache.size() != planets.size():
 		soi_radii_cache.resize(planets.size())
@@ -4299,7 +4753,6 @@ func land_on(body: Node2D) -> void:
 	landed_body = body
 	ground_velocity = Vector2.ZERO
 	ship.disengage_manual_main_engine()
-	set_time_scale(1.0)
 	body.set("surface_driven", true)
 	_pin_ship_to(body)
 
@@ -4406,6 +4859,145 @@ func _drive_on_ground(dt: float) -> void:
 	ship.throttle = clampf(speed / maxf(top_speed, 1e-6), 0.0, 1.0)
 
 
+## Picks the weapon in panel slot `slot` (0-based), or puts it away if it
+## is already picked.
+func _select_weapon_slot(slot: int) -> void:
+	var weapons: Array[Dictionary] = ship.ordered_weapons()
+	if slot < 0 or slot >= weapons.size():
+		return
+	_select_weapon(int(weapons[slot].get("instance_id", -1)))
+
+
+func _select_weapon(instance_id: int) -> void:
+	ship.selected_weapon = -1 if ship.selected_weapon == instance_id else instance_id
+	_firing_held = false
+	ship.queue_redraw()
+
+
+## Every frame: RMB turns the selected turret toward the cursor, and a held
+## LMB keeps firing the selected weapon (its reload sets the pace).
+func _update_weapon_control(delta: float) -> void:
+	if ship.selected_weapon >= 0 and ship.selected_device().is_empty():
+		ship.selected_weapon = -1
+	if ship.selected_weapon < 0 or landed_body != null or hyperspace_jump != null:
+		_firing_held = false
+		return
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		ship.aim_selected(ship.get_global_mouse_position(), delta)
+	if _firing_held and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_firing_held = false
+	if _firing_held:
+		_fire_selected_weapon()
+
+
+## Fires the selected weapon where it points: at the picked target if that is
+## in its cone, else the nearest enemy in it, else straight out to its reach.
+func _fire_selected_weapon() -> void:
+	var device: Dictionary = ship.selected_device()
+	if device.is_empty():
+		return
+	var target: Enemy = null
+	if targeted_enemy != null and is_instance_valid(targeted_enemy) and targeted_enemy.is_alive() \
+			and ship.is_body_in_device_fov(device, targeted_enemy.global_position):
+		target = targeted_enemy
+	else:
+		var best := INF
+		for child in get_children():
+			if child is Enemy and child != _test_enemy and (child as Enemy).is_alive():
+				var d: float = ship.global_position.distance_to(child.global_position)
+				if d < best and ship.is_body_in_device_fov(device, child.global_position):
+					best = d
+					target = child
+	var aim: Vector2
+	if target != null:
+		aim = target.global_position
+	else:
+		aim = ship.device_world_origin(device) + ship.device_world_facing(device) * float(device.get("range", 1000.0)) * 0.98
+	_spawn_weapon_shots(ship.fire_weapons_at(aim, int(device.get("instance_id", -1))), aim, target)
+
+
+## Turns weapons that just fired into shots: the sniper's beam hits at once;
+## everything else flies as PlayerShot projectiles with that weapon's look -
+## pellets, bursts and alternating barrels included.
+func _spawn_weapon_shots(fired: Array[Dictionary], aim: Vector2, target: Enemy) -> void:
+	for device: Dictionary in fired:
+		if device.get("id", &"") == ship.SNIPER_ID:
+			_spawn_sniper_beam(device, aim)
+			continue
+		var fx: Dictionary = PlayerShot.fx_for(device.get("id", &""))
+		var burst: int = int(fx.get("burst", 1))
+		var id: int = int(device.get("instance_id", -1))
+		for b in burst:
+			if b == 0:
+				_spawn_projectiles(id, aim)
+			else:
+				get_tree().create_timer(float(fx.get("burst_gap", 0.1)) * b).timeout.connect(_spawn_projectiles.bind(id, aim))
+
+
+## The player's Sniper Laser: one long yellow beam out to its full reach,
+## like the enemy sniper's, hitting every enemy along it. It rides along with
+## the ship's muzzle while it fades.
+func _spawn_sniper_beam(device: Dictionary, aim: Vector2) -> void:
+	var muzzle: Vector2 = ship.device_world_origin(device)
+	var direction: Vector2 = ship.device_world_facing(device)
+	if ship.is_body_in_device_fov(device, aim) and aim.distance_to(muzzle) > 1.0:
+		direction = (aim - muzzle).normalized()
+	var beam := SniperBeam.new()
+	beam.direction = direction
+	beam.reach = float(device.get("range", 16000.0))
+	beam.damage = float(device.get("damage", 0.0))
+	beam.glow_color = ship.SNIPER_GLOW_COLOR
+	beam.core_color = ship.SNIPER_CORE_COLOR
+	beam.hits_player = false
+	beam.ignore_enemy = _test_enemy
+	beam.carrier = ship
+	beam.carrier_offset = (muzzle - ship.global_position).rotated(-ship.rotation)
+	add_child(beam)
+	beam.global_position = muzzle
+
+
+func _spawn_projectiles(instance_id: int, aim: Vector2) -> void:
+	var device: Dictionary = {}
+	for candidate: Dictionary in ship.fov_devices:
+		if int(candidate.get("instance_id", -1)) == instance_id:
+			device = candidate
+	if device.is_empty():
+		return
+	var fx: Dictionary = PlayerShot.fx_for(device.get("id", &""))
+	var facing: Vector2 = ship.device_world_facing(device)
+	var origin: Vector2 = ship.device_world_origin(device)
+	# Out to the muzzle: from a turret's middle to the edge it fires from.
+	var muzzle_reach: float = (device.get("local_origin", Vector2.ZERO) as Vector2).distance_to(device.get("center", device.get("local_origin", Vector2.ZERO)))
+	var muzzle: Vector2 = origin + facing * muzzle_reach
+	var barrels: int = int(fx.get("barrels", 1))
+	if barrels > 1:
+		var barrel: int = int(_next_barrel.get(instance_id, 0))
+		_next_barrel[instance_id] = (barrel + 1) % barrels
+		muzzle += facing.orthogonal() * FovUtil.WORLD_UNITS_PER_CELL * 0.3 * (1.0 if barrel == 0 else -1.0)
+	# Toward the aim point if the gun covers it, else straight out.
+	var direction: Vector2 = facing
+	if ship.is_body_in_device_fov(device, aim) and aim.distance_to(muzzle) > 1.0:
+		direction = (aim - muzzle).normalized()
+	var pellets: int = int(fx.get("pellets", 1))
+	var half_spread: float = deg_to_rad(float(fx.get("spread", 0.0))) * 0.5
+	var half_cone: float = deg_to_rad(float(device.get("angle_deg", 0.0))) * 0.5
+	var aim_offset: float = clampf(facing.angle_to(direction), -half_cone, half_cone)
+	for p in pellets:
+		var shot := PlayerShot.new()
+		shot.fx = fx
+		shot.damage = float(device.get("damage", 0.0)) / float(pellets)
+		shot.max_distance = float(device.get("range", 1000.0))
+		# Keep even a single imperfect shot inside the cone shown in the preview.
+		var low: float = maxf(-half_spread, -half_cone - aim_offset)
+		var high: float = minf(half_spread, half_cone - aim_offset)
+		var offset: float = aim_offset + randf_range(low, high)
+		var dir: Vector2 = facing.rotated(offset)
+		shot.velocity = dir * float(fx["speed"]) * PlayerShot.SPEED_SCALE + ship.velocity
+		shot.ignore = _test_enemy
+		add_child(shot)
+		shot.global_position = muzzle
+
+
 func _enemy_in_weapon_cone(enemy: Node2D) -> bool:
 	return ship.fov_devices.any(
 		func(device: Dictionary) -> bool:
@@ -4456,17 +5048,24 @@ func _update_combat_panels() -> void:
 	if aim == null and not contacts.is_empty():
 		aim = contacts[0]["enemy"]
 	var weapons: Array = []
-	for device: Dictionary in ship.fov_devices:
-		if str(device.get("kind", "")) != "weapon":
-			continue
+	for device: Dictionary in ship.ordered_weapons():
 		var reload_time: float = maxf(float(device.get("reload_time", 0.0)), 0.05)
 		var left: float = float(ship._weapon_cooldowns.get(int(device.get("instance_id", -1)), 0.0))
+		# Rapid-fire guns (the DEW) show a steady full bar instead of a flicker.
+		if reload_time < RAPID_FIRE_RELOAD:
+			left = 0.0
+		# Where it would shoot now: at the aim if its cone covers it, else ahead.
+		var shoot_dir: Vector2 = ship.device_local_facing(device)
+		if aim != null and ship.is_body_in_device_fov(device, aim.global_position):
+			shoot_dir = ship.to_local(aim.global_position) - ship.device_local_origin(device)
 		weapons.append({
+			"blocked": ship.is_shot_blocked(device, shoot_dir),
+			"id": int(device.get("instance_id", -1)),
 			"title": device.get("title", "Weapon"),
 			"reload": left / reload_time,
 			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
 		})
-	weapons_panel.set_state(weapons, ship.powered)
+	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon)
 
 
 ## The hull reached 0: the ship is rebuilt, full, in orbit round the home
@@ -4477,7 +5076,7 @@ func _respawn_destroyed_ship() -> void:
 	if autopilot_active:
 		disengage_autopilot(false)
 	autopilot_selecting = false
-	set_time_scale(1.0)
+	cancel_warp()
 	var home: Node2D = planets[HOME_PLANET_INDEX]
 	var index: int = HOME_PLANET_INDEX
 	var body: PhysicsBody = physics_planets[index]
@@ -4633,6 +5232,8 @@ func _physics_process(delta: float) -> void:
 		for i in range(planets.size()):
 			update_orbit_line(planets[i], orbit_lines[i], i)
 
+	_record_tick_positions()
+
 	# Global so every planet shader lights itself from the sun without each
 	# body needing to know where the sun is.
 	RenderingServer.global_shader_parameter_set(
@@ -4643,18 +5244,18 @@ func _physics_process(delta: float) -> void:
 func simulation_step(dt: float) -> void:
 	update_orbit_autopilot(dt)
 
-	if ship.poll_lock_toggle(time_scale <= 1.0):
-		thrust_locked_sound.play()
+	if ship.poll_lock_toggle(true):
 		if autopilot_active:
 			# The lock has its own sound; no autopilot-off call on top.
 			disengage_autopilot(false)
 
+	ship.assist_suspended = autopilot_active
 	var autopilot_on_main_engine: bool = is_autopilot_using_main_engine()
 	var autopilot_thrusting: bool = ship.autopilot_thrust != Vector2.ZERO
 
 	# While test-flying a sandbox enemy (E menu), the player ship stops reading
 	# WASD/mouse-aim so both craft don't respond to the same keys at once.
-	if _test_enemy == null:
+	if _test_enemy == null and not warp_active:
 		# Prograde / retrograde hold follows the orbit around the current SOI body
 		# (from the SOI cache and the precise state - this runs every step).
 		var hold_index: int = _ship_soi_index_precise()
@@ -4669,8 +5270,8 @@ func simulation_step(dt: float) -> void:
 
 		if landed_body != null:
 			pass # Ground driving steers the ship itself (below).
-		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-			ship.update_rotation(dt)
+		elif warp_phase == WarpPhase.ALIGN:
+			_advance_warp_align(dt)
 		elif autopilot_on_main_engine:
 			ship.update_autopilot_rotation(dt)
 		else:
@@ -4681,13 +5282,12 @@ func simulation_step(dt: float) -> void:
 		elif autopilot_thrusting:
 			ship.disengage_manual_main_engine()
 		else:
-			ship.update_throttle(dt, time_scale <= 1.0)
+			ship.update_throttle(dt)
 
 	# Fuel, energy, shields and repairs, from what the engines are doing now.
 	var engine_output: float = 0.0
 	if landed_body == null and ship.has_fuel():
-		var manual: float = ship.throttle if (time_scale <= 1.0 or ship.throttle_locked) else 0.0
-		engine_output = maxf(manual, ship.autopilot_main_engine_output)
+		engine_output = maxf(ship.throttle, ship.autopilot_main_engine_output)
 	ship.update_resources(dt, engine_output, landed_body != null)
 	if ship.is_destroyed():
 		_respawn_destroyed_ship()
@@ -4697,7 +5297,7 @@ func simulation_step(dt: float) -> void:
 
 	# Ship acceleration at the start of the step, planets where they are now.
 	# Landed, the ship is not integrated at all - it is pinned below.
-	var ship_a0: Vector2 = Vector2.ZERO if landed else get_ship_acceleration_precise()
+	var ship_a0: Vector2 = Vector2.ZERO if (landed or warp_active) else get_ship_acceleration_precise()
 
 	# Planets feel only the sun: a whole velocity-Verlet step each, inline -
 	# this loop runs for every planet on every step, hundreds of times a frame
@@ -4730,6 +5330,10 @@ func simulation_step(dt: float) -> void:
 		_drive_on_ground(dt)
 		landed_body.roll_surface(ground_velocity * dt)
 		_pin_ship_to(landed_body)
+		return
+
+	if warp_active:
+		_advance_warp(dt)
 		return
 
 	physics_ship.advance_position(ship_a0, dt)
@@ -4796,10 +5400,7 @@ func get_ship_acceleration_precise() -> Vector2:
 			)
 			break
 
-	if time_scale <= 1.0:
-		acceleration += ship.get_manual_acceleration()
-	elif ship.throttle_locked:
-		acceleration += ship.get_thrust_acceleration()
+	acceleration += ship.get_manual_acceleration()
 	acceleration += ship.get_autopilot_acceleration(get_autopilot_thrust_force())
 
 	return acceleration

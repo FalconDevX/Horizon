@@ -19,6 +19,9 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
+## EnemyCatalog id ("basic", "mothership", ... or "fighter"): picks the red
+## type marker and its abbreviation (EnemyMarkers.MARKERS). Set on spawn.
+var type_id: String = "basic"
 @export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
@@ -50,7 +53,7 @@ const SPEED_VS_PLAYER := 1.1
 @export var collision_radius: float = 12.0
 ## Hits it takes from the player's weapons before it blows up (a kamikaze
 ## goes off at the first hit whatever this says).
-@export var max_health: float = 60.0
+@export var max_health: float = 30.0
 ## What ramming the player's ship does to it (kamikaze contact).
 @export var contact_damage: float = 45.0
 ## Barrel tips in the artwork, as fractions of the nose-up image - one bolt
@@ -121,13 +124,8 @@ var orbit_alert_range: float = 0.0
 var _alerted: bool = false
 var _orbiting: bool = false
 
-## Far-zoom silhouette - same chevron as the player ship, drawn red.
-var MARKER_POINTS := PackedVector2Array([
-	Vector2(12, 0),
-	Vector2(-8, -7),
-	Vector2(-8, 7),
-])
-const MARKER_COLOR := Color(1.0, 0.22, 0.18)
+## Far-zoom marker size in screen px (the type's shape, EnemyMarkers.MARKERS).
+const MARKER_SIZE := 18.0
 
 
 ## Park this craft on a circular orbit around `anchor`. Not player-controlled.
@@ -337,6 +335,8 @@ func _try_deploy_fighter() -> void:
 	if fighter == null:
 		return
 	fighter.player_controlled = false
+	fighter.type_id = "fighter"
+	fighter.title = EnemyMarkers.title_for("fighter")
 	fighter.ai_forward = true
 	fighter.ai_seek_ship = true
 	get_parent().add_child(fighter)
@@ -449,7 +449,7 @@ func _play_laser_sound() -> void:
 ## (solar_system.gd _try_fire_fov_weapon). A kamikaze detonates at once; the
 ## rest go when the hits add up to max_health.
 func take_hit(amount: float) -> void:
-	if _exploding:
+	if _exploding or amount <= 0.0:
 		return
 	if explodes_on_hit:
 		explode()
@@ -457,6 +457,17 @@ func take_hit(amount: float) -> void:
 	_damage_taken += amount
 	if _damage_taken >= max_health:
 		explode()
+	else:
+		queue_redraw()
+
+
+func health_fraction() -> float:
+	return clampf((max_health - _damage_taken) / maxf(max_health, 1.0), 0.0, 1.0)
+
+
+## At wide zoom the enemy is a fixed-size marker; its hit area follows it.
+func hit_radius() -> float:
+	return maxf(collision_radius, 14.0 * scale.x) if not true_scale else collision_radius
 
 
 func is_alive() -> bool:
@@ -517,12 +528,18 @@ func _draw() -> void:
 		_draw_black_hole_field()
 
 	if not true_scale:
-		draw_colored_polygon(MARKER_POINTS, MARKER_COLOR)
 		if _throttle > 0.05:
 			_draw_engine_flame(Vector2(-8, 0))
+		# Upright type marker (pointed shapes still turned to the heading).
+		draw_set_transform(Vector2.ZERO, -rotation, Vector2.ONE)
+		EnemyMarkers.draw_marker(self, Vector2.ZERO, MARKER_SIZE, type_id, EnemyMarkers.MARKER_COLOR, rotation)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_draw_health_bar()
+		_draw_type_label()
 		return
 
 	if ship_texture == null:
+		_draw_health_bar()
 		return
 	var draw_size := _get_draw_size()
 	draw_set_transform(Vector2.ZERO, PI * 0.5, Vector2.ONE)
@@ -532,6 +549,35 @@ func _draw() -> void:
 	if _throttle > 0.05:
 		for exit in engine_exits:
 			_draw_engine_flame(_image_to_local(exit, draw_size))
+	_draw_health_bar()
+	_draw_type_label()
+
+
+## The type's abbreviation ("MS" for a mothership...), red, upright, right of
+## the craft - a fixed size on screen.
+func _draw_type_label() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var extent: float = (visual_length * 0.6) / px if true_scale else MARKER_SIZE * 0.6
+	draw_set_transform(Vector2.ZERO, -rotation, Vector2(px, px))
+	draw_string(
+		HudPanelStyle.get_font(), Vector2(extent + 4.0, 4.0), EnemyMarkers.abbreviation(type_id),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, EnemyMarkers.MARKER_COLOR
+	)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_health_bar() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var width: float = 36.0 * px
+	var height: float = 4.0 * px
+	var extent: float = visual_length * 0.6 if true_scale else 14.0 * px
+	var top: float = -(extent + 8.0 * px)
+	var rect := Rect2(Vector2(-width * 0.5, top), Vector2(width, height))
+	draw_set_transform(Vector2.ZERO, -rotation, Vector2.ONE)
+	draw_rect(rect.grow(1.0 * px), Color(0.04, 0.05, 0.08, 0.85))
+	draw_rect(rect, Color(0.35, 0.08, 0.08, 0.9))
+	draw_rect(Rect2(rect.position, Vector2(width * health_fraction(), height)), Color(0.35, 0.9, 0.45))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Red corner brackets round a targeted enemy, a fixed size on screen.
