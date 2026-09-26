@@ -38,8 +38,7 @@ func set_state(ready_to_jump: bool, title: String, detail: String) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		accept_event()
-		if _ready_to_jump:
-			warp_pressed.emit()
+		warp_pressed.emit()
 
 
 func _draw() -> void:

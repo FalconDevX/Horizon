@@ -132,6 +132,10 @@ const WARP_ARRIVE_MIN := 3000.0
 ## Other bodies block the path within this many of their radii.
 const WARP_CLEARANCE_RADII := 1.6
 const WARP_PATH_COLOR := Color(0.62, 0.55, 1.0, 0.55)
+const SOUND_TARGET_OBSTRUCTED := preload("res://sounds/target--obstructed.wav")
+const SOUND_WARP_INITIATED := preload("res://sounds/warp-initiated.wav")
+var _obstructed_player: AudioStreamPlayer
+var _warp_initiated_player: AudioStreamPlayer
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -680,6 +684,29 @@ func toggle_warp_target(body: Node2D) -> void:
 	# the WARP button says why until it can.
 	warp_target = body
 	music_toast.show_message("WARP TARGET LOCKED: %s" % String(body.get("body_name")).to_upper())
+	var problem: String = _warp_problem(body)
+	if "blocked" in problem.to_lower():
+		_play_obstructed_sound()
+
+
+func _play_obstructed_sound() -> void:
+	if _obstructed_player == null:
+		_obstructed_player = AudioStreamPlayer.new()
+		_obstructed_player.name = "ObstructedSoundPlayer"
+		_obstructed_player.stream = SOUND_TARGET_OBSTRUCTED
+		_obstructed_player.bus = &"SFX"
+		add_child(_obstructed_player)
+	_obstructed_player.play()
+
+
+func _play_warp_initiated_sound() -> void:
+	if _warp_initiated_player == null:
+		_warp_initiated_player = AudioStreamPlayer.new()
+		_warp_initiated_player.name = "WarpInitiatedPlayer"
+		_warp_initiated_player.stream = SOUND_WARP_INITIATED
+		_warp_initiated_player.bus = &"SFX"
+		add_child(_warp_initiated_player)
+	_warp_initiated_player.play()
 
 
 ## "" when a jump to `body` can go now, else why not.
@@ -740,10 +767,14 @@ func start_warp_jump() -> void:
 		return
 	if warp_target == null:
 		_warp_notify("No target. Ctrl+click a planet")
+		music_toast.show_message("WARP: NO TARGET")
 		return
 	var problem: String = _warp_problem(warp_target)
 	if problem != "":
 		_warp_notify(problem)
+		music_toast.show_message("WARP: %s" % problem.to_upper())
+		if "blocked" in problem.to_lower():
+			_play_obstructed_sound()
 		return
 	ship.disengage_manual_main_engine()
 	ship.attitude_hold = ship.AttitudeHold.NONE
@@ -751,6 +782,7 @@ func start_warp_jump() -> void:
 	_warp_time = 0.0
 	camera_follow_ship = true
 	camera_follow_body = null
+	_play_warp_initiated_sound()
 
 
 ## Aligned: the fuel is paid and the ship leaves its orbit for the rails.
@@ -777,7 +809,11 @@ func _begin_warp_spool() -> void:
 ## calls the warp off.
 func _advance_warp_align(dt: float) -> void:
 	if warp_target == null or _warp_problem(warp_target) != "":
-		_warp_notify(_warp_problem(warp_target) if warp_target != null else "Target lost")
+		var problem: String = _warp_problem(warp_target) if warp_target != null else "Target lost"
+		_warp_notify(problem)
+		music_toast.show_message("WARP: %s" % problem.to_upper())
+		if "blocked" in problem.to_lower():
+			_play_obstructed_sound()
 		warp_phase = WarpPhase.NONE
 		return
 	var wanted: float = (warp_target.position - ship.position).angle()
