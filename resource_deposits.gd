@@ -576,8 +576,8 @@ static func yields(kind: int, variant: String, flag: String = "") -> Array:
 
 
 ## Rarity tier of a deposit type: 1 common, 2 uncommon, 3 rare, 4 special,
-## 5 wildcard. Scenery / unknown -> 0. PlanetGuards gives worlds with tier 3
-## or above the elite guards.
+## 5 wildcard. Scenery / unknown -> 0. (Guards follow the planet's
+## difficulty, PlanetRoster.DIFFICULTY, not these.)
 static func tier_of(type_name: StringName) -> int:
 	return int(TYPES.get(type_name, {}).get("tier", 0))
 
