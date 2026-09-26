@@ -7,6 +7,7 @@ extends Node2D
 ## only on mass ratios and are unaffected.
 const G: float = 3072000.0
 const PlanetGuardsScript := preload("res://scripts/enemy/PlanetGuards.gd")
+const EnemyWavesScript := preload("res://scripts/enemy/EnemyWaves.gd")
 
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
@@ -188,6 +189,11 @@ var _test_enemy: Enemy = null ## Sandbox (E menu) ship being test-flown, if any.
 var _planet_guards: Array[Enemy] = []
 ## True after a seed change until every surface has baked and guards respawn.
 var _planet_guards_pending: bool = false
+## Timed hunt waves (EnemyWaves): how many have already fired this save.
+var _enemy_waves_spawned: int = 0
+## Live craft from the latest wave(s); pruned as they die.
+var _wave_enemies: Array[Enemy] = []
+var _clock_wave_label: Label = null
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
 var trajectory_candidate_status := ""
@@ -628,6 +634,7 @@ func set_world_seed(value: int) -> void:
 	_show_roster()
 	_chart_known_bodies()
 	_clear_planet_guards()
+	_clear_wave_enemies()
 	_planet_guards_pending = true
 
 	print("World seed: %d" % world_seed)
@@ -1387,6 +1394,7 @@ func build_save_data() -> Dictionary:
 		"hull": hull_modules,
 		"ship_resources": [ship.fuel, ship.energy, ship.shield, ship.hull_hp],
 		"warp_fuel": ship.warp_fuel,
+		"enemy_waves_spawned": _enemy_waves_spawned,
 	}
 
 
@@ -1412,6 +1420,12 @@ func _apply_pending_save() -> void:
 	sim_time = float(data.get("sim_time", 0.0))
 	total_sim_time = float(data.get("total_sim_time", 0.0))
 	planet_visual_time = float(data.get("planet_visual_time", 0.0))
+	# Older saves lack the field - mark every past wave as already done so load
+	# does not dump a stack of fleets at once.
+	if data.has("enemy_waves_spawned"):
+		_enemy_waves_spawned = int(data["enemy_waves_spawned"])
+	else:
+		_enemy_waves_spawned = EnemyWavesScript.waves_due(sim_time, CLOCK_HOURS_PER_SIM_SECOND)
 
 	var planet_states: Array = data.get("planets", [])
 	for i in mini(planet_states.size(), physics_planets.size()):
@@ -1537,6 +1551,7 @@ func _process(delta: float) -> void:
 	RenderingServer.global_shader_parameter_set("planet_time", planet_visual_time)
 	if _clock_date_label != null:
 		_update_clock()
+	_update_enemy_waves()
 	if _planet_guards_pending and loading_screen == null and _all_surfaces_ready():
 		_planet_guards_pending = false
 		_spawn_planet_guards()
@@ -2295,8 +2310,14 @@ func _build_clock() -> void:
 	row.add_child(_clock_date_label)
 	row.add_child(_clock_day_label)
 
+	_clock_wave_label = Label.new()
+	_clock_wave_label.name = "WaveLabel"
+	_clock_wave_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.32))
+	_clock_wave_label.add_theme_font_size_override("font_size", 12)
+
 	var title_row: Node = $HUD/PanelContainer/VBoxContainer/TitleRow
 	title_row.add_sibling(row)
+	row.add_sibling(_clock_wave_label)
 	_update_clock()
 
 
@@ -2309,6 +2330,65 @@ func _update_clock() -> void:
 		now.day, MONTH_NAMES[now.month - 1], now.year, now.hour, now.minute
 	]
 	_clock_day_label.text = "DAY %d" % (int(hours / 24.0) + 1)
+	_update_wave_label()
+
+
+func _update_wave_label() -> void:
+	if _clock_wave_label == null:
+		return
+	_prune_wave_enemies()
+	var alive: int = _wave_enemies.size()
+	if alive > 0:
+		_clock_wave_label.text = "WAVE %d ACTIVE  ·  %d LEFT" % [
+			_enemy_waves_spawned, alive
+		]
+		return
+	var hours_left: int = EnemyWavesScript.hours_until_next(
+		sim_time, CLOCK_HOURS_PER_SIM_SECOND, _enemy_waves_spawned
+	)
+	var next_wave: int = _enemy_waves_spawned + 1
+	if hours_left <= 0:
+		_clock_wave_label.text = "WAVE %d IMMINENT" % next_wave
+	elif hours_left == 1:
+		_clock_wave_label.text = "WAVE %d IN 1 HOUR" % next_wave
+	else:
+		_clock_wave_label.text = "WAVE %d IN %d HOURS" % [next_wave, hours_left]
+
+
+## Fire any waves that are due for the current sim day (also catches up after load).
+func _update_enemy_waves() -> void:
+	if loading_screen != null or hyperspace_jump != null:
+		return
+	if time_scale <= 0.0:
+		return
+	var due: int = EnemyWavesScript.waves_due(sim_time, CLOCK_HOURS_PER_SIM_SECOND)
+	while _enemy_waves_spawned < due:
+		_spawn_enemy_wave()
+
+
+func _spawn_enemy_wave() -> void:
+	_enemy_waves_spawned += 1
+	var spawned: Array[Enemy] = EnemyWavesScript.spawn_wave(self, ship, _enemy_waves_spawned)
+	_wave_enemies.append_array(spawned)
+	music_toast.show_message(
+		"HOSTILE WAVE %d     %d contacts inbound" % [_enemy_waves_spawned, spawned.size()]
+	)
+	_update_wave_label()
+
+
+func _prune_wave_enemies() -> void:
+	var kept: Array[Enemy] = []
+	for enemy: Enemy in _wave_enemies:
+		if is_instance_valid(enemy) and not enemy.is_queued_for_deletion():
+			kept.append(enemy)
+	_wave_enemies = kept
+
+
+func _clear_wave_enemies() -> void:
+	for enemy: Enemy in _wave_enemies:
+		if is_instance_valid(enemy):
+			enemy.queue_free()
+	_wave_enemies.clear()
 
 
 func _on_orbit_info_pressed() -> void:
