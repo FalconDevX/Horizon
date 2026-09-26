@@ -64,10 +64,13 @@ const SPEED_VS_PLAYER := 1.1
 @export var ai_forward: bool = false
 @export var ai_seek_ship: bool = false
 
-## Mothership: Space launches Fast fighters instead of shooting.
+## Mothership: auto-launches Fast fighters on an interval; Space also launches
+## when the craft is player-controlled.
 @export var deploy_fighters: bool = false
 @export var fighter_scene: PackedScene
-@export var deploy_cooldown: float = 1.4
+## Seconds between fighter launches (rolled uniformly each time).
+@export var deploy_cooldown: float = 10.0
+@export var deploy_cooldown_max: float = 15.0
 @export var deploy_offset: float = 36.0
 
 ## Minelayer: Space drops a DamageZone at the ship.
@@ -130,6 +133,11 @@ var MARKER_POINTS := PackedVector2Array([
 const MARKER_COLOR := Color(1.0, 0.22, 0.18)
 
 
+func _ready() -> void:
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
+
+
 ## Park this craft on a circular orbit around `anchor`. Not player-controlled.
 ## `alert_range` is how close the player may get to the planet before the
 ## craft leaves the rail and attacks.
@@ -151,6 +159,8 @@ func begin_orbit(
 	_alerted = false
 	_orbiting = true
 	_bh_active_time = 0.0
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
 	if anchor != null:
 		global_position = anchor.global_position + Vector2.from_angle(angle) * radius
 		rotation = angle + PI * 0.5 * signf(omega if omega != 0.0 else 1.0)
@@ -211,6 +221,8 @@ func _handle_orbit(delta: float) -> void:
 	global_position = planet_pos + Vector2.from_angle(orbit_angle) * orbit_radius
 	rotation = orbit_angle + PI * 0.5 * signf(orbit_omega if orbit_omega != 0.0 else 1.0)
 	_throttle = 0.55
+	if deploy_fighters:
+		_try_deploy_fighter()
 
 
 ## Break orbit: chase the player and use guns / specials.
@@ -256,10 +268,10 @@ func _handle_input(delta: float) -> void:
 	if not is_zero_approx(_throttle):
 		position += Vector2.RIGHT.rotated(rotation) * move_speed * _throttle * delta
 
-	if Input.is_key_pressed(KEY_SPACE):
-		if deploy_fighters:
-			_try_deploy_fighter()
-		elif lay_mines:
+	if deploy_fighters:
+		_try_deploy_fighter()
+	elif Input.is_key_pressed(KEY_SPACE):
+		if lay_mines:
 			_try_lay_mine()
 		elif can_fire:
 			_try_fire()
@@ -329,10 +341,14 @@ func fire_laser() -> void:
 		bolt.velocity = dir * laser_speed
 
 
+func _next_deploy_delay() -> float:
+	return randf_range(deploy_cooldown, maxf(deploy_cooldown, deploy_cooldown_max))
+
+
 func _try_deploy_fighter() -> void:
 	if fighter_scene == null or _ability_timer > 0.0 or get_parent() == null:
 		return
-	_ability_timer = deploy_cooldown
+	_ability_timer = _next_deploy_delay()
 	var fighter := fighter_scene.instantiate() as Enemy
 	if fighter == null:
 		return

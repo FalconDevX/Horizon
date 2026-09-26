@@ -3721,8 +3721,10 @@ func toggle_enemy_menu() -> void:
 ## T3 deposit worlds get the elite roster; the rest get basic craft.
 func _spawn_planet_guards() -> void:
 	_clear_planet_guards()
+	# Discovery order in the galaxy: first system = 0, each new jump +1.
+	var system_depth: int = maxi(0, GalaxyMap.index_of(world_seed))
 	_planet_guards = PlanetGuardsScript.spawn_system(
-		self, planets, G, _planet_nearest_ship()
+		self, planets, G, _planet_nearest_ship(), system_depth
 	)
 
 
