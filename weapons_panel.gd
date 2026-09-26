@@ -11,7 +11,8 @@ extends Control
 ## Click a gun to pick it (LMB then fires it, RMB turns a turret) - or, with a
 ## target locked in the contacts panel, to set it firing on its own (AUTO)
 ## until clicked again. Click a radar (or press R) to scan. Drag a gun along
-## the row to reorder. Fed each frame by solar_system.gd with set_state().
+## the row to reorder. No panel is drawn behind the slots. Fed each frame
+## by solar_system.gd with set_state().
 
 signal weapon_picked(instance_id: int)
 signal order_changed(instance_ids: Array)
@@ -40,8 +41,6 @@ var _powered := true
 var _selected: int = -1
 var _locked := false
 var _hover: int = -1
-var _hover_help := false
-var _help: HelpPopup
 ## Slot pressed and where; becomes a drag once the mouse moves far enough.
 var _press: int = -1
 var _press_pos := Vector2.ZERO
@@ -53,15 +52,6 @@ var _icons: Dictionary = {}
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	_help = HelpPopup.new(PackedStringArray([
-		"1-9 or click a gun: pick it (again: put it away)",
-		"LMB (hold): fire the picked gun",
-		"RMB (hold): turn the picked turret to the cursor",
-		"With a target locked: click a gun to fire on its own",
-		"Click a radar or press R: scan",
-		"Drag a gun along the row: reorder",
-	]))
-	add_child(_help)
 	mouse_exited.connect(func() -> void:
 		_hover = -1
 		queue_redraw()
@@ -82,8 +72,10 @@ func set_state(weapons: Array, powered: bool, selected: int, locked: bool = fals
 	queue_redraw()
 
 
-func _help_rect() -> Rect2:
-	return Rect2(size.x - PAD - 18.0, 4.0, 18.0, 18.0)
+## No panel behind the rack: only the slots take the mouse, the gaps
+## between them let clicks through to the world.
+func _has_point(point: Vector2) -> bool:
+	return _dragging or _slot_at(point) >= 0
 
 
 func _gun_count() -> int:
@@ -114,21 +106,12 @@ func _slot_at(point: Vector2) -> int:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_mouse = event.position
-		_hover_help = _help_rect().has_point(event.position)
 		_hover = _slot_at(event.position)
 		if _press >= 0 and not _dragging and _mouse.distance_to(_press_pos) > DRAG_THRESHOLD:
 			_dragging = not _weapons[_press].get("radar", false)
 		queue_redraw()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed and _help_rect().has_point(event.position):
-			_help.toggle_at(Vector2(size.x - PAD, _help_rect().end.y + 4.0))
-			if _help.visible:
-				# Opens upward: the rack sits at the bottom of the screen.
-				_help.position.y = -_help.size.y - 6.0
-			accept_event()
-			return
 		if event.pressed:
-			_help.close()
 			_press = _slot_at(event.position)
 			_press_pos = event.position
 			_dragging = false
@@ -170,18 +153,17 @@ func _icon(module_id: StringName) -> Texture2D:
 
 
 func _draw() -> void:
-	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 12.0, 0.85, 0.55)
 	var font: Font = HudPanelStyle.get_font()
-	HelpPopup.draw_button(self, _help_rect(), _hover_help, _help.visible)
-	var caption: String = "MODULES"
+	# Only a name over the hovered slot (or a power warning): no title.
+	var caption: String = ""
 	var caption_colour: Color = HudPanelStyle.COLOR_CYAN
 	if _hover >= 0 and _hover < _weapons.size():
 		caption = _describe(_weapons[_hover])
 		caption_colour = HudPanelStyle.COLOR_TEXT_PRIMARY
 	elif not _powered:
-		caption = "MODULES  NO POWER"
+		caption = "NO POWER"
 		caption_colour = HudPanelStyle.COLOR_AMBER
-	draw_string(font, Vector2(PAD, 16.0), caption, HORIZONTAL_ALIGNMENT_LEFT, size.x - PAD * 2.0 - 22.0, 10, caption_colour)
+	draw_string(font, Vector2(PAD, 16.0), caption, HORIZONTAL_ALIGNMENT_LEFT, size.x - PAD * 2.0, 10, caption_colour)
 	if _weapons.is_empty():
 		draw_string(font, Vector2(PAD, HEADER + PAD + 14.0), "No weapons mounted", HORIZONTAL_ALIGNMENT_LEFT, size.x - PAD * 2.0, 10, HudPanelStyle.COLOR_TEXT_MUTED)
 		return
