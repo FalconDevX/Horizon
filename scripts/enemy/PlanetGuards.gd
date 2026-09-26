@@ -101,6 +101,7 @@ static func spawn_planet(
 		var enemy := scene.instantiate() as Enemy
 		if enemy == null:
 			continue
+		EnemyCatalog.configure(enemy, enemy_id)
 		var angle: float = (TAU * float(i) / float(count)) + rng.randf_range(-0.2, 0.2)
 		var radius: float = base_orbit * rng.randf_range(0.88, 1.18)
 		var omega: float = base_omega * (1.0 if rng.randf() > 0.35 else -1.0)

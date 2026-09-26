@@ -3765,7 +3765,7 @@ func _on_enemy_selected(enemy_id: String) -> void:
 		return
 
 	var enemy := scene.instantiate() as Enemy
-	enemy.title = str(entry.get("title", enemy.title))
+	EnemyCatalog.configure(enemy, enemy_id)
 	ship.get_parent().add_child(enemy)
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
@@ -4430,7 +4430,9 @@ func detected_enemies() -> Dictionary:
 		var enemy := child as Enemy
 		if radars.any(func(device: Dictionary) -> bool: return ship.is_body_in_device_fov(device, enemy.global_position)):
 			contacts.append({
-				"enemy": enemy, "title": enemy.title,
+				"enemy": enemy,
+				"title": enemy.title,
+				"kind_id": enemy.kind_id,
 				"distance": ship.global_position.distance_to(enemy.global_position),
 			})
 	contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])

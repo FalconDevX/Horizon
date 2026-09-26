@@ -19,6 +19,8 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
+## Catalog id for the flat map/HUD glyph (shape + colour).
+@export var kind_id: String = "basic"
 @export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
@@ -123,14 +125,6 @@ var orbit_alert_range: float = 0.0
 ## Leave the rail and chase while the player is near the guarded planet.
 var _alerted: bool = false
 var _orbiting: bool = false
-
-## Far-zoom silhouette - same chevron as the player ship, drawn red.
-var MARKER_POINTS := PackedVector2Array([
-	Vector2(12, 0),
-	Vector2(-8, -7),
-	Vector2(-8, 7),
-])
-const MARKER_COLOR := Color(1.0, 0.22, 0.18)
 
 
 func _ready() -> void:
@@ -353,6 +347,7 @@ func _try_deploy_fighter() -> void:
 	fighter.player_controlled = false
 	fighter.ai_forward = true
 	fighter.ai_seek_ship = true
+	EnemyCatalog.configure(fighter, "fast")
 	get_parent().add_child(fighter)
 	var aft := -Vector2.RIGHT.rotated(rotation) * deploy_offset
 	fighter.global_position = global_position + aft
@@ -531,7 +526,7 @@ func _draw() -> void:
 		_draw_black_hole_field()
 
 	if not true_scale:
-		draw_colored_polygon(MARKER_POINTS, MARKER_COLOR)
+		_draw_map_marker()
 		if _throttle > 0.05:
 			_draw_engine_flame(Vector2(-8, 0))
 		return
@@ -546,6 +541,11 @@ func _draw() -> void:
 	if _throttle > 0.05:
 		for exit in engine_exits:
 			_draw_engine_flame(_image_to_local(exit, draw_size))
+
+
+## Far-zoom glyph: flat shape + colour from EnemyCatalog (not the ship art).
+func _draw_map_marker() -> void:
+	EnemyCatalog.draw_glyph(self, Vector2.ZERO, 11.0, kind_id, true)
 
 
 ## Red corner brackets round a targeted enemy, a fixed size on screen.
