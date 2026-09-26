@@ -206,6 +206,8 @@ var time_scale := 1.0
 var _user_paused := false
 ## Alt shows / hides the flight prediction, orbits and orbit gauges.
 var orbit_overlays_on := true
+## Alt is held and nothing else was pressed with it (see _watch_alt).
+var _alt_alone := false
 ## Node2D -> [position at the previous physics tick, at the last one].
 var _tick_positions: Dictionary = {}
 
@@ -378,6 +380,7 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 ## that happens to hold focus would take the key for itself - but only when no
 ## menu or panel is open, so those keep ENTER for their own use.
 func _input(event: InputEvent) -> void:
+	_watch_alt(event)
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
@@ -535,8 +538,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_Q:
 			start_warp_jump()
-		elif event.keycode == KEY_ALT:
-			toggle_orbit_overlays()
 		elif event.keycode == KEY_R and landed_body == null:
 			combat.scan_all()
 		elif event.keycode == KEY_P or event.keycode == KEY_0:
@@ -1517,8 +1518,8 @@ func _apply_pending_save() -> void:
 
 
 ## The ship a new game starts with: a light hull holding a fabricator,
-## generator, repair module and battery, a chemical engine aft, a DEW laser
-## on the ring, and the cockpit forward on a connector. [module id, cell,
+## generator, repair module, battery and proximity radar, a chemical engine
+## aft, a DEW laser on the ring, and the cockpit forward on a connector. [module id, cell,
 ## rotation], laid out round the middle of the 40x40 yard.
 const STARTER_SHIP := [
 	[&"hull_light", Vector2i(18, 18), 0],
@@ -1527,6 +1528,8 @@ const STARTER_SHIP := [
 	[&"util_generator", Vector2i(20, 20), 0],
 	[&"util_repair", Vector2i(22, 20), 0],
 	[&"battery_s", Vector2i(22, 21), 0],
+	# A proximity radar, so the module rack has a scan from the start.
+	[&"radar_proximity", Vector2i(19, 22), 0],
 	[&"weapon_laser", Vector2i(23, 19), 0],
 	[&"connector_straight", Vector2i(23, 21), 0],
 	[&"cockpit", Vector2i(24, 20), 0],
@@ -3395,6 +3398,29 @@ func _set_space_overlays_visible(shown: bool) -> void:
 	($BehindWorld as CanvasLayer).visible = shown
 	pe_gauge.visible = shown
 	ap_gauge.visible = shown
+
+
+## Alt toggles the overlays when it is let go on its own - not when it was
+## part of a combination (Alt+Tab to another window, Alt+Enter...) or the
+## window lost focus while it was held.
+func _watch_alt(event: InputEvent) -> void:
+	if event is InputEventKey and not event.echo:
+		if event.keycode == KEY_ALT:
+			if event.pressed:
+				_alt_alone = true
+			elif _alt_alone:
+				_alt_alone = false
+				if loading_screen == null and not _is_menu_open():
+					toggle_orbit_overlays()
+		elif event.pressed:
+			_alt_alone = false
+	elif event is InputEventMouseButton and event.pressed:
+		_alt_alone = false
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_alt_alone = false
 
 
 func toggle_orbit_overlays() -> void:
