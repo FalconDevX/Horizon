@@ -15,6 +15,8 @@ const SLOT_ICON_MAX := 72.0
 const LINE_COLOR := Color(0.55, 0.62, 0.85, 0.55)
 const LINE_LOCKED_COLOR := Color(0.45, 0.5, 0.6, 0.35)
 const MISSING_COLOR := Color(1.0, 0.45, 0.4)
+## Short, but the wildcards make it up.
+const COVERED_COLOR := Color(1.0, 0.78, 0.35)
 
 var _branch: TechTree.Branch = TechTree.Branch.STRUCTURE
 var _modules_by_id: Dictionary = {}
@@ -125,7 +127,8 @@ func _make_card(node: Dictionary, parent: Control) -> PanelContainer:
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		box.add_child(note)
 
-	box.add_child(_resource_row("Recipe", TechTree.recipe(node), node.get("cost", {}), true))
+	if unlocked and not TechTree.recipe(node).is_empty():
+		box.add_child(_resource_row("Recipe", TechTree.recipe(node), TechTree.unlock_cost(node), false))
 
 	if not unlocked:
 		var missing: Array[String] = PlayerProgress.missing_requirements(node)
@@ -141,7 +144,14 @@ func _make_card(node: Dictionary, parent: Control) -> PanelContainer:
 				"Requires: " + ", ".join(requires), 11,
 				MISSING_COLOR if not missing.is_empty() else HudPanelStyle.COLOR_TEXT_SECONDARY
 			))
-		box.add_child(_resource_row("Cost", TechTree.recipe(node), TechTree.unlock_cost(node)))
+		var payment: Dictionary = PlayerProgress.payment(node)
+		box.add_child(_resource_row("Cost", TechTree.recipe(node), TechTree.unlock_cost(node), true, not payment.is_empty()))
+		var wildcards: Array[String] = []
+		for id: StringName in payment:
+			if TechTree.WILDCARDS.has(id) and not TechTree.unlock_cost(node).has(id):
+				wildcards.append("%s %d" % [ResourceIcons.display_name(id), payment[id]])
+		if not wildcards.is_empty():
+			box.add_child(_label("Wildcards used: " + ", ".join(wildcards), 11, COVERED_COLOR))
 		var button := Button.new()
 		button.text = "Unlock"
 		button.add_theme_font_override("font", HudPanelStyle.get_font())
@@ -175,34 +185,41 @@ func _make_card(node: Dictionary, parent: Control) -> PanelContainer:
 	return card
 
 
-## "Label" then an icon per resource; with `amounts`, "have/need" after each,
-## red where the player is short.
-## `plain`: the amounts are just listed ("2x"), not held against the hold.
-func _resource_row(caption: String, ids: Array, amounts: Dictionary, plain: bool = false) -> HBoxContainer:
+## "Label" then an icon and amount per resource; with `stock`, "have/need"
+## instead (moonbloom counts frozen too) - red where the player is short,
+## amber where short but `covered` (the wildcards make it up).
+func _resource_row(caption: String, ids: Array, amounts: Dictionary, stock: bool, covered := false) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	var cap := _label(caption + ":", 11, HudPanelStyle.COLOR_TEXT_MUTED)
 	cap.custom_minimum_size.x = 48.0
 	row.add_child(cap)
-	if ids.is_empty():
-		row.add_child(_label("Free", 11, HudPanelStyle.COLOR_TEXT_SECONDARY))
 	for id: StringName in ids:
 		var icon := TextureRect.new()
 		icon.texture = ResourceIcons.icon(id)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.custom_minimum_size = Vector2(ICON, ICON)
-		icon.tooltip_text = ResourceIcons.display_name(id)
+		icon.tooltip_text = _resource_name(id)
 		row.add_child(icon)
-		if plain and amounts.has(id):
-			row.add_child(_label("%dx %s" % [int(amounts[id]), ResourceIcons.display_name(id)], 11, ResourceIcons.color(id)))
-		elif amounts.has(id):
-			var need: int = amounts[id]
-			var have: int = PlayerProgress.amount(id)
-			row.add_child(_label("%d/%d" % [have, need], 11, ResourceIcons.color(id) if have >= need else MISSING_COLOR))
+		var need: int = amounts.get(id, 0)
+		if stock:
+			var have: int = PlayerProgress.stock(id)
+			var color: Color = ResourceIcons.color(id) if have >= need else (COVERED_COLOR if covered else MISSING_COLOR)
+			row.add_child(_label("%d/%d" % [have, need], 11, color))
 		else:
-			row.add_child(_label(ResourceIcons.display_name(id), 11, ResourceIcons.color(id)))
+			row.add_child(_label("%d" % need, 11, ResourceIcons.color(id)))
 	return row
+
+
+## "Moonbloom", or "Moonbloom (or Frozen moonbloom)" where a substitute pays too.
+static func _resource_name(id: StringName) -> String:
+	var others: Array[String] = []
+	for other: StringName in TechTree.payable_with(id):
+		if other != id:
+			others.append(ResourceIcons.display_name(other))
+	var name: String = ResourceIcons.display_name(id)
+	return name if others.is_empty() else "%s (or %s)" % [name, ", ".join(others)]
 
 
 func _on_unlock_pressed(node_id: StringName) -> void:
