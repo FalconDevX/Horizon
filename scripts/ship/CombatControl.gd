@@ -16,8 +16,8 @@ extends Node2D
 ## Lock. Ctrl+click a contact: the lock builds over LOCK_TIME while the
 ## contact is held, then holds until the contact is lost or let go.
 ##
-## Auto-fire. With a lock, clicking a gun in the weapons panel sets it firing
-## on its own: a turret turns onto the target, and it fires every time it has
+## Auto-fire. With a lock every turret turns onto the target; clicking a gun
+## in the weapons panel sets it firing on its own: it fires every time it has
 ## reloaded and the target is in its cone - until clicked again or the lock
 ## goes.
 
@@ -214,16 +214,21 @@ func toggle_auto_fire(id: int) -> void:
 		auto_fire[id] = true
 
 
+## With a lock, every turret (laser, revolver, ...) swings onto the target -
+## all but the picked one while the player aims it by hand (RMB) - and the
+## guns on AUTO fire whenever they can.
 func _run_auto_fire(delta: float) -> void:
-	if auto_fire.is_empty() or not is_locked():
+	if not is_locked():
 		return
 	var aim: Vector2 = target.global_position
+	var hand_aimed: int = ship.selected_weapon if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) else -1
 	for device: Dictionary in ship.fov_devices:
-		var id: int = int(device.get("instance_id", -1))
-		if not auto_fire.has(id):
+		if str(device.get("kind", "")) != "weapon":
 			continue
-		ship.aim_device(device, aim, delta)
-		if ship.is_body_in_device_fov(device, aim):
+		var id: int = int(device.get("instance_id", -1))
+		if id != hand_aimed:
+			ship.aim_device(device, aim, delta)
+		if auto_fire.has(id) and ship.is_body_in_device_fov(device, aim):
 			game.call("_spawn_weapon_shots", ship.fire_weapons_at(aim, id), aim, target)
 
 
