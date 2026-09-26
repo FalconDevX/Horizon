@@ -1,17 +1,17 @@
 class_name PlayerMissile
 extends Node2D
-## One missile from the player's Rocket Launcher (types in MissileCatalog).
-## It leaves with the ship's velocity, then flies at its own speed, turning
-## toward its target at the type's turn rate; seekers pick the nearest enemy
-## ahead of them when they have none (or lose theirs). It bursts on contact,
-## within its proxy fuse of the target, or at the end of its flight - hurting
-## (or, EMP, disabling) every enemy in its blast. Sizes are in screen pixels,
-## so it reads at any zoom. Spawned by solar_system.gd.
+## One missile from the player's Rocket Launcher (types in MissileCatalog),
+## fired only at a locked target. It leaves with the ship's velocity, then
+## flies at its own speed, turning toward that target at the type's turn
+## rate. It hits nothing else: other ships and objects it passes through. It
+## goes off on reaching its target (an AOE one within its proxy fuse, hurting
+## everything in its blast; the rest hit the target alone - EMP disables it).
+## If the target is destroyed first, it flies straight on and bursts
+## harmlessly at the end of its range. Sizes are in screen pixels, so it
+## reads at any zoom. Spawned by solar_system.gd.
 
 ## How long the launch velocity takes to give way to the missile's own.
 const BOOST_TIME := 0.6
-## A seeker looks for prey within this angle of its nose.
-const SEEK_CONE := 1.2
 const BLAST_TIME := 0.7
 ## Screen px.
 const LENGTH := 16.0
@@ -66,9 +66,10 @@ func _process(delta: float) -> void:
 		return
 	_age += dt
 
-	if not _alive(target):
-		target = _find_prey() if _info.get("seek", false) or target != null else null
-	if _alive(target):
+	# Its target gone, it holds its heading until its range runs out.
+	if target != null and not _alive(target):
+		target = null
+	if target != null:
 		var wanted: Vector2 = (target.global_position - global_position).normalized()
 		var turn: float = clampf(_heading.angle_to(wanted), -float(_info["turn"]) * dt, float(_info["turn"]) * dt)
 		_heading = _heading.rotated(turn)
@@ -85,17 +86,18 @@ func _process(delta: float) -> void:
 	if _trail.size() > TRAIL_POINTS:
 		_trail.remove_at(0)
 
-	var struck: Enemy = _first_enemy_on(previous, global_position)
-	if struck != null:
-		global_position = struck.global_position
-		_burst()
-		return
-	var fuse: float = float(_info.get("fuse", 0.0))
-	if fuse > 0.0 and _alive(target) and global_position.distance_to(target.global_position) <= fuse + target.hit_radius():
-		_burst()
-		return
+	if target != null:
+		var fuse: float = float(_info.get("fuse", 0.0))
+		var reach: float = target.hit_radius() + 3.0 * _px()
+		if LaserBolt._segment_hits_circle(previous, global_position, target.global_position, reach):
+			global_position = target.global_position
+			_burst(true)
+			return
+		if fuse > 0.0 and global_position.distance_to(target.global_position) <= fuse + target.hit_radius():
+			_burst(true)
+			return
 	if _travelled >= max_distance:
-		_burst()
+		_burst(false)
 		return
 	queue_redraw()
 
@@ -114,45 +116,24 @@ func _enemies() -> Array[Enemy]:
 	return out
 
 
-## The nearest enemy ahead of the nose, within the rest of its flight.
-func _find_prey() -> Enemy:
-	var best: Enemy = null
-	var best_d := INF
-	var reach: float = max_distance - _travelled
-	for enemy in _enemies():
-		var offset: Vector2 = enemy.global_position - global_position
-		var d: float = offset.length()
-		if d > reach or absf(_heading.angle_to(offset)) > SEEK_CONE:
-			continue
-		if d < best_d:
-			best_d = d
-			best = enemy
-	return best
-
-
-func _first_enemy_on(from: Vector2, to: Vector2) -> Enemy:
-	var best: Enemy = null
-	var best_d := INF
-	for enemy in _enemies():
-		if LaserBolt._segment_hits_circle(from, to, enemy.global_position, enemy.hit_radius() + 3.0 * _px()):
-			var d: float = from.distance_squared_to(enemy.global_position)
-			if d < best_d:
-				best_d = d
-				best = enemy
-	return best
-
-
-## Goes off: damage (or EMP) to every enemy in the blast.
-func _burst() -> void:
-	var blast: float = float(_info.get("blast", 60.0))
-	var emp: float = float(_info.get("emp", 0.0))
-	for enemy in _enemies():
-		if enemy.global_position.distance_to(global_position) > blast + enemy.hit_radius():
-			continue
-		if emp > 0.0:
-			enemy.disable_for(emp)
-		if damage > 0.0:
-			enemy.take_hit(damage)
+## Goes off. At its target (`at_target`): an AOE missile (one with a proxy
+## fuse) hurts every enemy in its blast, the rest only the target - an EMP
+## disables it. Out of range with no target left: just the flash.
+func _burst(at_target: bool) -> void:
+	if at_target and target != null:
+		var victims: Array[Enemy] = [target]
+		if float(_info.get("fuse", 0.0)) > 0.0:
+			var blast: float = float(_info.get("blast", 60.0))
+			victims.clear()
+			for enemy in _enemies():
+				if enemy.global_position.distance_to(global_position) <= blast + enemy.hit_radius():
+					victims.append(enemy)
+		var emp: float = float(_info.get("emp", 0.0))
+		for enemy in victims:
+			if emp > 0.0:
+				enemy.disable_for(emp)
+			if damage > 0.0:
+				enemy.take_hit(damage)
 	_blast_age = 0.0
 	queue_redraw()
 

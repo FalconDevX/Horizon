@@ -3328,9 +3328,10 @@ func _spawn_sniper_beam(device: Dictionary, aim: Vector2) -> void:
 	beam.global_position = muzzle
 
 
-## One missile out of a Rocket Launcher, homing on `target` (the lock or the
-## enemy aimed at; seekers find their own without one).
-func _spawn_missile(device: Dictionary, aim: Vector2, target: Enemy) -> void:
+## One missile out of a Rocket Launcher, homing on the locked target (the
+## launcher fires at nothing else - ship.fire_weapons_at).
+func _spawn_missile(device: Dictionary, aim: Vector2, _target: Enemy) -> void:
+	var target: Enemy = ship.missile_target as Enemy
 	var facing: Vector2 = ship.device_world_facing(device)
 	var origin: Vector2 = ship.device_world_origin(device)
 	var muzzle_reach: float = (device.get("local_origin", Vector2.ZERO) as Vector2).distance_to(device.get("center", device.get("local_origin", Vector2.ZERO)))
@@ -3417,6 +3418,7 @@ func _sensor_summary() -> String:
 ## Contacts and weapons panels, every frame.
 func _update_combat_panels() -> void:
 	targeted_enemy = combat.target
+	ship.missile_target = combat.target if combat.is_locked() else null
 	var contacts: Array = combat.contacts()
 	var status: String = ""
 	if combat.radar_devices().is_empty():

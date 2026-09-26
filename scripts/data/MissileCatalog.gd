@@ -13,7 +13,7 @@ extends RefCounted
 ## damage (times the launcher's) and damage_kind (words for the hold),
 ## blast (world units hurt round the burst), fuse (goes off this close to its
 ## target, 0 = only on contact), emp (seconds a hit enemy stays dead in space,
-## guns off), seek (finds a target of its own when fired without one).
+## guns off). Every missile flies only at the locked target it was fired at.
 ## `look` shapes its picture (draw_icon).
 
 const TYPES := {
@@ -21,7 +21,7 @@ const TYPES := {
 		"name": "Standard missile", "short": "STD", "color": Color(1.0, 0.55, 0.22),
 		"range": 45000.0, "speed": 2600.0, "tracking": 3, "turn": 2.4,
 		"damage": 1.0, "damage_kind": "Explosive", "blast": 60.0, "fuse": 0.0,
-		"note": "A plain long-range homing missile. Heavy hit, small blast.",
+		"note": "A plain long-range missile homing on the locked target. Heavy hit.",
 		"look": {"body": 0.13, "nose": 0.24, "fins": "rear", "bands": 1},
 	},
 	&"missile_aoe": {
@@ -35,8 +35,7 @@ const TYPES := {
 		"name": "Interceptor", "short": "INT", "color": Color(0.4, 0.85, 1.0),
 		"range": 28000.0, "speed": 4200.0, "tracking": 4, "turn": 5.0,
 		"damage": 0.45, "damage_kind": "Kinetic", "blast": 40.0, "fuse": 0.0,
-		"seek": true,
-		"note": "Fast and nimble; finds the nearest enemy by itself. Light damage, the shortest reach of the missiles.",
+		"note": "Fast and nimble, it turns hard after a locked target. Light damage, the shortest reach of the missiles.",
 		"look": {"body": 0.09, "nose": 0.3, "fins": "long", "canards": true, "bands": 2},
 	},
 	&"missile_emp": {
@@ -51,7 +50,6 @@ const TYPES := {
 		"name": "Hunter", "short": "HNT", "color": Color(1.0, 0.3, 0.35),
 		"range": 75000.0, "speed": 1700.0, "tracking": 5, "turn": 6.5,
 		"damage": 1.6, "damage_kind": "Heavy explosive", "blast": 70.0, "fuse": 0.0,
-		"seek": true,
 		"note": "Slow, but it tracks its prey relentlessly and reaches the furthest. Big damage.",
 		"look": {"body": 0.16, "nose": 0.22, "fins": "big", "canards": true, "eye": true, "bands": 1},
 	},

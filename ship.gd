@@ -52,6 +52,9 @@ var _weapon_cooldowns: Dictionary = {}
 ## refills it from the hold, and of the short pause between two launches.
 ## Not touched by refill(), so god mode keeps the reload too.
 var launchers: Dictionary = {}
+## The radar-locked enemy (solar_system.gd sets it every frame; null with no
+## lock). Launchers fire only at it.
+var missile_target: Node2D = null
 const LAUNCHER_ID := &"weapon_rockets"
 const MAGAZINE := 2
 const MAGAZINE_RELOAD := 14.0
@@ -652,6 +655,10 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 		if launcher:
 			var magazine: Dictionary = launcher_state(id)
 			if int(magazine["loaded"]) <= 0 or float(magazine["gap"]) > 0.0:
+				continue
+			# Only ever at the locked target.
+			if missile_target == null or not is_instance_valid(missile_target) \
+					or world_pos.distance_to(missile_target.global_position) > 1.0:
 				continue
 			# Each missile type has its own reach, within the launcher's.
 			if global_position.distance_to(world_pos) > float(MissileCatalog.info(magazine["type"])["range"]):

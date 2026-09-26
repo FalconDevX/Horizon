@@ -322,6 +322,8 @@ func _describe(w: Dictionary) -> String:
 			load_text += "  RELOADING"
 		elif int(m["loaded"]) == 0 and int(m["stock"]) == 0:
 			load_text += "  NO MISSILES"
+		elif not _locked:
+			load_text += "  NEEDS A LOCK"
 		return title + "  " + load_text + ("  ON" if w.get("auto", false) else "")
 	if w.get("auto", false):
 		return title + ("  ACTIVE" if _locked else "  ON, NO LOCK")
