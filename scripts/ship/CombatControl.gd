@@ -261,7 +261,7 @@ func radar_rows() -> Array:
 		var id: int = int(device.get("instance_id", -1))
 		var state: Dictionary = radars.get(id, {"scan": 0.0, "cooldown": 0.0})
 		rows.append({
-			"id": id, "title": device.get("title", "Radar"), "radar": true,
+			"id": id, "module_id": device.get("id", &""), "title": device.get("title", "Radar"), "radar": true,
 			"scan": float(state["scan"]) / maxf(float(device.get("scan_time", 1.0)), 0.1),
 			"reload": float(state["cooldown"]) / maxf(float(device.get("reload_time", 1.0)), 0.1),
 		})

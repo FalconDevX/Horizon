@@ -1273,10 +1273,14 @@ func _ready() -> void:
 	$HUD.move_child(enemy_contacts_panel, $HUD/PanelContainer.get_index() + 1)
 	weapons_panel = preload("res://weapons_panel.gd").new()
 	weapons_panel.name = "WeaponsPanel"
-	weapons_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	weapons_panel.offset_left = -492.0
-	weapons_panel.offset_right = -290.0
-	weapons_panel.offset_top = -324.0
+	# The module rack, EVE-style: right of the centre gauges.
+	weapons_panel.anchor_left = 0.5
+	weapons_panel.anchor_right = 0.5
+	weapons_panel.anchor_top = 1.0
+	weapons_panel.anchor_bottom = 1.0
+	weapons_panel.offset_left = 228.0
+	weapons_panel.offset_right = 510.0
+	weapons_panel.offset_top = -152.0
 	weapons_panel.offset_bottom = -28.0
 	weapons_panel.weapon_picked.connect(func(id: int) -> void:
 		if combat.is_locked():
@@ -3257,6 +3261,7 @@ func _update_combat_panels() -> void:
 		weapons.append({
 			"blocked": ship.is_shot_blocked(device, shoot_dir),
 			"id": int(device.get("instance_id", -1)),
+			"module_id": device.get("id", &""),
 			"title": device.get("title", "Weapon"),
 			"reload": left / reload_time,
 			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
