@@ -709,9 +709,9 @@ touching the data or the drawing:
 Master's raw-material list (`ResourceCatalog`, 14 materials in 3 tiers with PNG
 icons and a per-planet yield table) was removed: the game's resources are the
 `ResourceDeposits` types gathered on planets. `PlayerProgress` holds the
-`Inventory` (no starting stock - tier-1 nodes are free) and `TechTree` recipes
-name deposit types; the board's materials were mapped onto them (listed in
-`TechTree.gd`'s header). `TechTree.TIER_NAMES` / `TIER_COLORS` are the tree's own
+`Inventory` (no starting stock - only cost-free nodes, the cockpit, start
+unlocked) and `TechTree` costs name deposit types (board "Snow wurm" = ice_wurm,
+"Moonbloom" = beanstalk). `TechTree.TIER_NAMES` / `TIER_COLORS` are the tree's own
 tiers. `set_world_seed` (galaxy-map travel, `N`) takes off if landed and clears
 `charted_bodies` (then charts the sun and home again); the Journal survives.
 
@@ -794,10 +794,16 @@ From the Horizon Miro board ("Moduły statku", "Receptury modułów", "Planety �
 
 - Resources are the `ResourceDeposits` types (see "Resources and the tech tree"
   above); master's `ResourceCatalog` is gone.
-- `scripts/data/TechTree.gd`: `NODES` (branch, tier, recipe, requires, modules). Tier 1
-  is open from the start. Higher tiers need `requires` (my own links, not from the board) and pay
-  `UNLOCK_COST[tier]` of each recipe resource. A catalog module in no node is always
-  available.
+- `scripts/data/TechTree.gd`: `NODES` (branch, tier, cost, requires, modules). `cost`
+  is `{resource id: amount}` from the board table "Przedmioty × surowce (ilości do
+  odblokowania)" - every tier pays, tier 1 included; a node with an empty cost and no
+  `requires` starts unlocked. `requires` are my own links, not from the board.
+  `unlock_cost(node)`, `recipe(node)` (the cost's ids). `EQUIVALENTS`: moonbloom
+  (`beanstalk`) can be paid with frozen moonbloom too - `PlayerProgress.stock(id)`
+  counts both, `unlock` spends the id first. Slime jelly, eggs and silver spheres are
+  wildcards and in no cost. Drones and the fabricator have no amounts on the board and
+  keep placeholder costs (10 of each). The board has Floor and Surface Scanner rows
+  with no node here. A catalog module in no node is always available.
 - `scripts/data/PlayerProgress.gd`: the static cargo hold (`inventory`, filled by
   collecting with E on planets) and the unlocked set.
 - The builder inventory (B) lists every module by category as before (FLOOR, TRUSS

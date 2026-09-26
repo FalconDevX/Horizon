@@ -80,7 +80,7 @@ func _refresh_resource_bar() -> void:
 	for id: StringName in _recipe_resources():
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
-		item.tooltip_text = ResourceIcons.display_name(id)
+		item.tooltip_text = TechTreeView._resource_name(id)
 		var icon := TextureRect.new()
 		icon.texture = ResourceIcons.icon(id)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -89,7 +89,7 @@ func _refresh_resource_bar() -> void:
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		item.add_child(icon)
 		var label := Label.new()
-		label.text = str(PlayerProgress.amount(id))
+		label.text = str(PlayerProgress.stock(id))
 		label.add_theme_font_override("font", HudPanelStyle.get_font())
 		label.add_theme_font_size_override("font_size", 13)
 		label.add_theme_color_override("font_color", ResourceIcons.color(id))
@@ -98,11 +98,11 @@ func _refresh_resource_bar() -> void:
 		_resource_bar.add_child(item)
 
 
-## Every resource some recipe names, in the order the tree first uses them.
+## Every resource some cost names, in the order the tree first uses them.
 static func _recipe_resources() -> Array[StringName]:
 	var ids: Array[StringName] = []
 	for node: Dictionary in TechTree.NODES:
-		for id: StringName in node["recipe"]:
+		for id: StringName in TechTree.recipe(node):
 			if not ids.has(id):
 				ids.append(id)
 	return ids

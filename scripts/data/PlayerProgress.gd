@@ -5,8 +5,8 @@ extends RefCounted
 ## scene fills and shows) and unlocked tech-tree nodes (TechTree). Static, so
 ## the shipyard and the flight scene share it and it survives scene reloads
 ## (galaxy-map travel). There is no save system yet, so it resets when the
-## game restarts. The hold starts empty: tier-1 nodes are free, the rest are
-## paid for with what the player collects.
+## game restarts. The hold starts empty: nodes with no cost are free, the
+## rest (TechTree costs) are paid for with what the player collects.
 
 ## Debug "god mode" (Settings > Gameplay, SettingsManager.god_mode): every
 ## tech-tree node and module counts as unlocked while it is on. Nothing is
@@ -23,11 +23,11 @@ static func ensure_initialized() -> void:
 		return
 	_initialized = true
 	for node: Dictionary in TechTree.NODES:
-		if int(node["tier"]) <= 1:
+		if TechTree.unlock_cost(node).is_empty() and (node["requires"] as Array).is_empty():
 			_unlocked[node["id"]] = true
 
 
-## A new game: empty hold, only the free tier unlocked.
+## A new game: empty hold, only the free nodes unlocked.
 static func reset() -> void:
 	inventory.clear()
 	_unlocked.clear()
@@ -49,6 +49,15 @@ static func from_dict(data: Dictionary) -> void:
 
 static func amount(id: StringName) -> int:
 	return inventory.count(id)
+
+
+## What the hold can put towards a cost in `id`: `id` plus everything that
+## pays like it (TechTree.EQUIVALENTS - frozen moonbloom for moonbloom).
+static func stock(id: StringName) -> int:
+	var total := 0
+	for other: StringName in TechTree.payable_with(id):
+		total += amount(other)
+	return total
 
 
 static func add(id: StringName, count: int) -> void:
@@ -83,7 +92,7 @@ static func missing_requirements(node: Dictionary) -> Array[String]:
 static func can_afford(node: Dictionary) -> bool:
 	var cost: Dictionary = TechTree.unlock_cost(node)
 	for id: StringName in cost:
-		if amount(id) < int(cost[id]):
+		if stock(id) < int(cost[id]):
 			return false
 	return true
 
@@ -98,6 +107,11 @@ static func unlock(node: Dictionary) -> bool:
 		return false
 	var cost: Dictionary = TechTree.unlock_cost(node)
 	for id: StringName in cost:
-		inventory.remove(id, int(cost[id]))
+		# The id itself first, then its equivalents.
+		var left: int = cost[id]
+		for other: StringName in TechTree.payable_with(id):
+			var take: int = mini(left, amount(other))
+			inventory.remove(other, take)
+			left -= take
 	_unlocked[node["id"]] = true
 	return true
