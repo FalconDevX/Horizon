@@ -785,7 +785,7 @@ func _draw_text(font: Font) -> void:
 			if type_name != &"random":
 				var type: Dictionary = ResourceDeposits.TYPES[type_name]
 				label = type["name"]
-				color = rule.get("color", type["color"])
+				color = rule.get("color", type.get("ui_color", type["color"]))
 				scenery = not type.get("collectible", true)
 				found = _found_on(body, look, type_name)
 			if found:
@@ -841,7 +841,7 @@ func _draw_resource_list(font: Font) -> void:
 				row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
 			)
 			continue
-		draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, type["color"])
+		draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, type.get("ui_color", type["color"]))
 		draw_string(
 			font, row.position + Vector2(38.0, 19.0), String(type["name"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
 			row.size.x - 42.0, 14,
@@ -1358,7 +1358,7 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 			or (Journal.is_found_with_trait(body_name, name, type_name) if is_trait else Journal.is_found(body_name, name, type_name))
 		)
 		if found:
-			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, type["color"])
+			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, type.get("ui_color", type["color"]))
 			draw_string(
 				font, Vector2(x + 12.0, y), type["name"] + ("  (scenery)" if scenery else ""), HORIZONTAL_ALIGNMENT_LEFT,
 				inner - 12.0, 10, HudPanelStyle.COLOR_TEXT_MUTED if scenery else HudPanelStyle.COLOR_TEXT_SECONDARY

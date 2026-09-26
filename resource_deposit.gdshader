@@ -93,8 +93,15 @@ void vertex() {
 
 void fragment() {
 	vec3 albedo = base_color * COLOR.rgb;
+	// A model's texture says in its alpha where the type shines and glows
+	// (1 everywhere for a texture without alpha).
+	float shine_here = shine;
+	float glow_here = glow;
 	if (use_texture) {
-		vec3 hsv = rgb_to_hsv(texture(albedo_tex, UV).rgb);
+		vec4 painted = texture(albedo_tex, UV);
+		shine_here *= painted.a;
+		glow_here *= painted.a;
+		vec3 hsv = rgb_to_hsv(painted.rgb);
 		hsv.x = fract(hsv.x + tex_adjust.x);
 		hsv.y = clamp(hsv.y * tex_adjust.y, 0.0, 1.0);
 		hsv.z = clamp(hsv.z * tex_adjust.z, 0.0, 1.0);
@@ -119,9 +126,9 @@ void fragment() {
 	float day = smoothstep(-0.12, 0.2, dot(up, L));
 
 	float diffuse = clamp(dot(nw, L) * 0.8 + 0.2, 0.0, 1.0) * day;
-	float spec = pow(max(dot(nw, normalize(L + V)), 0.0), mix(12.0, 90.0, shine)) * day;
+	float spec = pow(max(dot(nw, normalize(L + V)), 0.0), mix(12.0, 90.0, shine_here)) * day;
 	// Metal tints its highlight; stone and plants keep it white.
-	vec3 highlight = mix(vec3(1.0), albedo, shine * 0.6) * spec * mix(0.15, 1.3, shine);
+	vec3 highlight = mix(vec3(1.0), albedo, shine_here * 0.6) * spec * mix(0.15, 1.3, shine_here);
 
-	ALBEDO = albedo * (0.08 + 0.92 * diffuse * mix(1.0, 0.75, shine) + glow) + highlight;
+	ALBEDO = albedo * (0.08 + 0.92 * diffuse * mix(1.0, 0.75, shine_here) + glow_here) + highlight;
 }

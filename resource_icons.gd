@@ -47,7 +47,8 @@ static func display_name(id: StringName) -> String:
 static func color(id: StringName) -> Color:
 	if MissileCatalog.has(id):
 		return MissileCatalog.info(id)["color"]
-	return ResourceDeposits.TYPES.get(id, {}).get("color", Color.WHITE)
+	var type: Dictionary = ResourceDeposits.TYPES.get(id, {})
+	return type.get("ui_color", type.get("color", Color.WHITE))
 
 
 ## A SubViewport (not yet in the tree) holding the model, lit and framed:

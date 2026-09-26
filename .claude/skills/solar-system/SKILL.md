@@ -446,7 +446,13 @@ still shows the blob preview.
   Gloom for now). `place()` runs once the bake lands
   (`_apply_terrain()` → `_place_deposits()`), rolled from `generation_seed`, using
   `PlanetTerrain.height_at()`; liquid spawns sit at the unit sphere (the sea surface).
-  Shapes are built per deposit from its seed in `deposit_meshes.gd` (`DepositMeshes`:
+  Every type's look is now a baked model (`ResourceDeposits.MODELS`): `models/deposits/
+  <type>_<n>.obj` variants (a deposit picks one by its seed) sharing `<type>_albedo.png`,
+  made in Blender by `scripts/tools/blender/` (see its README) from Poly Haven textures.
+  The PNG's alpha is where the type's `shine` / `glow` apply; types whose colour is in
+  the texture have `color` white and `ui_color` for the HUD. `DepositMeshes` is only the
+  fallback for a `mesh` with no MODELS entry.
+  Shapes used to be built per deposit from its seed in `deposit_meshes.gd` (`DepositMeshes`:
   crystals, tiles, scrap, beanstalk (green/frozen/dried), pillars, egg, pebbles,
   bones, slabs, spikes, jelly, tumbleweed, geyser; +Y up,
   ~1 unit across, feet sunk; vertex colours for inner shading); add a look there and

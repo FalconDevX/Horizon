@@ -17,32 +17,58 @@ extends RefCounted
 
 const SHADER := preload("res://resource_deposit.gdshader")
 
-## Looks made from a model instead of built by DepositMeshes: the mesh (in
-## cluster units, standing on +Y) and its colour texture. A type using one
-## recolours the texture with `tint` (hue turn, saturation and value
+## Looks made from a model instead of built by DepositMeshes: the meshes (in
+## cluster units, standing on +Y - a deposit picks one by its seed) and their
+## shared colour texture. The texture's alpha is where the type's `shine` and
+## `glow` apply (gold nuggets shine, the rock round them does not). A type
+## using one recolours the texture with `tint` (hue turn, saturation and value
 ## multipliers), which a spawn may override - one flower, many worlds.
+## models/deposits/ is baked in Blender from Poly Haven textures (CC0).
+## A baked deposit model: models/deposits/<name>_<1..variants>.obj and
+## <name>_albedo.png.
+const _BAKED := {"variants": 3}
+const BAKED_DIR := "res://models/deposits/"
 const MODELS := {
-	&"moonbloom": {"mesh": "res://models/moonbloom.obj", "texture": "res://models/moonbloom_albedo.png"},
+	&"moonbloom": {"meshes": ["res://models/moonbloom.obj"], "texture": "res://models/moonbloom_albedo.png"},
+	&"gold_ore": _BAKED,
+	&"silver_ore": _BAKED,
+	&"pink_crystal": _BAKED,
+	&"ice_crystal": _BAKED,
+	&"scrap": _BAKED,
+	&"gold_pillar": _BAKED,
+	&"egg": {"variants": 1},
+	&"sky_stone": _BAKED,
+	&"bone": _BAKED,
+	&"toxic_ore": _BAKED,
+	&"slime_jelly": _BAKED,
+	&"tumbleweed": _BAKED,
+	&"geyser": _BAKED,
+	&"ice_wurm": _BAKED,
+	&"hel": _BAKED,
+	&"silver_spheres": _BAKED,
 }
 ## No recolour: the texture as painted.
 const TINT_NONE := Vector3(0.0, 1.0, 1.0)
 ## Loaded MODELS entries: name -> {mesh, texture}.
 static var _model_cache: Dictionary = {}
 
-## What each resource is. `size` is the cluster's footprint in planet radii;
+## What each resource is. `mesh` names its look (a MODELS entry, or a
+## DepositMeshes builder); `color` tints it - white where the model's texture
+## carries the colour, `ui_color` then standing for it in the HUD. `size` is
+## the cluster's footprint in planet radii;
 ## `collectible` false marks scenery the player cannot pick up (default true);
 ## `tier` is 1/2/3 from the Miro raw-material map (T3 worlds get elite guards);
 ## `color_param` takes the colour from a terrain param instead (a slime's own
 ## green); the rest are resource_deposit.gdshader's uniforms.
 const TYPES := {
 	&"silver_ore": {
-		"name": "Silver ore", "mesh": &"crystals", "size": Vector2(0.03, 0.045),
-		"color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06,
+		"name": "Silver ore", "mesh": &"silver_ore", "size": Vector2(0.03, 0.045),
+		"color": Color.WHITE, "ui_color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06,
 		"tier": 1,
 	},
 	&"gold_ore": {
-		"name": "Gold ore", "mesh": &"tiles", "size": Vector2(0.05, 0.07),
-		"color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06,
+		"name": "Gold ore", "mesh": &"gold_ore", "size": Vector2(0.05, 0.07),
+		"color": Color.WHITE, "ui_color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06,
 		"tier": 1,
 	},
 	&"scrap": {
@@ -71,8 +97,8 @@ const TYPES := {
 		"tint": Vector3(0.0, 0.3, 0.9),
 	},
 	&"gold_pillar": {
-		"name": "Gold pillar", "mesh": &"pillars", "size": Vector2(0.06, 0.09),
-		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15,
+		"name": "Gold pillar", "mesh": &"gold_pillar", "size": Vector2(0.06, 0.09),
+		"color": Color.WHITE, "ui_color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15,
 		"tier": 3,
 	},
 	&"egg": {
@@ -82,56 +108,56 @@ const TYPES := {
 		"tier": 5,
 	},
 	&"sky_stone": {
-		"name": "Sky stone", "mesh": &"pebbles", "size": Vector2(0.022, 0.032),
-		"color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12,
+		"name": "Sky stone", "mesh": &"sky_stone", "size": Vector2(0.022, 0.032),
+		"color": Color.WHITE, "ui_color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12,
 		"tier": 2,
 	},
 	&"bone": {
-		"name": "Bone", "mesh": &"bones", "size": Vector2(0.06, 0.08),
+		"name": "Bone", "mesh": &"bone", "size": Vector2(0.06, 0.08),
 		"color": Color(0.94, 0.91, 0.82), "shine": 0.3, "glow": 0.05,
 		"tier": 2,
 	},
 	&"toxic_ore": {
-		"name": "Toxic ore", "mesh": &"slabs", "size": Vector2(0.05, 0.07),
-		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1,
+		"name": "Toxic ore", "mesh": &"toxic_ore", "size": Vector2(0.05, 0.07),
+		"color": Color.WHITE, "ui_color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1,
 		"tier": 3,
 	},
 	&"pink_crystal": {
-		"name": "Pink crystal", "mesh": &"crystals", "size": Vector2(0.035, 0.05),
-		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18,
+		"name": "Pink crystal", "mesh": &"pink_crystal", "size": Vector2(0.035, 0.05),
+		"color": Color.WHITE, "ui_color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18,
 		"tier": 1,
 	},
 	&"ice_crystal": {
-		"name": "Ice crystal", "mesh": &"spikes", "size": Vector2(0.04, 0.06),
-		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12,
+		"name": "Ice crystal", "mesh": &"ice_crystal", "size": Vector2(0.04, 0.06),
+		"color": Color.WHITE, "ui_color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12,
 		"tier": 1,
 	},
 	&"slime_jelly": {
-		"name": "Slime jelly", "mesh": &"jelly", "size": Vector2(0.03, 0.045),
+		"name": "Slime jelly", "mesh": &"slime_jelly", "size": Vector2(0.03, 0.045),
 		"color": Color(0.5, 1.0, 0.5), "color_param": "shallow", "shine": 0.9, "glow": 0.35,
 		"tier": 4,
 	},
 	&"tumbleweed": {
 		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
-		"color": Color(0.64, 0.5, 0.32), "shine": 0.1, "glow": 0.02, "collectible": false,
+		"color": Color.WHITE, "ui_color": Color(0.64, 0.5, 0.32), "shine": 0.1, "glow": 0.02, "collectible": false,
 	},
 	&"geyser": {
 		"name": "Geyser", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
 		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04, "collectible": false,
 	},
 	&"ice_wurm": {
-		"name": "Ice wurm", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
+		"name": "Ice wurm", "mesh": &"ice_wurm", "size": Vector2(0.03, 0.045),
 		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04,
 		"tier": 3,
 	},
 	&"hel": {
-		"name": "Hel", "mesh": &"bubbles", "size": Vector2(0.05, 0.07),
-		"color": Color(0.95, 0.72, 1.0), "shine": 0.6, "glow": 0.7, "wiggle": 0.03,
+		"name": "Hel", "mesh": &"hel", "size": Vector2(0.05, 0.07),
+		"color": Color.WHITE, "ui_color": Color(0.95, 0.72, 1.0), "shine": 0.6, "glow": 0.7, "wiggle": 0.03,
 		"tier": 3,
 	},
 	&"silver_spheres": {
-		"name": "Silver spheres", "mesh": &"sphere_arch", "size": Vector2(0.045, 0.065),
-		"color": Color(0.86, 0.88, 0.93), "shine": 0.95, "glow": 0.08,
+		"name": "Silver spheres", "mesh": &"silver_spheres", "size": Vector2(0.045, 0.065),
+		"color": Color.WHITE, "ui_color": Color(0.86, 0.88, 0.93), "shine": 0.95, "glow": 0.08,
 		"tier": 4,
 	},
 }
@@ -677,7 +703,8 @@ static func make_node(deposit: Dictionary) -> MeshInstance3D:
 		# One shared mesh; each deposit gets its own touch of hue and
 		# brightness on top of the type's (or spawn's) tint.
 		var model: Dictionary = _model(type["mesh"])
-		node.mesh = model["mesh"]
+		var meshes: Array = model["meshes"]
+		node.mesh = meshes[int(deposit["seed"]) % meshes.size()]
 		var tint: Vector3 = deposit.get("tint", type.get("tint", TINT_NONE))
 		var jitter := RandomNumberGenerator.new()
 		jitter.seed = deposit["seed"]
@@ -694,10 +721,17 @@ static func make_node(deposit: Dictionary) -> MeshInstance3D:
 	return node
 
 
+## A model's meshes and texture, loaded once: {meshes: [Mesh], texture}.
 static func _model(model_name: StringName) -> Dictionary:
 	if not _model_cache.has(model_name):
 		var entry: Dictionary = MODELS[model_name]
-		_model_cache[model_name] = {"mesh": load(entry["mesh"]), "texture": load(entry["texture"])}
+		var paths: Array = entry.get("meshes", [])
+		var texture: String = entry.get("texture", "")
+		if paths.is_empty():
+			for i in int(entry.get("variants", 1)):
+				paths.append("%s%s_%d.obj" % [BAKED_DIR, model_name, i + 1])
+			texture = "%s%s_albedo.png" % [BAKED_DIR, model_name]
+		_model_cache[model_name] = {"meshes": paths.map(func(path: String) -> Mesh: return load(path)), "texture": load(texture)}
 	return _model_cache[model_name]
 
 
