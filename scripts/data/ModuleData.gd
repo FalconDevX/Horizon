@@ -25,7 +25,7 @@ enum Category {
 @export var plan_texture: Texture2D
 @export var id: StringName = &""
 
-## For Category.HULL — defines local size, mass, capacity (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
+## For Category.HULL — defines local size, mass (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
 @export var hull_data: HullData
 
 @export_group("Shared")
@@ -106,24 +106,14 @@ func is_equipment() -> bool:
 	)
 
 
-## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
-## Main engines stand in open space on a hull's left (aft) face instead.
-## Corrective engines and weapons only on truss cells adjacent to normal DECK.
-## Takes one of the hulls' deck slots per cell (ShipHull capacity): what
-## stands on the deck. Guns sit out on the truss ring and main engines in open
-## space behind the hull, so neither uses one.
-func uses_deck_slot() -> bool:
-	return is_equipment() and not is_weapon() and not is_main_engine()
-
-
+## Modules that build inside a hull (on its deck cells).
+## Excludes structure (Hull / Cockpit / Truss / Connector), engines and weapons —
+## those have their own placement rules (open space, truss ring, etc.).
 func is_deck_equipment() -> bool:
 	return (
-		category == Category.ENGINE
-		or category == Category.UTILITY
-		or category == Category.FUEL_TANK
-		or category == Category.BATTERY
-		or category == Category.SHIELD
-		or category == Category.RADAR
+		not is_structure()
+		and category != Category.ENGINE
+		and category != Category.WEAPON
 	)
 
 
@@ -286,6 +276,8 @@ func category_name() -> String:
 			return "Connector"
 		Category.RADAR:
 			return "Radar"
+		Category.TRUSS:
+			return "Truss"
 		Category.COCKPIT:
 			return "Cockpit"
 		_:

@@ -241,7 +241,12 @@ func hold_module(module: ModuleData, rotation: int = 0, cargo: Array = [], pick_
 	_held_pick_rotation = _held_rotation if pick_rotation < 0 else posmod(pick_rotation, 4)
 	_hover_module = module
 	_hover_rotation = _held_rotation
+	# Seed the ghost under the cursor immediately (don't wait for the next motion).
+	_hover_origin = _centered_origin(get_local_mouse_position(), module, _held_rotation)
+	_refresh_hover_validity()
+	_update_hull_dim_for_hold()
 	hold_changed.emit(_held_module, _held_rotation)
+	queue_redraw()
 	_preview.queue_redraw()
 
 
@@ -252,7 +257,11 @@ func clear_hold() -> void:
 	_held_pick_rotation = 0
 	_inspect_module = null
 	_clear_hover()
+	_update_hull_dim_for_hold()
 	hold_changed.emit(null, 0)
+	queue_redraw()
+	if _preview != null:
+		_preview.queue_redraw()
 
 
 func has_held_module() -> bool:
@@ -433,7 +442,14 @@ func _handle_left_click(cell: Vector2i) -> void:
 		return
 
 	if _held_module != null:
-		var origin := _hover_origin
+		# Place at the click, not a stale hover from before the cursor entered the grid.
+		var origin := _centered_origin(
+			Vector2(cell) * cell_size + cell_size * 0.5,
+			_held_module,
+			_held_rotation
+		)
+		_hover_origin = origin
+		_refresh_hover_validity()
 		if _held_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
 			if ship_hull.can_place_hull_with_cargo(
 				_held_module, origin, _held_rotation, _held_cargo, _held_pick_rotation
@@ -446,6 +462,7 @@ func _handle_left_click(cell: Vector2i) -> void:
 					clear_hold()
 			else:
 				placement_failed.emit(_held_module, origin)
+			_preview.queue_redraw()
 			return
 
 		if ship_hull.can_place(_held_module, origin, _held_rotation):
@@ -455,6 +472,9 @@ func _handle_left_click(cell: Vector2i) -> void:
 				clear_hold()
 			else:
 				placement_failed.emit(_held_module, origin)
+		else:
+			placement_failed.emit(_held_module, origin)
+		_preview.queue_redraw()
 		return
 
 
@@ -501,7 +521,12 @@ func _draw() -> void:
 		var fill := empty_tint
 		match ship_hull.get_floor_type(cell):
 			HullData.FloorType.DECK:
-				fill = deck_tint
+				# Stronger wash while placing interior modules so the hull interior reads as a drop target.
+				fill = (
+					Color(0.25, 0.85, 0.55, 0.32)
+					if _held_module != null and _held_module.is_deck_equipment()
+					else deck_tint
+				)
 			HullData.FloorType.CONNECTOR:
 				fill = connector_tint
 			_:
@@ -725,6 +750,8 @@ func _spawn_sprite(module: PlacedModule) -> void:
 		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sprite.show_behind_parent = true
+	# Interior gear must sit above the opaque hull interior art.
+	sprite.z_index = 0 if module.data.is_structure() else 2
 
 	var bounds := module.get_bounding_size()
 	sprite.position = Vector2(module.origin) * cell_size
@@ -734,6 +761,24 @@ func _spawn_sprite(module: PlacedModule) -> void:
 	if _preview != null:
 		move_child(_preview, get_child_count() - 1)
 	_module_sprites[module.instance_id] = sprite
+	_update_hull_dim_for_hold()
+
+
+## Dim hull art while holding an interior module so deck cells stay readable.
+func _update_hull_dim_for_hold() -> void:
+	var dim := _held_module != null and _held_module.is_deck_equipment()
+	if ship_hull == null:
+		return
+	for m: PlacedModule in ship_hull.get_all_modules():
+		if not _module_sprites.has(m.instance_id) or m.data == null:
+			continue
+		var sprite: CanvasItem = _module_sprites[m.instance_id] as CanvasItem
+		if sprite == null:
+			continue
+		if m.data.category == ModuleData.Category.HULL:
+			sprite.modulate = Color(1, 1, 1, 0.45) if dim else Color.WHITE
+		else:
+			sprite.modulate = Color.WHITE
 
 
 func _texture_for(data: ModuleData, rotation: int) -> Texture2D:

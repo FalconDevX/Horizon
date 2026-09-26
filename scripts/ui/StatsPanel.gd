@@ -27,8 +27,6 @@ const DISPLAY_KEYS: Array[String] = [
 	"damage",
 	"repair_rate",
 	"max_heat",
-	"occupied_cells",
-	"capacity",
 	"module_count",
 	"thrust_to_weight",
 	"hulls_linked",

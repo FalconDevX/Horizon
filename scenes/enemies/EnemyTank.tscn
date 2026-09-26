@@ -7,6 +7,8 @@
 [node name="EnemyTank" type="Node2D"]
 script = ExtResource("1_enemy")
 ship_texture = ExtResource("2_tank")
+title = "Tank"
+kind_id = "tank"
 visual_length = 36.0
 max_health = 55.0
 move_speed = 110.0

@@ -6,12 +6,14 @@
 [node name="EnemyFast" type="Node2D"]
 script = ExtResource("1_enemy")
 ship_texture = ExtResource("2_tex")
+title = "Fast"
+kind_id = "fast"
 visual_length = 18.0
 max_health = 18.0
 move_speed = 280.0
 turn_speed = 3.6
 fire_cooldown = 0.28
-laser_speed = 520.0
+laser_speed = 1200.0
 laser_range = 700.0
 laser_damage = 7.0
 laser_width = 1.8

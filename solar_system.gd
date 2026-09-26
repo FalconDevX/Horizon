@@ -33,7 +33,7 @@ enum AutopilotPhase {
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
 ## planets. N rerolls it in game.
-@export var world_seed: int = 1461402483
+@export var world_seed: int = 857931493
 
 ## How much of each kind's designed range a planet may use (see the _roll_*()
 ## functions in planet_terrain.gd): 0 is every kind's textbook look, 1 the full
@@ -168,6 +168,10 @@ var orbit_line_radii: Array[float] = []
 var celestial_bodies: Array[Node2D] = []
 
 const HOME_PLANET_INDEX := 1
+## Planets this system does not have (PlanetRoster) are parked this far out,
+## each on its own orbit, hidden and without an SOI.
+const PARK_RADIUS := 45000000.0
+const PARK_SPACING := 20000.0
 ## A body is charted once the ship is inside its sphere of influence, or
 ## within this many of its radii for bodies whose SOI is barely bigger than
 ## they are.
@@ -262,6 +266,12 @@ var station_keeping_correcting_apoapsis := true
 var station_keeping_wait_time := 0.0
 var autopilot_departure_body: Node2D = null
 var autopilot_selectable_bodies: Array[Node2D] = []
+## Each planet's orbit radius as the scene has it, and whether this system has
+## it (PlanetRoster.roll(world_seed)).
+var orbit_radii: PackedFloat64Array = []
+var planet_present: Array[bool] = []
+## The PhysicsBody of every planet this system has - the only ones stepped.
+var _active_physics_planets: Array = []
 var route_plan: Dictionary = {}
 var route_task_id := -1
 var route_task_holder: Dictionary = {}
@@ -718,6 +728,7 @@ func set_world_seed(value: int) -> void:
 	_restore_system_state(saved)
 	_update_system_title()
 
+	_roll_roster()
 	for i in planets.size():
 		var collected: Dictionary = saved.get("collected", {}).get(i, {})
 		planets[i].set("collected_deposit_seeds", collected.duplicate())
@@ -725,6 +736,10 @@ func set_world_seed(value: int) -> void:
 		# An anomaly re-rolls its size (and mass) with the world.
 		if i < mu_planets.size():
 			mu_planets[i] = G * float(planets[i].get("mass"))
+	var phase_rng := RandomNumberGenerator.new()
+	phase_rng.randomize()
+	_apply_roster(phase_rng)
+	_show_roster()
 	_chart_known_bodies()
 	_clear_planet_guards()
 	_planet_guards_pending = true
@@ -774,7 +789,7 @@ func _on_course_set(system_seed: int) -> void:
 
 ## Ctrl+LMB on a planet: lock it as the warp target, or let go of it.
 func toggle_warp_target(body: Node2D) -> void:
-	if body == null or not planets.has(body):
+	if body == null or not planets.has(body) or not planet_present[planets.find(body)]:
 		return
 	if body == warp_target:
 		warp_target = null
@@ -810,7 +825,8 @@ func _warp_problem(body: Node2D) -> String:
 	if LaserBolt._segment_hits_circle(from, arrive, sun.position, sun_reach):
 		return "Path blocked by %s" % String(sun.get("body_name"))
 	for i in range(planets.size()):
-		if i == index:
+		# Planets this system does not have are parked far out: not in the way.
+		if i == index or not planet_present[i]:
 			continue
 		var reach: float = float(planets[i].get("radius")) * WARP_CLEARANCE_RADII
 		if LaserBolt._segment_hits_circle(from, arrive, Vector2(physics_planets[i].x, physics_planets[i].y), reach):
@@ -1137,7 +1153,7 @@ func _arrive_in_system(system_seed: int) -> void:
 
 	var candidates: Array[int] = []
 	for i in planets.size():
-		if not planets[i].get("is_anomaly") and not planets[i].get("is_black_hole"):
+		if planet_present[i] and not planets[i].get("is_anomaly") and not planets[i].get("is_black_hole"):
 			candidates.append(i)
 	var index: int = candidates[rng.randi_range(0, candidates.size() - 1)]
 	var planet: Node2D = planets[index]
@@ -1180,13 +1196,14 @@ func _ready() -> void:
 	mu_sun = G * sun_mass
 
 	# Each launch starts every planet at a random point on its orbit; only the
-	# orbit radius comes from the scene. Velocity below follows from the new position.
+	# orbit radius comes from the scene. The system's roster parks the planets
+	# it does not have. Velocity below follows from the new position.
+	for planet in planets:
+		orbit_radii.append((planet.position - sun.position).length())
+		planet_present.append(true)
 	var phase_rng := RandomNumberGenerator.new()
 	phase_rng.randomize()
-	for planet in planets:
-		var rel: Vector2 = planet.position - sun.position
-		planet.position = sun.position + Vector2(rel.length(), 0.0).rotated(phase_rng.randf() * TAU)
-		planet.call("snap_visual_position")
+	_apply_roster(phase_rng)
 
 	for planet in planets:
 		planet.set("mass", float(planet.get("mass")) * PLANET_GRAVITY_SCALE)
@@ -1214,6 +1231,10 @@ func _ready() -> void:
 		orbit_lines.append(line)
 		orbit_line_radii.append(-1.0)
 		line.add_point(planet.position)
+	for i in planets.size():
+		if planet_present[i]:
+			_active_physics_planets.append(physics_planets[i])
+	_show_roster()
 
 	autopilot_off_sound = AudioStreamPlayer.new()
 	autopilot_off_sound.name = "AutopilotOffSound"
@@ -1250,7 +1271,7 @@ func _ready() -> void:
 		_spawn_planet_guards()
 	)
 
-	var home: Node2D = planets[HOME_PLANET_INDEX]
+	var home: Node2D = planets[home_planet_index()]
 	var home_mass: float = home.get("mass")
 
 	ship.position = home.position + Vector2(4000, 0)
@@ -1397,6 +1418,12 @@ func _ready() -> void:
 func _enter_tree() -> void:
 	if SaveGame.pending.has("world_seed"):
 		world_seed = int(SaveGame.pending["world_seed"])
+	# Before the planets' own _ready: the ones this system lacks skip building.
+	var roster: Dictionary = PlanetRoster.roll(world_seed)
+	for child in get_node("Planets").get_children():
+		if child is Node2D:
+			var name: String = child.get("body_name")
+			child.set("present", not PlanetRoster.TIERS.has(name) or roster.has(name))
 
 
 ## Everything about the flight a saved game needs (SaveGame adds the galaxy
@@ -3573,7 +3600,12 @@ func update_trajectory_prediction_async(delta: float) -> void:
 
 
 func build_trajectory_snapshot() -> Dictionary:
-	var count: int = planets.size()
+	# Only the planets this system has; `indices` maps back to planets[].
+	var here: Array[Node2D] = present_planets()
+	var indices := PackedInt32Array()
+	for planet: Node2D in here:
+		indices.append(planets.find(planet))
+	var count: int = here.size()
 	var positions := PackedVector2Array()
 	var velocities := PackedVector2Array()
 	var radii := PackedFloat64Array()
@@ -3587,12 +3619,12 @@ func build_trajectory_snapshot() -> Dictionary:
 	soi_radii.resize(count)
 
 	for i in range(count):
-		positions[i] = planets[i].position
-		velocities[i] = planets[i].velocity
-		radii[i] = planets[i].get("radius")
-		masses[i] = planets[i].get("mass")
-		soi_radii[i] = get_soi_radius(planets[i])
-		names.append(get_body_name(planets[i]))
+		positions[i] = here[i].position
+		velocities[i] = here[i].velocity
+		radii[i] = here[i].get("radius")
+		masses[i] = here[i].get("mass")
+		soi_radii[i] = get_soi_radius(here[i])
+		names.append(get_body_name(here[i]))
 
 	return {
 		"ship_pos": ship.position,
@@ -3609,7 +3641,8 @@ func build_trajectory_snapshot() -> Dictionary:
 		"soi_radii": soi_radii,
 		"names": names,
 		"t0": total_sim_time,
-		"ref": planets.find(get_current_orbit_body()),
+		"ref": here.find(get_current_orbit_body()),
+		"indices": indices,
 		"prediction_steps": 12000 if (settings_mgr != null and settings_mgr.trajectory_long_prediction) else PREDICTION_STEPS,
 	}
 
@@ -3621,7 +3654,10 @@ func apply_trajectory_result(result: Dictionary) -> void:
 	_trajectory_points = result.get("points", PackedVector2Array())
 	_trajectory_times = result.get("times", PackedFloat32Array())
 	_trajectory_t0 = result.get("t0", total_sim_time)
-	_trajectory_ref = result.get("ref", -1)
+	# The predictor saw only the planets that are here: back to planets[].
+	var ref: int = result.get("ref", -1)
+	var indices: PackedInt32Array = result.get("indices", PackedInt32Array())
+	_trajectory_ref = indices[ref] if ref >= 0 and ref < indices.size() else -1
 	_trajectory_rel_points = result.get("rel_points", PackedVector2Array())
 	refresh_trajectory_line()
 	update_trajectory_status(result.get("status", "ORBIT"), result.get("target", ""))
@@ -3815,6 +3851,7 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 		"times": times,
 		"t0": snap.get("t0", 0.0),
 		"ref": ref if stays_in_ref and rel_points.size() == points.size() else -1,
+		"indices": snap.get("indices", PackedInt32Array()),
 		"rel_points": rel_points,
 		"status": predicted_status,
 		"target": predicted_target,
@@ -4159,8 +4196,10 @@ func toggle_enemy_menu() -> void:
 ## T3 deposit worlds get the elite roster; the rest get basic craft.
 func _spawn_planet_guards() -> void:
 	_clear_planet_guards()
+	# Discovery order in the galaxy: first system = 0, each new jump +1.
+	var system_depth: int = maxi(0, GalaxyMap.index_of(world_seed))
 	_planet_guards = PlanetGuardsScript.spawn_system(
-		self, planets, G, _planet_nearest_ship()
+		self, present_planets(), G, _planet_nearest_ship(), system_depth
 	)
 
 
@@ -4201,8 +4240,7 @@ func _on_enemy_selected(enemy_id: String) -> void:
 		return
 
 	var enemy := scene.instantiate() as Enemy
-	enemy.title = str(entry.get("title", enemy.title))
-	enemy.type_id = enemy_id
+	EnemyCatalog.configure(enemy, enemy_id)
 	ship.get_parent().add_child(enemy)
 	enemy.global_position = ship.global_position
 	enemy.rotation = ship.rotation
@@ -4336,8 +4374,8 @@ func _try_fire_fov_weapon() -> void:
 func _on_setting_changed(key: String, value: Variant) -> void:
 	match key:
 		"show_orbit_lines":
-			for line in orbit_lines:
-				line.visible = value
+			for i in orbit_lines.size():
+				orbit_lines[i].visible = value and planet_present[i]
 		"show_soi_circles":
 			for planet in planets:
 				planet.show_soi = value
@@ -4369,8 +4407,8 @@ func _push_starfield_to_black_holes() -> void:
 func _apply_all_settings() -> void:
 	if settings_mgr == null:
 		return
-	for line in orbit_lines:
-		line.visible = settings_mgr.show_orbit_lines
+	for i in orbit_lines.size():
+		orbit_lines[i].visible = settings_mgr.show_orbit_lines and planet_present[i]
 	for planet in planets:
 		planet.show_soi = settings_mgr.show_soi_circles
 	trajectory_prediction.visible = settings_mgr.show_trajectory
@@ -4481,6 +4519,8 @@ func get_orbiting_body() -> String:
 
 
 func get_soi_radius(body: Node2D) -> float:
+	if body.get("present") == false:
+		return 0.0
 	var distance_to_sun: float = body.position.distance_to(sun.position)
 	var body_mass: float = body.get("mass")
 	var sun_mass: float = sun.get("mass")
@@ -4684,7 +4724,7 @@ func _find_landing_candidate() -> Node2D:
 	var best_distance: float = INF
 	for i in range(planets.size()):
 		var planet: Node2D = planets[i]
-		if planet.get("is_black_hole"):
+		if planet.get("is_black_hole") or not planet_present[i]:
 			continue  # No surface to land on.
 		var reach: float = float(planet.get("radius")) * LANDING_RANGE_RADII
 		if i < soi_radii_cache.size():
@@ -5020,7 +5060,9 @@ func detected_enemies() -> Dictionary:
 		var enemy := child as Enemy
 		if radars.any(func(device: Dictionary) -> bool: return ship.is_body_in_device_fov(device, enemy.global_position)):
 			contacts.append({
-				"enemy": enemy, "title": enemy.title,
+				"enemy": enemy,
+				"title": enemy.title,
+				"kind_id": enemy.kind_id,
 				"distance": ship.global_position.distance_to(enemy.global_position),
 			})
 	contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])
@@ -5077,8 +5119,8 @@ func _respawn_destroyed_ship() -> void:
 		disengage_autopilot(false)
 	autopilot_selecting = false
 	cancel_warp()
-	var home: Node2D = planets[HOME_PLANET_INDEX]
-	var index: int = HOME_PLANET_INDEX
+	var index: int = home_planet_index()
+	var home: Node2D = planets[index]
 	var body: PhysicsBody = physics_planets[index]
 	var distance: float = 4000.0
 	var along := Vector2(0.0, 1.0)
@@ -5177,7 +5219,75 @@ func _chart(body: Node2D) -> bool:
 ## The sun and the home planet: known from the start in every system.
 func _chart_known_bodies() -> void:
 	_chart(sun)
-	_chart(planets[HOME_PLANET_INDEX])
+	_chart(planets[home_planet_index()])
+
+
+## Places every planet for this system's roster (PlanetRoster): the ones it
+## has at a random point `rng` picks on their own orbits, the rest parked far
+## out and hidden. Velocities follow; the physics state too once it exists.
+func _apply_roster(rng: RandomNumberGenerator) -> void:
+	_roll_roster()
+	var sun_mass: float = sun.get("mass")
+	_active_physics_planets.clear()
+	for i in planets.size():
+		var planet: Node2D = planets[i]
+		var here: bool = planet_present[i]
+		var radius: float = orbit_radii[i] if here else PARK_RADIUS + float(i) * PARK_SPACING
+		planet.position = sun.position + Vector2(radius, 0.0).rotated(rng.randf() * TAU)
+		planet.velocity = get_circular_orbit_velocity(planet.position, sun.position, sun_mass)
+		if i < physics_planets.size():
+			physics_planets[i].pull_from_node()
+		planet.call("set_present", here)
+		planet.call("snap_visual_position")
+		if i < soi_radii_cache.size():
+			soi_radii_cache[i] = get_soi_radius(planet)
+		if here and i < physics_planets.size():
+			_active_physics_planets.append(physics_planets[i])
+
+
+## Which planets this system has (PlanetRoster.roll(world_seed)), into
+## planet_present and each planet's `present` - before rebuild_surface, so the
+## ones it lacks build nothing.
+func _roll_roster() -> void:
+	var roster: Dictionary = PlanetRoster.roll(world_seed)
+	for i in planets.size():
+		var name: String = planets[i].get("body_name")
+		planet_present[i] = not PlanetRoster.TIERS.has(name) or roster.has(name)
+		planets[i].set("present", planet_present[i])
+
+
+## The planets this system has.
+func present_planets() -> Array[Node2D]:
+	var result: Array[Node2D] = []
+	for i in planets.size():
+		if planet_present[i]:
+			result.append(planets[i])
+	return result
+
+
+## Orbit lines and the autopilot's targets for the planets this system has.
+func _show_roster() -> void:
+	autopilot_selectable_bodies.clear()
+	for i in planets.size():
+		if i < orbit_lines.size():
+			orbit_lines[i].visible = planet_present[i] and (settings_mgr == null or settings_mgr.show_orbit_lines)
+		if planet_present[i]:
+			autopilot_selectable_bodies.append(planets[i])
+	autopilot_selectable_bodies.append(sun)
+
+
+## The planet the ship starts and is rebuilt at: Coralyss if this system has
+## it, else the first planet it has that is not a giant or an anomaly.
+func home_planet_index() -> int:
+	if planet_present.is_empty() or planet_present[HOME_PLANET_INDEX]:
+		return HOME_PLANET_INDEX
+	for i in planets.size():
+		if planet_present[i] and not planets[i].get("is_anomaly") and not PlanetTerrain.is_gas(planets[i].get("terrain_kind")):
+			return i
+	for i in planets.size():
+		if planet_present[i]:
+			return i
+	return HOME_PLANET_INDEX
 
 
 func _has_deposit(body: Node2D, type_name: StringName) -> bool:
@@ -5191,7 +5301,7 @@ func _has_deposit(body: Node2D, type_name: StringName) -> bool:
 func _chart_nearby_bodies() -> void:
 	for i in range(planets.size()):
 		var planet: Node2D = planets[i]
-		if charted_bodies.has(planet):
+		if charted_bodies.has(planet) or not planet_present[i]:
 			continue
 		var reach: float = maxf(soi_radii_cache[i], float(planet.get("radius")) * CHART_RADII)
 		if ship.global_position.distance_to(planet.global_position) < reach:
@@ -5227,10 +5337,11 @@ func _physics_process(delta: float) -> void:
 		steps += 1
 
 	if steps > 0:
-		for body: PhysicsBody in physics_planets:
+		for body: PhysicsBody in _active_physics_planets:
 			body.push_to_node()
 		for i in range(planets.size()):
-			update_orbit_line(planets[i], orbit_lines[i], i)
+			if planet_present[i]:
+				update_orbit_line(planets[i], orbit_lines[i], i)
 
 	_record_tick_positions()
 
@@ -5306,7 +5417,8 @@ func simulation_step(dt: float) -> void:
 	var sun_y: float = sun.position.y
 	var half_dt: float = 0.5 * dt
 	var half_dt2: float = 0.5 * dt * dt
-	for body: PhysicsBody in physics_planets:
+	# Only the planets this system has; the parked ones stay put.
+	for body: PhysicsBody in _active_physics_planets:
 		var dx: float = sun_x - body.x
 		var dy: float = sun_y - body.y
 		var d2: float = dx * dx + dy * dy

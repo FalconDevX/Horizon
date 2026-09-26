@@ -6,6 +6,8 @@
 [node name="EnemyBlackHole" type="Node2D"]
 script = ExtResource("1_enemy")
 ship_texture = ExtResource("2_tex")
+title = "Black hole"
+kind_id = "black_hole"
 visual_length = 44.0
 max_health = 90.0
 move_speed = 95.0

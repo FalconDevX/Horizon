@@ -37,15 +37,18 @@ static var _model_cache: Dictionary = {}
 const TYPES := {
 	&"silver_ore": {
 		"name": "Silver ore", "mesh": &"crystals", "size": Vector2(0.03, 0.045),
-		"color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06, "tier": 1,
+		"color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06,
+		"tier": 1,
 	},
 	&"gold_ore": {
 		"name": "Gold ore", "mesh": &"tiles", "size": Vector2(0.05, 0.07),
-		"color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06, "tier": 1,
+		"color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06,
+		"tier": 1,
 	},
 	&"scrap": {
 		"name": "Scrap", "mesh": &"scrap", "size": Vector2(0.06, 0.08),
-		"color": Color.WHITE, "shine": 0.25, "glow": 0.04, "tier": 1,
+		"color": Color.WHITE, "shine": 0.25, "glow": 0.04,
+		"tier": 1,
 	},
 	# The three plants are one model (MODELS moonbloom), told apart by how
 	# its texture is recoloured: as painted alive (teal leaves, crimson
@@ -53,12 +56,14 @@ const TYPES := {
 	&"beanstalk": {
 		"name": "Moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
 		"color": Color.WHITE, "shine": 0.2, "glow": 0.05, "wiggle": 0.035,
-		"tint": TINT_NONE, "tier": 2,
+		"tint": TINT_NONE,
+		"tier": 2,
 	},
 	&"frozen_beanstalk": {
 		"name": "Frozen moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
 		"color": Color(0.72, 0.87, 1.0), "shine": 0.6, "glow": 0.08, "wiggle": 0.012,
-		"tint": Vector3(0.0, 0.25, 1.45), "tier": 2,
+		"tint": Vector3(0.0, 0.25, 1.45),
+		"tier": 2,
 	},
 	&"dried_beanstalk": {
 		"name": "Dried moonbloom", "mesh": &"moonbloom", "size": Vector2(0.04, 0.06),
@@ -67,38 +72,44 @@ const TYPES := {
 	},
 	&"gold_pillar": {
 		"name": "Gold pillar", "mesh": &"pillars", "size": Vector2(0.06, 0.09),
-		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15, "tier": 3,
+		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15,
+		"tier": 3,
 	},
 	&"egg": {
 		"name": "Egg", "mesh": &"egg", "size": Vector2(0.08, 0.11),
 		"color": Color(0.97, 0.96, 0.93), "shine": 0.35, "glow": 0.08,
 		"spots": 1.0, "spot_color_a": Color(0.12, 0.38, 1.0), "spot_color_b": Color(1.0, 0.3, 0.62),
-		"tier": 3,
+		"tier": 5,
 	},
 	&"sky_stone": {
 		"name": "Sky stone", "mesh": &"pebbles", "size": Vector2(0.022, 0.032),
-		"color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12, "tier": 2,
+		"color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12,
+		"tier": 2,
 	},
 	&"bone": {
 		"name": "Bone", "mesh": &"bones", "size": Vector2(0.06, 0.08),
-		"color": Color(0.94, 0.91, 0.82), "shine": 0.3, "glow": 0.05, "tier": 2,
+		"color": Color(0.94, 0.91, 0.82), "shine": 0.3, "glow": 0.05,
+		"tier": 2,
 	},
 	&"toxic_ore": {
 		"name": "Toxic ore", "mesh": &"slabs", "size": Vector2(0.05, 0.07),
-		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1, "tier": 3,
+		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1,
+		"tier": 3,
 	},
 	&"pink_crystal": {
 		"name": "Pink crystal", "mesh": &"crystals", "size": Vector2(0.035, 0.05),
-		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18, "tier": 1,
+		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18,
+		"tier": 1,
 	},
 	&"ice_crystal": {
 		"name": "Ice crystal", "mesh": &"spikes", "size": Vector2(0.04, 0.06),
-		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12, "tier": 1,
+		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12,
+		"tier": 1,
 	},
 	&"slime_jelly": {
 		"name": "Slime jelly", "mesh": &"jelly", "size": Vector2(0.03, 0.045),
 		"color": Color(0.5, 1.0, 0.5), "color_param": "shallow", "shine": 0.9, "glow": 0.35,
-		"tier": 2,
+		"tier": 4,
 	},
 	&"tumbleweed": {
 		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
@@ -111,18 +122,17 @@ const TYPES := {
 	&"ice_wurm": {
 		"name": "Ice wurm", "mesh": &"geyser", "size": Vector2(0.03, 0.045),
 		"color": Color.WHITE, "shine": 0.3, "glow": 0.3, "wiggle": 0.04,
-	},
-	&"wind_crystal": {
-		"name": "Wind crystal", "mesh": &"wind_crystals", "size": Vector2(0.035, 0.05),
-		"color": Color(0.62, 0.95, 0.9), "shine": 0.8, "glow": 0.22,
+		"tier": 3,
 	},
 	&"hel": {
 		"name": "Hel", "mesh": &"bubbles", "size": Vector2(0.05, 0.07),
 		"color": Color(0.95, 0.72, 1.0), "shine": 0.6, "glow": 0.7, "wiggle": 0.03,
+		"tier": 3,
 	},
 	&"silver_spheres": {
 		"name": "Silver spheres", "mesh": &"sphere_arch", "size": Vector2(0.045, 0.065),
 		"color": Color(0.86, 0.88, 0.93), "shine": 0.95, "glow": 0.08,
+		"tier": 4,
 	},
 }
 
@@ -170,8 +180,14 @@ const SPAWNS := {
 			"note": "Blown along by the storm"},
 		{"type": &"gold_pillar", "count": Vector2i(1, 3), "only": ["sandstorm"],
 			"note": "Uncovered where the storm scours the sand away"},
-		{"type": &"wind_crystal", "count": Vector2i(5, 6), "only": ["lava"],
-			"note": "Grown in the hot winds off the lava canyons"},
+		{"type": &"sky_stone", "count": Vector2i(5, 6), "only": ["lava"],
+			"note": "Blown out of the lava canyons on the hot winds"},
+	],
+	PlanetTerrain.Kind.VOLCANIC: [
+		{"type": &"scrap", "count": Vector2i(8, 10)},
+		{"type": &"pink_crystal", "count": Vector2i(7, 10), "only": ["lava"]},
+		{"type": &"ice_crystal", "count": Vector2i(7, 10), "only": ["cryo"]},
+		{"type": &"sky_stone", "count": Vector2i(3, 6), "only": ["cryo"]},
 	],
 	PlanetTerrain.Kind.BARREN: [
 		{"type": &"gold_ore", "count": Vector2i(2, 4)},
@@ -183,8 +199,17 @@ const SPAWNS := {
 	PlanetTerrain.Kind.TOXIC: [
 		{"type": &"toxic_ore", "count": Vector2i(3, 5), "only": ["crystal"]},
 		{"type": &"pink_crystal", "count": Vector2i(8, 10), "only": ["crystal"]},
-		{"type": &"wind_crystal", "count": Vector2i(3, 7), "only": ["crystal"]},
-		{"type": &"toxic_ore", "count": Vector2i(6, 10), "except": ["crystal"]},
+		{"type": &"sky_stone", "count": Vector2i(3, 7), "only": ["crystal"]},
+		{"type": &"toxic_ore", "count": Vector2i(4, 7), "except": ["crystal"]},
+		{"type": &"bone", "count": Vector2i(5, 9), "except": ["crystal"]},
+	],
+	PlanetTerrain.Kind.GAS_GIANT: [
+		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
+			"note": "Bubbles of fuel gas drifting over the cloud tops"},
+	],
+	PlanetTerrain.Kind.ICE_GIANT: [
+		{"type": &"hel", "count": Vector2i(15, 20), "on": "any", "slope": 2.0, "motion": &"drift",
+			"note": "Bubbles of fuel gas drifting over the cloud tops"},
 	],
 	PlanetTerrain.Kind.SLIME: [
 		{"type": &"beanstalk", "count": Vector2i(8, 14), "on": "any", "slope": 0.5, "except": ["petrified"],
@@ -550,7 +575,9 @@ static func yields(kind: int, variant: String, flag: String = "") -> Array:
 	return result
 
 
-## Tech-tree tier of a deposit type (1–3). Scenery / unknown → 0.
+## Rarity tier of a deposit type: 1 common, 2 uncommon, 3 rare, 4 special,
+## 5 wildcard. Scenery / unknown -> 0. PlanetGuards gives worlds with tier 3
+## or above the elite guards.
 static func tier_of(type_name: StringName) -> int:
 	return int(TYPES.get(type_name, {}).get("tier", 0))
 

@@ -19,9 +19,8 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
-## EnemyCatalog id ("basic", "mothership", ... or "fighter"): picks the red
-## type marker and its abbreviation (EnemyMarkers.MARKERS). Set on spawn.
-var type_id: String = "basic"
+## Catalog id for the flat map/HUD glyph (shape + colour).
+@export var kind_id: String = "basic"
 @export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
@@ -53,7 +52,7 @@ const SPEED_VS_PLAYER := 1.1
 @export var collision_radius: float = 12.0
 ## Hits it takes from the player's weapons before it blows up (a kamikaze
 ## goes off at the first hit whatever this says).
-@export var max_health: float = 30.0
+@export var max_health: float = 60.0
 ## What ramming the player's ship does to it (kamikaze contact).
 @export var contact_damage: float = 45.0
 ## Barrel tips in the artwork, as fractions of the nose-up image - one bolt
@@ -67,10 +66,13 @@ const SPEED_VS_PLAYER := 1.1
 @export var ai_forward: bool = false
 @export var ai_seek_ship: bool = false
 
-## Mothership: Space launches Fast fighters instead of shooting.
+## Mothership: auto-launches Fast fighters on an interval; Space also launches
+## when the craft is player-controlled.
 @export var deploy_fighters: bool = false
 @export var fighter_scene: PackedScene
-@export var deploy_cooldown: float = 1.4
+## Seconds between fighter launches (rolled uniformly each time).
+@export var deploy_cooldown: float = 10.0
+@export var deploy_cooldown_max: float = 15.0
 @export var deploy_offset: float = 36.0
 
 ## Minelayer: Space drops a DamageZone at the ship.
@@ -124,8 +126,10 @@ var orbit_alert_range: float = 0.0
 var _alerted: bool = false
 var _orbiting: bool = false
 
-## Far-zoom marker size in screen px (the type's shape, EnemyMarkers.MARKERS).
-const MARKER_SIZE := 18.0
+
+func _ready() -> void:
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
 
 
 ## Park this craft on a circular orbit around `anchor`. Not player-controlled.
@@ -149,6 +153,8 @@ func begin_orbit(
 	_alerted = false
 	_orbiting = true
 	_bh_active_time = 0.0
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
 	if anchor != null:
 		global_position = anchor.global_position + Vector2.from_angle(angle) * radius
 		rotation = angle + PI * 0.5 * signf(omega if omega != 0.0 else 1.0)
@@ -254,10 +260,10 @@ func _handle_input(delta: float) -> void:
 	if not is_zero_approx(_throttle):
 		position += Vector2.RIGHT.rotated(rotation) * move_speed * _throttle * delta
 
-	if Input.is_key_pressed(KEY_SPACE):
-		if deploy_fighters:
-			_try_deploy_fighter()
-		elif lay_mines:
+	if deploy_fighters:
+		_try_deploy_fighter()
+	elif Input.is_key_pressed(KEY_SPACE):
+		if lay_mines:
 			_try_lay_mine()
 		elif can_fire:
 			_try_fire()
@@ -327,18 +333,21 @@ func fire_laser() -> void:
 		bolt.velocity = dir * laser_speed
 
 
+func _next_deploy_delay() -> float:
+	return randf_range(deploy_cooldown, maxf(deploy_cooldown, deploy_cooldown_max))
+
+
 func _try_deploy_fighter() -> void:
 	if fighter_scene == null or _ability_timer > 0.0 or get_parent() == null:
 		return
-	_ability_timer = deploy_cooldown
+	_ability_timer = _next_deploy_delay()
 	var fighter := fighter_scene.instantiate() as Enemy
 	if fighter == null:
 		return
 	fighter.player_controlled = false
-	fighter.type_id = "fighter"
-	fighter.title = EnemyMarkers.title_for("fighter")
 	fighter.ai_forward = true
 	fighter.ai_seek_ship = true
+	EnemyCatalog.configure(fighter, "fast")
 	get_parent().add_child(fighter)
 	var aft := -Vector2.RIGHT.rotated(rotation) * deploy_offset
 	fighter.global_position = global_position + aft
@@ -528,12 +537,9 @@ func _draw() -> void:
 		_draw_black_hole_field()
 
 	if not true_scale:
+		_draw_map_marker()
 		if _throttle > 0.05:
 			_draw_engine_flame(Vector2(-8, 0))
-		# Upright type marker (pointed shapes still turned to the heading).
-		draw_set_transform(Vector2.ZERO, -rotation, Vector2.ONE)
-		EnemyMarkers.draw_marker(self, Vector2.ZERO, MARKER_SIZE, type_id, EnemyMarkers.MARKER_COLOR, rotation)
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		_draw_health_bar()
 		_draw_type_label()
 		return
@@ -553,15 +559,15 @@ func _draw() -> void:
 	_draw_type_label()
 
 
-## The type's abbreviation ("MS" for a mothership...), red, upright, right of
-## the craft - a fixed size on screen.
+## The type's short code ("MS" for a mothership...) in its marker colour,
+## upright, right of the craft - a fixed size on screen.
 func _draw_type_label() -> void:
 	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
-	var extent: float = (visual_length * 0.6) / px if true_scale else MARKER_SIZE * 0.6
+	var extent: float = (visual_length * 0.6) / px if true_scale else 11.0
 	draw_set_transform(Vector2.ZERO, -rotation, Vector2(px, px))
 	draw_string(
-		HudPanelStyle.get_font(), Vector2(extent + 4.0, 4.0), EnemyMarkers.abbreviation(type_id),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, EnemyMarkers.MARKER_COLOR
+		HudPanelStyle.get_font(), Vector2(extent + 4.0, 4.0), EnemyCatalog.abbreviation(kind_id),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, EnemyCatalog.marker_color(kind_id)
 	)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -578,6 +584,11 @@ func _draw_health_bar() -> void:
 	draw_rect(rect, Color(0.35, 0.08, 0.08, 0.9))
 	draw_rect(Rect2(rect.position, Vector2(width * health_fraction(), height)), Color(0.35, 0.9, 0.45))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Far-zoom glyph: flat shape + colour from EnemyCatalog (not the ship art).
+func _draw_map_marker() -> void:
+	EnemyCatalog.draw_glyph(self, Vector2.ZERO, 11.0, kind_id, true)
 
 
 ## Red corner brackets round a targeted enemy, a fixed size on screen.

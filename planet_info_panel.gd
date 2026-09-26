@@ -8,8 +8,9 @@ extends Control
 ## Arrow keys step through the bodies.
 ##
 ## A second tab lists the resources (ResourceDeposits.TYPES): each shown as a
-## model, with where it turns up - which kinds of planet, where on them and on
-## which variants - and how many this world has. Tab, or left / right, swaps.
+## model, with where it turns up. A third tab is the hostile craft bestiary
+## (EnemyCatalog): silhouette art, contact glyph, combat numbers and lore.
+## Tab, or left / right, cycles the three.
 ##
 ## Under a planet's view, a card per variant its kind can roll (and per trait -
 ## blind, Julia sets, ringed): its name and note, and what it yields - found
@@ -53,9 +54,11 @@ const IDLE_SPIN := 0.12
 ## the planet shaders light it from the left, as the sun does in space.
 const PREVIEW_OFFSET := Vector3(100000.0, 0.0, 0.0)
 
-const TABS := ["PLANETS", "RESOURCES"]
+const TABS := ["PLANETS", "RESOURCES", "ENEMIES"]
 const TAB_PLANETS := 0
 const TAB_RESOURCES := 1
+const TAB_ENEMIES := 2
+const TAB_WIDTH := 100.0
 
 var _system: Node = null
 var _bodies: Array[Node2D] = []
@@ -89,8 +92,12 @@ var _viewed_twin: Node2D = null
 var _hovered_tab: int = -1
 ## Resource types in the order the tab lists them.
 var _resources: Array = ResourceDeposits.TYPES.keys()
-## The planet row selected when the tab was left, to come back to.
+## Hostile craft entries from EnemyCatalog (id, title, texture, lore…).
+var _enemies: Array[Dictionary] = []
+## The planet / resource / enemy row selected when that tab was left.
 var _planet_selected: int = 0
+var _resource_selected: int = 0
+var _enemy_selected: int = 0
 ## View size that frames the selected resource's model.
 var _resource_view: float = 3.0
 
@@ -99,12 +106,13 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	_enemies = EnemyCatalog.all_enemies()
 	_build_viewport()
 	_help = HelpPopup.new(PackedStringArray([
 		"Drag the planet: turn it",
 		"Mouse wheel over the planet: zoom",
 		"Up and Down arrows: previous and next entry",
-		"Tab, Left or Right: planets / resources",
+		"Tab, Left or Right: planets / resources / enemies",
 		"Click a variant card: preview that variant",
 		"J or Esc: close the log",
 	]))
@@ -146,23 +154,42 @@ func step(offset: int) -> void:
 	_select(posmod(_selected + offset, _row_count()))
 
 
-## Swaps between the planets and the resources.
+## Cycles PLANETS → RESOURCES → ENEMIES → PLANETS.
 func switch_tab() -> void:
-	_set_tab(TAB_RESOURCES if _tab == TAB_PLANETS else TAB_PLANETS)
+	_set_tab((_tab + 1) % TABS.size())
 
 
 func _set_tab(tab: int) -> void:
 	if tab == _tab:
 		return
-	if _tab == TAB_PLANETS:
-		_planet_selected = _selected
+	match _tab:
+		TAB_PLANETS:
+			_planet_selected = _selected
+		TAB_RESOURCES:
+			_resource_selected = _selected
+		TAB_ENEMIES:
+			_enemy_selected = _selected
 	_tab = tab
-	_select(_planet_selected if tab == TAB_PLANETS else 0)
+	var index: int = 0
+	match tab:
+		TAB_PLANETS:
+			index = _planet_selected
+		TAB_RESOURCES:
+			index = _resource_selected
+		TAB_ENEMIES:
+			index = _enemy_selected
+	_select(index)
 	_layout()
 
 
 func _row_count() -> int:
-	return _bodies.size() if _tab == TAB_PLANETS else _resources.size()
+	match _tab:
+		TAB_RESOURCES:
+			return _resources.size()
+		TAB_ENEMIES:
+			return _enemies.size()
+		_:
+			return _bodies.size()
 
 
 func hide_panel() -> void:
@@ -223,17 +250,24 @@ func _preview_origin() -> Vector3:
 
 
 func _select(index: int) -> void:
-	_selected = clampi(index, 0, _row_count() - 1)
+	_selected = clampi(index, 0, maxi(_row_count() - 1, 0))
 	_clear_preview()
+	if _viewport_container != null:
+		_viewport_container.visible = _tab != TAB_ENEMIES
 	if _tab == TAB_RESOURCES:
 		_select_resource()
+		return
+	if _tab == TAB_ENEMIES:
+		_idle_time = 0.0
+		queue_redraw()
 		return
 
 	var body: Node2D = _bodies[_selected]
 	_viewing = {}
 	_pending_twin = null
 	_viewed_twin = null
-	if _known_body(body):
+	# A planet not in this system was never built: its silhouette only.
+	if _known_body(body) and body.get("present") != false:
 		_preview = body.call("make_preview")
 	else:
 		# Uncharted: only its dark shape against the stars.
@@ -322,7 +356,7 @@ func _process(delta: float) -> void:
 
 	# The live materials follow the game's clock; the preview turns on its
 	# own until the player grabs it.
-	if _globe != null and not _dragging:
+	if _globe != null and not _dragging and _tab != TAB_ENEMIES:
 		_idle_time += delta
 		# A resource turns on its upright, and quicker - it is small.
 		var axis := Vector3.UP if _tab == TAB_RESOURCES else Vector3(0.0, 0.0, 1.0)
@@ -381,7 +415,7 @@ func _cards_rect() -> Rect2:
 
 func _tab_rect(index: int) -> Rect2:
 	var panel: Rect2 = _panel_rect()
-	return Rect2(panel.position + Vector2(262.0 + index * 116.0, 16.0), Vector2(108.0, 26.0))
+	return Rect2(panel.position + Vector2(262.0 + index * (TAB_WIDTH + 8.0), 16.0), Vector2(TAB_WIDTH, 26.0))
 
 
 func _close_rect() -> Rect2:
@@ -425,7 +459,7 @@ func _gui_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion:
 		var motion := event as InputEventMouseMotion
-		if _dragging and _globe != null:
+		if _dragging and _globe != null and _tab != TAB_ENEMIES:
 			# Drag sideways turns the globe about the screen's vertical, drag
 			# up and down about its horizontal. A resource only turns on its
 			# own upright, so it stays standing.
@@ -474,7 +508,7 @@ func _gui_input(event: InputEvent) -> void:
 			else:
 				_dragging = false
 				_idle_time = 0.0
-		elif button.pressed and view.has_point(button.position):
+		elif button.pressed and view.has_point(button.position) and _tab != TAB_ENEMIES:
 			var base: float = _resource_view if _tab == TAB_RESOURCES \
 				else (VIEW_STAR if _bodies[_selected].get("is_star") else VIEW_DEFAULT)
 			if button.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -592,7 +626,7 @@ func _draw() -> void:
 			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _tab else HudPanelStyle.COLOR_TEXT_MUTED
 		)
 	draw_string(
-		font, panel.position + Vector2(262.0 + TABS.size() * 116.0 + 12.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
+		font, panel.position + Vector2(262.0 + TABS.size() * (TAB_WIDTH + 8.0) + 12.0, 34.0), "%s SYSTEM" % GalaxyMap.system_name(GalaxyMap.current_seed()).to_upper(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED
 	)
 	var close: Rect2 = _close_rect()
@@ -608,6 +642,8 @@ func _draw() -> void:
 
 	_draw_list(font)
 	_draw_view_frame(font)
+	if _tab == TAB_ENEMIES:
+		_draw_enemy_preview(font)
 	_draw_text(font)
 	if _tab == TAB_PLANETS:
 		_draw_variant_cards(font)
@@ -616,6 +652,9 @@ func _draw() -> void:
 func _draw_list(font: Font) -> void:
 	if _tab == TAB_RESOURCES:
 		_draw_resource_list(font)
+		return
+	if _tab == TAB_ENEMIES:
+		_draw_enemy_list(font)
 		return
 	var list: Rect2 = _list_rect()
 	for i in range(_bodies.size()):
@@ -627,6 +666,24 @@ func _draw_list(font: Font) -> void:
 		elif i == _hovered:
 			draw_rect(row, Color(1.0, 1.0, 1.0, 0.04))
 
+		if body.get("present") == false:
+			# Not in this system: named once any of its variants has been
+			# seen somewhere, its journal pages still open.
+			draw_rect(row, Color(0.0, 0.0, 0.0, 0.5))
+			draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, Color(0.1, 0.1, 0.12))
+			if _seen_anywhere(body):
+				draw_string(
+					font, row.position + Vector2(38.0, 19.0), String(body.get("body_name")).to_upper(),
+					HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 42.0, 14, HudPanelStyle.COLOR_TEXT_MUTED
+				)
+			else:
+				_draw_redacted(row.position.x + 38.0, row.position.y + 19.0, String(body.get("body_name")).length() * 10.0, 14)
+			draw_string(
+				font, row.position + Vector2(38.0, row.size.y - 7.0), "Not in this system", HORIZONTAL_ALIGNMENT_LEFT,
+				row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
+			)
+			_draw_variant_tally(font, body, row)
+			continue
 		if not _known_body(body):
 			draw_rect(row, Color(0.0, 0.0, 0.0, 0.35))
 			draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, Color(0.1, 0.1, 0.12))
@@ -662,12 +719,18 @@ func _draw_text(font: Font) -> void:
 	if _tab == TAB_RESOURCES:
 		_draw_resource_text(font)
 		return
+	if _tab == TAB_ENEMIES:
+		_draw_enemy_text(font)
+		return
 	var text: Rect2 = _text_rect()
 	var body: Node2D = _bodies[_selected]
 	# The world the text describes: a viewed card's twin (its variant, its
 	# description, its resources), or the planet as it is here. The orbit and
 	# the body itself are always the planet's.
 	var look: Node2D = _viewed_twin if _viewed_twin != null and is_instance_valid(_viewed_twin) else body
+	if body.get("present") == false and look == body:
+		_draw_absent_text(font, body)
+		return
 	if not _known_body(body) and look == body:
 		_draw_uncharted_text(font, body)
 		return
@@ -784,6 +847,141 @@ func _draw_resource_list(font: Font) -> void:
 			font, row.position + Vector2(38.0, row.size.y - 7.0), "Collectible" if type.get("collectible", true) else "Scenery",
 			HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_MUTED
 		)
+
+
+func _draw_enemy_list(font: Font) -> void:
+	var list: Rect2 = _list_rect()
+	for i in range(_enemies.size()):
+		var entry: Dictionary = _enemies[i]
+		var enemy_id: String = str(entry.get("id", "basic"))
+		var row := Rect2(list.position + Vector2(0.0, i * _row_height()), Vector2(list.size.x, _row_height() - 4.0))
+		if i == _selected:
+			draw_rect(row, HudPanelStyle.COLOR_CYAN_GLOW)
+			draw_rect(Rect2(row.position, Vector2(3.0, row.size.y)), HudPanelStyle.COLOR_CYAN)
+		elif i == _hovered:
+			draw_rect(row, Color(1.0, 1.0, 1.0, 0.04))
+		var glyph_at: Vector2 = row.position + Vector2(20.0, row.size.y * 0.5)
+		EnemyCatalog.draw_glyph(self, glyph_at, 8.0, enemy_id, false)
+		draw_string(
+			font, row.position + Vector2(38.0, 19.0), String(entry.get("title", "Enemy")).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
+			row.size.x - 42.0, 14,
+			HudPanelStyle.COLOR_TEXT_PRIMARY if i == _selected else HudPanelStyle.COLOR_TEXT_SECONDARY
+		)
+		draw_string(
+			font, row.position + Vector2(38.0, row.size.y - 7.0), str(entry.get("role", "")), HORIZONTAL_ALIGNMENT_LEFT,
+			row.size.x - 42.0, 10, EnemyCatalog.marker_color(enemy_id)
+		)
+
+
+## Ship art + contact glyph in the middle view (no 3D viewport on this tab).
+func _draw_enemy_preview(font: Font) -> void:
+	if _enemies.is_empty():
+		return
+	var entry: Dictionary = _enemies[_selected]
+	var enemy_id: String = str(entry.get("id", "basic"))
+	var view: Rect2 = _view_rect()
+	var color: Color = EnemyCatalog.marker_color(enemy_id)
+	draw_rect(view.grow(-1.0), Color(0.04, 0.05, 0.07, 0.92))
+	draw_rect(Rect2(view.position, Vector2(view.size.x, 3.0)), color)
+
+	var tex: Texture2D = entry.get("texture") as Texture2D
+	var pad: float = 36.0
+	var max_side: float = minf(view.size.x, view.size.y) - pad * 2.0
+	if tex != null:
+		var tex_size: Vector2 = tex.get_size()
+		var scale: float = max_side / maxf(tex_size.x, tex_size.y)
+		var draw_size: Vector2 = tex_size * scale
+		var at: Vector2 = view.get_center() - draw_size * 0.5
+		draw_texture_rect(tex, Rect2(at, draw_size), false)
+	else:
+		EnemyCatalog.draw_glyph(self, view.get_center(), max_side * 0.28, enemy_id, false)
+
+	EnemyCatalog.draw_glyph(self, view.position + Vector2(28.0, 28.0), 14.0, enemy_id, false)
+	draw_string(
+		font, view.position + Vector2(48.0, 34.0), String(entry.get("title", "")).to_upper(),
+		HORIZONTAL_ALIGNMENT_LEFT, view.size.x - 60.0, 14, color
+	)
+	draw_string(
+		font, view.position + Vector2(16.0, view.size.y - 14.0), "CONTACT GLYPH",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED
+	)
+	EnemyCatalog.draw_glyph(
+		self, view.position + Vector2(view.size.x - 28.0, view.size.y - 28.0), 12.0, enemy_id, false
+	)
+
+
+func _draw_enemy_text(font: Font) -> void:
+	if _enemies.is_empty():
+		return
+	var text: Rect2 = _text_rect()
+	var entry: Dictionary = _enemies[_selected]
+	var enemy_id: String = str(entry.get("id", "basic"))
+	var stats: Dictionary = EnemyCatalog.combat_stats(enemy_id)
+	var color: Color = EnemyCatalog.marker_color(enemy_id)
+	var x: float = text.position.x
+	var y: float = text.position.y + 18.0
+
+	draw_string(
+		font, Vector2(x, y), String(entry.get("title", "Enemy")).to_upper(),
+		HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 22, HudPanelStyle.COLOR_CYAN
+	)
+	y += 22.0
+	draw_string(
+		font, Vector2(x, y), str(entry.get("role", "")), HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, color
+	)
+	y += 18.0
+	draw_string(
+		font, Vector2(x, y), EnemyCatalog.roster_label(enemy_id), HORIZONTAL_ALIGNMENT_LEFT,
+		text.size.x, 11, HudPanelStyle.COLOR_AMBER
+	)
+	y += 22.0
+
+	var rows: Array = [
+		["Hull", "%.0f" % float(stats.get("hull", 0.0))],
+		["Cruise speed", "%.0f SU/s" % float(stats.get("speed", 0.0))],
+		["Turn rate", "%.1f rad/s" % float(stats.get("turn", 0.0))],
+		["Armament", str(stats.get("armament", "—"))],
+	]
+	match str(entry.get("id", "")):
+		"kamikaze":
+			rows.append(["Contact damage", "%.0f" % float(stats.get("damage", 0.0))])
+		"minelayer":
+			rows.append(["Mine DPS", "%.0f" % float(stats.get("damage", 0.0))])
+			rows.append(["Mine radius", "%.0f SU" % float(stats.get("range", 0.0))])
+		"mothership":
+			rows.append(["Deploy interval", "%.0f–%.0f s" % [10.0, 15.0]])
+		"black_hole":
+			rows.append(["Pull radius", "%.0f SU" % float(stats.get("range", 0.0))])
+			rows.append(["Blast damage", "%.0f" % float(stats.get("damage", 0.0))])
+		_:
+			var armament: String = str(stats.get("armament", ""))
+			if float(stats.get("damage", 0.0)) > 0.0:
+				rows.append(["Damage", "%.0f" % float(stats.get("damage", 0.0))])
+			if float(stats.get("range", 0.0)) > 0.0 and (
+				armament.begins_with("Laser") or armament == "Sniper beam"
+			):
+				rows.append(["Weapon range", "%.0f SU" % float(stats.get("range", 0.0))])
+
+	for row: Array in rows:
+		draw_string(font, Vector2(x, y), row[0], HORIZONTAL_ALIGNMENT_LEFT, text.size.x * 0.45, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+		draw_string(
+			font, Vector2(x + text.size.x * 0.45, y), row[1], HORIZONTAL_ALIGNMENT_LEFT,
+			text.size.x * 0.55, 11, HudPanelStyle.COLOR_TEXT_PRIMARY
+		)
+		y += 18.0
+
+	y += 10.0
+	y = _draw_paragraph(font, str(entry.get("description", "")), x, y, text.size.x, 12, HudPanelStyle.COLOR_TEXT_SECONDARY)
+
+	var facts: Array = entry.get("facts", [])
+	if not facts.is_empty():
+		y += 14.0
+		draw_string(font, Vector2(x, y), "FIELD NOTES", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_EMERALD)
+		y += 18.0
+		for fact: Variant in facts:
+			draw_string(font, Vector2(x, y), "›", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, color)
+			y = _draw_paragraph(font, str(fact), x + 14.0, y, text.size.x - 14.0, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
+			y += 6.0
 
 
 ## A resource: what it is, and every planet and variant it can turn up on -
@@ -978,7 +1176,7 @@ func _card_at(point: Vector2) -> int:
 ## Whether the world in front of the player now is this card.
 func _card_is_here(body: Node2D, name: String, is_trait: bool) -> bool:
 	var params: Dictionary = body.get("terrain_params")
-	return _known_body(body) and (
+	return _known_body(body) and body.get("present") != false and (
 		params.get(name, false) == true if is_trait else params.get("variant", "") == name
 	)
 
@@ -1165,6 +1363,34 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, Color(0.1, 0.1, 0.12))
 			_draw_redacted(x + 12.0, y, (inner - 12.0) * (0.45 + 0.3 * fposmod(String(type_name).hash() * 0.618, 1.0)), 10)
 		y += 14.0
+
+
+## Whether any variant of `body` has been seen, in any system.
+func _seen_anywhere(body: Node2D) -> bool:
+	return Journal.seen_count(String(body.get("body_name")), body.get("terrain_kind")) > 0
+
+
+## A planet this system does not have: its name if it has been seen
+## somewhere, and where to look at it - its variant cards below.
+func _draw_absent_text(font: Font, body: Node2D) -> void:
+	var text: Rect2 = _text_rect()
+	var x: float = text.position.x
+	var y: float = text.position.y + 18.0
+	var seen: bool = _seen_anywhere(body)
+	if seen:
+		draw_string(font, Vector2(x, y), String(body.get("body_name")).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 22, HudPanelStyle.COLOR_TEXT_MUTED)
+	else:
+		_draw_redacted(x, y, String(body.get("body_name")).length() * 15.0, 22)
+	y += 22.0
+	draw_string(font, Vector2(x, y), "Not in this system", HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_AMBER)
+	y += 22.0
+	var rarity: String = PlanetRoster.TIER_NAMES.get(PlanetRoster.tier(String(body.get("body_name"))), "")
+	var line: String = "Not every system has every planet"
+	if rarity != "":
+		line += " - this one is %s." % rarity.to_lower()
+	if seen:
+		line += " Click a seen variant below to look at it."
+	_draw_paragraph(font, line, x, y, text.size.x, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
 
 ## A planet the ship has not charted: the headings are there, the data is not.

@@ -9,9 +9,10 @@ signal target_picked(enemy: Node2D)
 const PAD := 12.0
 const ROW_HEIGHT := 30.0
 const HEADER := 38.0
+const ICON_SIZE := 22.0
 const COLOR_TARGET := Color(1.0, 0.35, 0.3)
 
-## [{enemy, title, distance}], nearest first.
+## [{enemy, title, distance, kind_id}], nearest first.
 var _contacts: Array = []
 ## "" when the radars work, else why the list is empty ("No radar fitted"...).
 var _status: String = ""
@@ -85,10 +86,13 @@ func _draw() -> void:
 			draw_rect(Rect2(rect.position, Vector2(3.0, rect.size.y)), COLOR_TARGET)
 		elif i == _hover_row:
 			draw_rect(rect, Color(1.0, 1.0, 1.0, 0.05))
-		draw_circle(rect.position + Vector2(14.0, rect.size.y * 0.5), 3.5, COLOR_TARGET if picked else HudPanelStyle.COLOR_AMBER)
+		var kind_id: String = str(contact.get("kind_id", "basic"))
+		var icon_center: Vector2 = rect.position + Vector2(PAD + ICON_SIZE * 0.5, rect.size.y * 0.5)
+		EnemyCatalog.draw_glyph(self, icon_center, ICON_SIZE * 0.42, kind_id, false)
+		var name_color: Color = EnemyCatalog.marker_color(kind_id) if picked else HudPanelStyle.COLOR_TEXT_PRIMARY
 		draw_string(
-			font, rect.position + Vector2(26.0, 19.0), String(contact["title"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
-			rect.size.x - 110.0, 11, HudPanelStyle.COLOR_TEXT_PRIMARY
+			font, rect.position + Vector2(PAD + ICON_SIZE + 6.0, 19.0), String(contact["title"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
+			rect.size.x - 110.0 - ICON_SIZE, 11, name_color
 		)
 		var tag: String = "TARGET" if picked else _distance(float(contact["distance"]))
 		draw_string(
