@@ -1,7 +1,7 @@
 extends Control
 
 
-var autopilot_active := false
+var flight_assist := false
 var throttle_locked := false
 var throttle := 0.0
 
@@ -19,18 +19,18 @@ const PAD_TOP := 10.0
 const COLOR_ON := HudPanelStyle.COLOR_CYAN
 const COLOR_OFF := Color(0.35, 0.42, 0.52, 0.5)
 const COLOR_WARN := HudPanelStyle.COLOR_AMBER
-const COLOR_AUTOPILOT := HudPanelStyle.COLOR_EMERALD
+const COLOR_ASSIST := HudPanelStyle.COLOR_EMERALD
 
 
-func set_state(p_autopilot: bool, p_lock: bool, p_throttle: float) -> void:
+func set_state(p_assist: bool, p_lock: bool, p_throttle: float) -> void:
 	if (
-		autopilot_active == p_autopilot
+		flight_assist == p_assist
 		and throttle_locked == p_lock
 		and is_equal_approx(throttle, p_throttle)
 	):
 		return
 
-	autopilot_active = p_autopilot
+	flight_assist = p_assist
 	throttle_locked = p_lock
 	throttle = p_throttle
 	queue_redraw()
@@ -40,7 +40,7 @@ func _draw() -> void:
 	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 14.0, 0.85, 0.55)
 
 	var chips := [
-		{"label": "AUTOPILOT", "on": autopilot_active, "warn": false, "color": COLOR_AUTOPILOT},
+		{"label": "ASSIST (V)", "on": flight_assist, "warn": false, "color": COLOR_ASSIST},
 		{"label": "LOCK (X)", "on": throttle_locked, "warn": throttle_locked, "color": COLOR_WARN},
 	]
 

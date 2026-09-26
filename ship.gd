@@ -101,7 +101,7 @@ const PRECISION_SCALE := 0.2
 ## nose; with the engine off it slowly bleeds speed (ASSIST_COAST_DRAG); S
 ## brakes to a stop. Coasting, all that only runs while the player is flying
 ## (a flight key within ASSIST_IDLE_TIME) - left alone, the ship coasts under
-## gravity and keeps its orbit. The autopilot flies with it suspended.
+## gravity and keeps its orbit.
 ## Most sideways push the assist may use, units/s^2. Holding a turn at speed
 ## v and turn rate w takes v * w (2000 units/s at 3 rad/s is ~6000).
 const ASSIST_MAX_ACCEL := 9000.0
@@ -113,27 +113,22 @@ const ASSIST_IDLE_TIME := 3.0
 const ASSIST_BRAKE_ACCEL := 1500.0
 ## How quickly sideways drift (and, braking, speed) is cancelled, per second.
 const ASSIST_RESPONSE := 10.0
+## How quickly sideways drift is cancelled in a turn, per second - lower
+## than ASSIST_RESPONSE so the ship slides a little through its turns.
+const ASSIST_TURN_RESPONSE := 3.5
 
 ## Attitude hold (SAS): keeps the nose on a direction set by the flight path.
 enum AttitudeHold { NONE, PROGRADE, RETROGRADE }
 
 ## FOV devices synced from the shipyard (weapons + radars).
 var fov_devices: Array[Dictionary] = []
-## Body names currently inside at least one radar cone.
-var radar_contacts: Array[String] = []
-## Body names inside a weapon cone (engageable).
-var weapon_locks: Array[String] = []
 var show_fov_cones := true
 
 var velocity := Vector2.ZERO
 var throttle := 0.0
-var autopilot_thrust := Vector2.ZERO
-var autopilot_main_engine_output := 0.0
 var throttle_locked := false
 var attitude_hold: AttitudeHold = AttitudeHold.NONE
 var flight_assist := true
-## Set by solar_system.gd while the autopilot flies: the assist stays out.
-var assist_suspended := false
 ## Seconds since the player last pressed a flight key (update_rotation).
 var _since_flight_input: float = 999.0
 ## 0..1 share of full thrust the assist brake used last step (engine sound).
@@ -150,7 +145,6 @@ var true_scale := false:
 			return
 		true_scale = value
 		queue_redraw()
-
 
 
 const MAIN_ENGINE_SOUND := preload("res://sounds/main_engine.wav")
@@ -346,19 +340,6 @@ func apply_fov_devices(devices: Array) -> void:
 		if typeof(item) != TYPE_DICTIONARY:
 			continue
 		fov_devices.append((item as Dictionary).duplicate(true))
-	radar_contacts.clear()
-	weapon_locks.clear()
-	queue_redraw()
-
-
-func clear_fov_contacts() -> void:
-	radar_contacts.clear()
-	weapon_locks.clear()
-
-
-func set_fov_contacts(radar: Array[String], weapons: Array[String]) -> void:
-	radar_contacts = radar.duplicate()
-	weapon_locks = weapons.duplicate()
 	queue_redraw()
 
 
@@ -494,7 +475,11 @@ func selected_device() -> Dictionary:
 
 ## Turns the selected turret toward `world_pos`, as far as its arc allows.
 func aim_selected(world_pos: Vector2, dt: float) -> void:
-	var device: Dictionary = selected_device()
+	aim_device(selected_device(), world_pos, dt)
+
+
+## Turns `device` (a turret) toward `world_pos`, as far as its arc allows.
+func aim_device(device: Dictionary, world_pos: Vector2, dt: float) -> void:
 	var arc: float = float(device.get("turret_arc", 0.0))
 	if device.is_empty() or arc <= 0.0:
 		return
@@ -620,13 +605,6 @@ func precision_scale() -> float:
 	return PRECISION_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
 
 
-func update_autopilot_rotation(delta: float) -> void:
-	if autopilot_thrust == Vector2.ZERO:
-		return
-
-	rotation = rotate_toward(rotation, autopilot_thrust.angle(), get_turn_rate() * delta)
-
-
 func disengage_manual_main_engine() -> void:
 	throttle = 0.0
 	throttle_locked = false
@@ -667,7 +645,7 @@ func update_throttle(delta: float, is_realtime: bool = true) -> void:
 ## Manual engine output for this sim step: plain thrust along the nose, or
 ## with flight assist on (and the throttle not locked) the assisted version.
 func get_manual_acceleration() -> Vector2:
-	if not flight_assist or throttle_locked or assist_suspended:
+	if not flight_assist or throttle_locked:
 		assist_brake_output = 0.0
 		return get_thrust_acceleration()
 
@@ -687,7 +665,7 @@ func get_manual_acceleration() -> Vector2:
 	var forward := Vector2.RIGHT.rotated(rotation)
 	var side: Vector2 = forward.orthogonal()
 	var drift: float = velocity_rel.dot(side)
-	var lateral: float = clampf(-drift * ASSIST_RESPONSE, -assist_cap, assist_cap)
+	var lateral: float = clampf(-drift * ASSIST_TURN_RESPONSE, -assist_cap, assist_cap)
 	if throttle <= 0.0:
 		if _since_flight_input > ASSIST_IDLE_TIME:
 			# Left alone: coast on the orbit.
@@ -715,45 +693,17 @@ func get_thrust_acceleration() -> Vector2:
 	return direction * acceleration
 
 
-func set_autopilot_thrust(command: Vector2) -> void:
-	autopilot_thrust = Vector2(
-		clampf(command.x, -1.0, 1.0),
-		clampf(command.y, -1.0, 1.0)
-	)
-
-
-func clear_autopilot_thrust() -> void:
-	autopilot_thrust = Vector2.ZERO
-
-
-## The autopilot flies on the main engine only: it turns the nose onto the
-## burn direction (update_autopilot_rotation) and fires as much of the burn as
-## the nose is lined up with.
-func get_autopilot_acceleration(max_force: float) -> Vector2:
-	if autopilot_thrust == Vector2.ZERO or not has_fuel():
-		autopilot_main_engine_output = 0.0
-		return Vector2.ZERO
-
-	var forward: Vector2 = Vector2.RIGHT.rotated(rotation)
-	var alignment: float = forward.dot(autopilot_thrust.normalized())
-	if alignment <= 0.0:
-		autopilot_main_engine_output = 0.0
-		return Vector2.ZERO
-	autopilot_main_engine_output = autopilot_thrust.length() * alignment
-	return forward * (autopilot_main_engine_output * max_force / ship_mass)
-
-
 func _process(delta: float) -> void:
 	queue_redraw()
 	_update_main_engine_sound(delta)
 
 
-## Manual throttle or the autopilot's main-engine burn, whichever is higher.
-## Fades in and out rather than cutting, and falls silent on pause.
+## The throttle, or the assist's braking, whichever is higher. Fades in and
+## out rather than cutting, and falls silent on pause.
 func _update_main_engine_sound(delta: float) -> void:
 	var level: float = 0.0
 	if not paused:
-		level = clampf(maxf(maxf(throttle, autopilot_main_engine_output), assist_brake_output), 0.0, 1.0)
+		level = clampf(maxf(throttle, assist_brake_output), 0.0, 1.0)
 	var target: float = lerpf(0.45, 1.0, level) if level > 0.01 else 0.0
 	_main_engine_gain = move_toward(_main_engine_gain, target, MAIN_ENGINE_FADE_RATE * delta)
 
@@ -847,6 +797,9 @@ func _draw_fov_cones() -> void:
 	# Outlines a steady 1.2 screen pixels at any zoom, so they stay crisp.
 	var line_px: float = 1.2 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
 	for device in fov_devices:
+		# Radars sweep all round (CombatControl draws their scans), no cone.
+		if str(device.get("kind", "")) == "radar":
+			continue
 		var local_origin: Vector2 = device_local_origin(device) * inv_scale
 		var local_facing: Vector2 = device_local_facing(device)
 		var angle_deg := float(device.get("angle_deg", 0.0))

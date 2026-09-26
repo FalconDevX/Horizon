@@ -27,6 +27,11 @@ var _age := 0.0
 var _did_hit_check := false
 
 
+func _init() -> void:
+	# Moved by hand in _process, not in physics ticks.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
 func _process(delta: float) -> void:
 	_age += delta
 	if carrier != null and is_instance_valid(carrier):

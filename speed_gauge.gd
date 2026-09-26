@@ -67,8 +67,8 @@ func _draw_ticks(center: Vector2, radius: float) -> void:
 		HORIZONTAL_ALIGNMENT_CENTER, 20.0, 10, Color(1.0, 1.0, 1.0, 0.45)
 	)
 	draw_string(
-		font, center + end_dir * (radius + 14.0) - Vector2(10.0, -4.0), "%d" % int(max_speed),
-		HORIZONTAL_ALIGNMENT_CENTER, 20.0, 10, Color(1.0, 1.0, 1.0, 0.45)
+		font, center + end_dir * (radius + 14.0) - Vector2(16.0, -4.0), "%d" % int(max_speed),
+		HORIZONTAL_ALIGNMENT_CENTER, 32.0, 10, Color(1.0, 1.0, 1.0, 0.45)
 	)
 
 

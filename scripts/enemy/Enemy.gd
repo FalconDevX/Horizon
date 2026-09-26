@@ -127,6 +127,12 @@ var _alerted: bool = false
 var _orbiting: bool = false
 
 
+func _init() -> void:
+	# Moved by hand in _process: interpolating it between physics ticks
+	# would make it shake.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
 func _ready() -> void:
 	if deploy_fighters:
 		_ability_timer = _next_deploy_delay()

@@ -12,6 +12,11 @@ var ignore_enemy: Enemy = null
 var _age := 0.0
 
 
+func _init() -> void:
+	# Moved by hand in _process, not in physics ticks.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
 func _process(delta: float) -> void:
 	_age += delta
 	if _age >= lifetime:

@@ -565,22 +565,21 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "Space / P", "Pause / Resume simulation")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "Ctrl+LMB", "Lock a planet as warp target")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "Q", "Warp to the locked target")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "Step (▶|)", "Single simulation step (paused)")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Enter / E", "Land or take off / collect")
 
 	# --- Column 2 ---
-	_draw_section_header(Vector2(col2_x, top_y), "Orbital Autopilot", col_w)
+	_draw_section_header(Vector2(col2_x, top_y), "Combat & Handling", col_w)
 	var card2 := Rect2(col2_x, top_y + 20.0, col_w, 228.0)
 	_draw_card_background(card2)
 
 	y = card2.position.y + 14.0
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "F", "Engage / Disengage Autopilot")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "Tab", "Cycle target celestial body")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "Scroll (Target)", "Adjust target orbit altitude")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "1 .. 9", "Pick a weapon (panel order)")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "LMB (Hold)", "Fire the picked weapon")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "G", "Fire every gun at the target")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Z / C", "Hold prograde / retrograde")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "V", "Flight assist (arcade handling)")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "B / T", "Ship builder / tech tree")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "I / J / M", "Cargo / planet log / galaxy map")
 
 	var y_cam: float = top_y + 270.0
 	_draw_section_header(Vector2(col2_x, y_cam), "Camera & Tracking", col_w)
