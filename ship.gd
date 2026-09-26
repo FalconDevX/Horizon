@@ -653,6 +653,9 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 			var magazine: Dictionary = launcher_state(id)
 			if int(magazine["loaded"]) <= 0 or float(magazine["gap"]) > 0.0:
 				continue
+			# Each missile type has its own reach, within the launcher's.
+			if global_position.distance_to(world_pos) > float(MissileCatalog.info(magazine["type"])["range"]):
+				continue
 		# Holds fire (costing nothing) while its own ship is in the way.
 		if is_shot_blocked(device, to_local(world_pos) - device_local_origin(device)):
 			continue

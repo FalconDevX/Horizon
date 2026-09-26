@@ -175,7 +175,8 @@ static func weapons() -> Array[ModuleData]:
 		# Five quick heavy rounds a burst (PlayerShot "burst"), then a longer reload.
 		_with_art(_weapon("Revolver Cannon", &"weapon_revolver", 40.0, 3.0, 0.9, 9.0, 4.0, 30.0, 2000.0, _shape_2x1())),
 		_stars_weapon("Coilgun: Shotgun", &"weapon_coilgun", 5, 4, 1, 10.0, 10.0, 50.0, 1200.0, _shape_2x1()),
-		_stars_weapon("Rocket Launcher", &"weapon_rockets", 5, 1, 5, 12.0, 2.0, 25.0, 3000.0, _shape_2x1()),
+		# Missiles reach far: the launcher fires out to the longest one's range (MissileCatalog), ~75 000 SU.
+		_stars_weapon("Rocket Launcher", &"weapon_rockets", 5, 1, 5, 12.0, 2.0, 25.0, 25000.0, _shape_2x1()),
 		_stars_weapon("Drone Bay", &"weapon_drones", 2, 3, 3, 6.0, 8.0, 90.0, 2500.0, _shape_1x1()),
 	]
 	# Everything but the sniper and the drone bay turns on a turret (the player aims the selected one with RMB in flight).

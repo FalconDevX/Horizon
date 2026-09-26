@@ -422,6 +422,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_J:
 			inventory_screen.hide_panel()
 			planet_info_panel.toggle()
+		elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+			inventory_screen.next_tab()
 		elif event is InputEventKey and event.pressed and event.keycode in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
 			inventory_screen.view.step(
 				int(event.keycode == KEY_RIGHT) - int(event.keycode == KEY_LEFT),
@@ -3340,7 +3342,7 @@ func _spawn_missile(device: Dictionary, aim: Vector2, target: Enemy) -> void:
 	missile.type = device["missile_type"]
 	missile.target = target if target != _test_enemy else null
 	missile.damage = float(device.get("damage", 0.0)) * float(MissileCatalog.info(missile.type)["damage"])
-	missile.max_distance = float(device.get("range", 9000.0))
+	missile.max_distance = float(MissileCatalog.info(missile.type)["range"])
 	missile.ignore = _test_enemy
 	add_child(missile)
 	missile.global_position = muzzle

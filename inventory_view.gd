@@ -21,6 +21,15 @@ const DETAIL_GAP := 24.0
 const DETAIL_MIN_TOTAL := 520.0
 const ICON_PIXELS := 192
 const ICON_SPIN := 0.5
+## Which part of the hold the grid shows: CATEGORY_RESOURCES or
+## CATEGORY_MISSILES (MissileCatalog ids).
+const CATEGORY_RESOURCES := &"resources"
+const CATEGORY_MISSILES := &"missiles"
+var category: StringName = CATEGORY_RESOURCES:
+	set(value):
+		category = value
+		if is_inside_tree():
+			_refresh()
 var _inventory: Inventory = null
 var _selected: StringName = &""
 var _hovered: int = -1
@@ -67,7 +76,23 @@ static func item_info(id: StringName) -> Dictionary:
 
 
 func _ids() -> Array:
-	return _inventory.ids() if _inventory != null else []
+	if _inventory == null:
+		return []
+	return _inventory.ids().filter(func(id: StringName) -> bool: return category_of(id) == category)
+
+
+static func category_of(id: StringName) -> StringName:
+	return CATEGORY_MISSILES if MissileCatalog.has(id) else CATEGORY_RESOURCES
+
+
+## How many items of `which` category the hold has, all counts summed.
+func count_in(which: StringName) -> int:
+	var total: int = 0
+	if _inventory != null:
+		for id: StringName in _inventory.ids():
+			if category_of(id) == which:
+				total += _inventory.count(id)
+	return total
 
 
 func _select(id: StringName) -> void:
@@ -196,16 +221,54 @@ func _draw() -> void:
 	if ids.is_empty():
 		var grid: Rect2 = _grid_rect()
 		var y: float = _slot_rect(_slot_count() - 1).end.y + 34.0
+		var missiles: bool = category == CATEGORY_MISSILES
 		draw_string(
-			font, Vector2(0.0, y), "THE HOLD IS EMPTY", HORIZONTAL_ALIGNMENT_LEFT, grid.size.x, 14,
-			HudPanelStyle.COLOR_TEXT_SECONDARY
+			font, Vector2(0.0, y), "NO MISSILES IN THE HOLD" if missiles else "NO RESOURCES IN THE HOLD",
+			HORIZONTAL_ALIGNMENT_LEFT, grid.size.x, 14, HudPanelStyle.COLOR_TEXT_SECONDARY
 		)
 		draw_string(
-			font, Vector2(0.0, y + 20.0), "Land on a planet (ENTER), fly over a resource and press E",
+			font, Vector2(0.0, y + 20.0),
+			"A Rocket Launcher loads its missiles from here" if missiles else "Land on a planet (ENTER), fly over a resource and press E",
 			HORIZONTAL_ALIGNMENT_LEFT, grid.size.x, 11, HudPanelStyle.COLOR_TEXT_MUTED
 		)
 	if _shows_details():
 		_draw_details(font)
+
+
+## A missile's card: range, damage, what it does to a target, tracking stars
+## and the board's note.
+func _draw_missile_stats(font: Font, x: float, y: float, width: float) -> void:
+	var info: Dictionary = MissileCatalog.info(_selected)
+	var rows := [
+		["RANGE", "%d km" % roundi(float(info["range"]) / 1000.0)],
+		["DAMAGE", info["damage_kind"]],
+		["TRACKING", "%d / 5" % int(info["tracking"])],
+		["SPEED", "%d SU/s" % roundi(float(info["speed"]))],
+	]
+	for row: Array in rows:
+		draw_string(font, Vector2(x, y), row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED)
+		draw_string(font, Vector2(x, y), String(row[1]), HORIZONTAL_ALIGNMENT_RIGHT, width, 12, HudPanelStyle.COLOR_TEXT_PRIMARY)
+		y += 20.0
+	y += 8.0
+	var lines: PackedStringArray = _wrap(font, String(info["note"]), width, 11)
+	for line in lines:
+		draw_string(font, Vector2(x, y), line, HORIZONTAL_ALIGNMENT_LEFT, width, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
+		y += 16.0
+
+
+static func _wrap(font: Font, text: String, width: float, font_size: int) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var line := ""
+	for word in text.split(" "):
+		var trial: String = word if line.is_empty() else line + " " + word
+		if font.get_string_size(trial, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > width and not line.is_empty():
+			lines.append(line)
+			line = word
+		else:
+			line = trial
+	if not line.is_empty():
+		lines.append(line)
+	return lines
 
 
 func _draw_slot(font: Font, index: int, id: StringName) -> void:
@@ -256,6 +319,9 @@ func _draw_details(font: Font) -> void:
 	draw_string(font, Vector2(x, y), "IN THE HOLD", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_MUTED)
 	draw_string(font, Vector2(x, y), "%d" % _inventory.count(_selected), HORIZONTAL_ALIGNMENT_RIGHT, rect.size.x, 14, HudPanelStyle.COLOR_TEXT_PRIMARY)
 	y += 26.0
+	if MissileCatalog.has(_selected):
+		_draw_missile_stats(font, x, y, rect.size.x)
+		return
 
 	var sources: Dictionary = _inventory.sources(_selected)
 	if not sources.is_empty():

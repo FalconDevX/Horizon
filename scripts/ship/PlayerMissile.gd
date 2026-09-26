@@ -14,7 +14,7 @@ const BOOST_TIME := 0.6
 const SEEK_CONE := 1.2
 const BLAST_TIME := 0.7
 ## Screen px.
-const LENGTH := 11.0
+const LENGTH := 16.0
 const TRAIL_POINTS := 14
 
 var type: StringName = MissileCatalog.DEFAULT
@@ -94,7 +94,7 @@ func _process(delta: float) -> void:
 	if fuse > 0.0 and _alive(target) and global_position.distance_to(target.global_position) <= fuse + target.hit_radius():
 		_burst()
 		return
-	if _travelled >= max_distance * float(_info.get("life", 1.0)):
+	if _travelled >= max_distance:
 		_burst()
 		return
 	queue_redraw()
@@ -118,7 +118,7 @@ func _enemies() -> Array[Enemy]:
 func _find_prey() -> Enemy:
 	var best: Enemy = null
 	var best_d := INF
-	var reach: float = max_distance * float(_info.get("life", 1.0)) - _travelled
+	var reach: float = max_distance - _travelled
 	for enemy in _enemies():
 		var offset: Vector2 = enemy.global_position - global_position
 		var d: float = offset.length()

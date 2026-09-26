@@ -63,10 +63,12 @@ static func _alive(enemy: Enemy) -> bool:
 
 
 ## Reach of passive sensors: the longest gun, but never under PASSIVE_RANGE_MIN.
+## Missile launchers do not count - they reach far past what the eye sees,
+## and fire at what a radar lock finds.
 func passive_range() -> float:
 	var reach: float = PASSIVE_RANGE_MIN
 	for device: Dictionary in ship.fov_devices:
-		if str(device.get("kind", "")) == "weapon":
+		if str(device.get("kind", "")) == "weapon" and device.get("id", &"") != &"weapon_rockets":
 			reach = maxf(reach, float(device.get("range", 0.0)))
 	return reach
 
