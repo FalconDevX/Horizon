@@ -507,7 +507,24 @@ func explode() -> void:
 	_explode_age = 0.0
 	_throttle = 0.0
 	player_controlled = false
+	_play_destroyed_sound()
 	queue_redraw()
+
+
+func _play_destroyed_sound() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var root := tree.current_scene
+	if root != null and root.has_method("play_target_destroyed_sound"):
+		root.call("play_target_destroyed_sound", self)
+		return
+	var player := AudioStreamPlayer.new()
+	player.stream = SOUND_TARGET_DESTROYED
+	player.bus = &"SFX"
+	player.finished.connect(player.queue_free)
+	tree.root.add_child(player)
+	player.play()
 
 
 func _check_ship_contact() -> void:

@@ -102,7 +102,7 @@ func _refresh_resource_bar() -> void:
 static func _recipe_resources() -> Array[StringName]:
 	var ids: Array[StringName] = []
 	for node: Dictionary in TechTree.NODES:
-		for id: StringName in node["recipe"]:
+		for id: StringName in TechTree.recipe(node):
 			if not ids.has(id):
 				ids.append(id)
 	return ids
