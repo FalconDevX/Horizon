@@ -673,7 +673,18 @@ running frame:
 - Module rack (`weapons_panel.gd`, EVE-style round slots): clicking a gun switches it
   on/off (`combat.auto_fire`); an active gun fires on every reload at the locked target
   when it is in its cone. With a lock every turret turns onto it (`ship.aim_device`).
-  Keys 1-9 still pick a gun for manual LMB fire. Radars sit in the row below.
+  Keys 1-9 still pick a gun for manual LMB fire. The rack is a grid (`COLUMNS` 6,
+  at least `MIN_ROWS` 2): every gun/radar has a cell in `ship.rack_cells`, laid out by
+  `solar_system._layout_rack()` (new guns from the top row, radars from the second);
+  dragging onto a cell moves or swaps (`_move_rack_module`), and `weapon_order` (keys
+  1-9) follows the grid's reading order. Reloading slots show a progress ring.
+- **Missiles** (`MissileCatalog`, from the board: Standard, AOE, Interceptor, EMP,
+  Hunter) are hold items. A Rocket Launcher (`ship.launchers`) holds `MAGAZINE` 2,
+  `SALVO_GAP` between launches, then `MAGAZINE_RELOAD` 14 s refilling from the hold
+  (god mode: every type, endless). RMB on its rack slot opens the type list
+  (`set_missile_type` returns the loaded ones). `PlayerMissile` homes, bursts on
+  contact / proxy fuse / end of flight; EMP calls `Enemy.disable_for()`. A new game
+  starts with `STARTER_STOCK` standard missiles - there is no other source yet.
 - Weapon reaches are 3x (`ModuleCatalog.WEAPON_RANGE_SCALE`; the builder preview scale
   `FovUtil.BUILDER_SU_PER_CELL` went up with it), shots 2x faster
   (`PlayerShot.SPEED_SCALE`); the player sniper fires a full-length `SniperBeam`.

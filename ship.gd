@@ -66,6 +66,10 @@ var active_weapons: Dictionary = {}
 ## Weapon instance ids in the order the weapons panel lists them (the player
 ## drags rows to reorder); keys 1-9 pick by this order.
 var weapon_order: Array[int] = []
+## Module rack grid: instance id (gun or radar) -> its cell (column, row),
+## as the player dragged it. solar_system.gd fills in new modules and keeps
+## weapon_order in the grid's reading order.
+var rack_cells: Dictionary = {}
 ## instance_id -> how far a turret is turned off the way it was placed
 ## (radians, within half its arc).
 var turret_aim: Dictionary = {}

@@ -8,6 +8,7 @@ extends Node2D
 const G: float = 3072000.0
 const PlanetGuardsScript := preload("res://scripts/enemy/PlanetGuards.gd")
 const EnemyWavesScript := preload("res://scripts/enemy/EnemyWaves.gd")
+const RACK_PANEL := preload("res://weapons_panel.gd")
 
 ## Seed for the whole system. Every planet's colours and terrain come from it
 ## mixed with the planet's own surface_seed, so changing it gives a new set of
@@ -1351,7 +1352,7 @@ func _ready() -> void:
 	add_child(combat)
 	$HUD.add_child(enemy_contacts_panel)
 	$HUD.move_child(enemy_contacts_panel, $HUD/PanelContainer.get_index() + 1)
-	weapons_panel = preload("res://weapons_panel.gd").new()
+	weapons_panel = RACK_PANEL.new()
 	weapons_panel.name = "WeaponsPanel"
 	# The module rack, EVE-style: right of the centre gauges.
 	weapons_panel.anchor_left = 0.5
@@ -1359,18 +1360,14 @@ func _ready() -> void:
 	weapons_panel.anchor_top = 1.0
 	weapons_panel.anchor_bottom = 1.0
 	weapons_panel.offset_left = 228.0
-	weapons_panel.offset_right = 510.0
+	weapons_panel.offset_right = 520.0
 	weapons_panel.offset_top = -152.0
 	weapons_panel.offset_bottom = -28.0
 	# A click switches a gun on or off, the same as its key 1-9.
 	weapons_panel.weapon_picked.connect(_select_weapon)
 	weapons_panel.radar_scan_requested.connect(func(id: int) -> void: combat.start_scan(id))
 	weapons_panel.missile_type_picked.connect(func(id: int, type: StringName) -> void: ship.set_missile_type(id, type))
-	weapons_panel.order_changed.connect(func(ids: Array) -> void:
-		ship.weapon_order.clear()
-		for id: int in ids:
-			ship.weapon_order.append(id)
-	)
+	weapons_panel.module_moved.connect(_move_rack_module)
 	$HUD.add_child(weapons_panel)
 	$HUD.move_child(weapons_panel, $HUD/ResourceBarsPanel.get_index() + 1)
 	warp_button = WarpButton.new()
@@ -3429,6 +3426,7 @@ func _update_combat_panels() -> void:
 	var aim: Enemy = targeted_enemy
 	if aim == null and not contacts.is_empty():
 		aim = contacts[0]["enemy"]
+	_layout_rack()
 	var weapons: Array = []
 	for device: Dictionary in ship.ordered_weapons():
 		var reload_time: float = maxf(float(device.get("reload_time", 0.0)), 0.05)
@@ -3453,8 +3451,66 @@ func _update_combat_panels() -> void:
 			_add_launcher_state(row)
 		weapons.append(row)
 	weapons.append_array(combat.radar_rows())
+	for row: Dictionary in weapons:
+		row["cell"] = ship.rack_cells.get(int(row["id"]), Vector2i.ZERO)
 	ship.active_weapons = combat.auto_fire
 	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon, combat.is_locked())
+
+
+## Gives every gun and radar a cell of the module rack's grid: where the
+## player dragged it, else the first free cell - guns from the top row,
+## radars from the second. Forgets modules no longer fitted, and keeps
+## ship.weapon_order (keys 1-9) in the grid's reading order.
+func _layout_rack() -> void:
+	var columns: int = RACK_PANEL.COLUMNS
+	var guns: Array[int] = []
+	var radars: Array[int] = []
+	for device: Dictionary in ship.fov_devices:
+		var kind: String = str(device.get("kind", ""))
+		if kind == "weapon":
+			guns.append(int(device.get("instance_id", -1)))
+		elif kind == "radar":
+			radars.append(int(device.get("instance_id", -1)))
+	var fitted: Dictionary = {}
+	for id: int in guns + radars:
+		fitted[id] = true
+	var taken: Dictionary = {}
+	for id: int in ship.rack_cells.keys():
+		var cell: Vector2i = ship.rack_cells[id]
+		if not fitted.has(id) or taken.has(cell):
+			ship.rack_cells.erase(id)
+		else:
+			taken[cell] = id
+	for start_row in 2:
+		for id: int in (guns if start_row == 0 else radars):
+			if ship.rack_cells.has(id):
+				continue
+			var index: int = start_row * columns
+			while taken.has(Vector2i(index % columns, index / columns)):
+				index += 1
+			var cell := Vector2i(index % columns, index / columns)
+			ship.rack_cells[id] = cell
+			taken[cell] = id
+	guns.sort_custom(func(a: int, b: int) -> bool:
+		var ca: Vector2i = ship.rack_cells[a]
+		var cb: Vector2i = ship.rack_cells[b]
+		return ca.y < cb.y or (ca.y == cb.y and ca.x < cb.x)
+	)
+	ship.weapon_order.assign(guns)
+
+
+## A module dragged onto `cell` of the rack: it moves there, and whatever
+## held that cell takes its old place.
+func _move_rack_module(id: int, cell: Vector2i) -> void:
+	if not ship.rack_cells.has(id):
+		return
+	var from: Vector2i = ship.rack_cells[id]
+	for other: int in ship.rack_cells.keys():
+		if other != id and ship.rack_cells[other] == cell:
+			ship.rack_cells[other] = from
+			break
+	ship.rack_cells[id] = cell
+	_layout_rack()
 
 
 ## A Rocket Launcher's rack slot: its magazine (type, loaded, the long reload

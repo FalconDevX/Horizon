@@ -1,7 +1,10 @@
 extends Control
-## The module rack, EVE-style: every gun a round slot in the top row (keys
-## 1-9 pick them, in this order), the radars in the row below, offset half a
-## slot. Each slot shows the module's art in a circle; its rim tells the state
+## The module rack, EVE-style: a grid of round slots, COLUMNS wide and at
+## least MIN_ROWS tall, each module (gun or radar) in a cell of its own -
+## where the player dragged it (ship.rack_cells, laid out by solar_system.gd;
+## guns start in the top row, radars in the next). Keys 1-9 pick the guns in
+## reading order: row by row, left to right. Each slot shows the module's art
+## in a circle; its rim tells the state
 ## - green ready, amber reloading (an amber bar runs round the rim as the
 ## reload fills, a glint circling it), cyan switched on (click or 1-9) -
 ## blinking while there is no lock to fire at - grey without power -
@@ -15,12 +18,14 @@ extends Control
 ## it fires by itself at the locked target, or waits for a lock; it is also
 ## picked for manual fire (LMB fires, RMB turns a turret). Right-click a
 ## Rocket Launcher to pick its missiles from a list over the slot. Click a
-## radar (or press R) to scan. Drag a gun along the row to reorder. No panel
-## is drawn behind the slots. Fed each frame by solar_system.gd with
-## set_state().
+## radar (or press R) to scan. Drag any module onto another cell of the grid
+## (the empty sockets show while dragging): onto an empty one it moves, onto
+## a taken one the two swap. No panel is drawn behind the slots. Fed each
+## frame by solar_system.gd with set_state().
 
 signal weapon_picked(instance_id: int)
-signal order_changed(instance_ids: Array)
+## A module dropped on `cell` (column, row) of the grid.
+signal module_moved(instance_id: int, cell: Vector2i)
 signal radar_scan_requested(instance_id: int)
 signal missile_type_picked(instance_id: int, type: StringName)
 
@@ -28,7 +33,9 @@ const PAD := 10.0
 const HEADER := 22.0
 const SLOT := 40.0
 const GAP := 6.0
-const ROW_GAP := 4.0
+const ROW_GAP := 6.0
+const COLUMNS := 6
+const MIN_ROWS := 2
 const DRAG_THRESHOLD := 6.0
 const COLOR_READY := HudPanelStyle.COLOR_EMERALD
 const COLOR_RELOAD := HudPanelStyle.COLOR_AMBER
@@ -38,9 +45,9 @@ const COLOR_RADAR := Color(0.3, 1.0, 0.45)
 const COLOR_OFF := Color(0.45, 0.5, 0.58)
 const SLOT_BG := Color(0.03, 0.05, 0.08, 0.92)
 
-## Guns: [{id, module_id, title, reload (0 loaded .. 1 just fired),
-## on_target, blocked, auto}] in rack order, then the radars:
-## [{id, module_id, title, radar, scan, reload}].
+## Guns: [{id, module_id, title, cell, reload (0 loaded .. 1 just fired),
+## on_target, blocked, auto}] in key order, then the radars:
+## [{id, module_id, title, cell, radar, scan, reload}].
 var _weapons: Array = []
 var _powered := true
 var _selected: int = -1
@@ -79,13 +86,34 @@ func set_state(weapons: Array, powered: bool, selected: int, locked: bool = fals
 	_locked = locked
 	if _picker >= _weapons.size() or (_picker >= 0 and not _weapons[_picker].has("missile_options")):
 		_close_picker()
-	# One row of guns, a second only when radars are fitted; the rack keeps
-	# its bottom edge and grows upward.
-	var rows: int = 2 if _gun_count() < _weapons.size() else 1
-	var height: float = HEADER + PAD * 2.0 + rows * SLOT + (rows - 1) * ROW_GAP + 8.0
+	# The rack keeps its bottom edge and grows upward with the grid.
+	var height: float = HEADER + PAD * 2.0 + _rows() * SLOT + (_rows() - 1) * ROW_GAP + 8.0
 	if not is_equal_approx(offset_bottom - offset_top, height):
 		offset_top = offset_bottom - height
 	queue_redraw()
+
+
+## Rows of the grid: MIN_ROWS, or down to the lowest module.
+func _rows() -> int:
+	var rows: int = MIN_ROWS
+	for w: Dictionary in _weapons:
+		rows = maxi(rows, (w.get("cell", Vector2i.ZERO) as Vector2i).y + 1)
+	return rows
+
+
+func _cell_center(cell: Vector2i) -> Vector2:
+	return Vector2(
+		PAD + SLOT * 0.5 + cell.x * (SLOT + GAP),
+		HEADER + PAD + SLOT * 0.5 + cell.y * (SLOT + ROW_GAP)
+	)
+
+
+## The grid cell nearest `point`, kept inside the grid.
+func _cell_at(point: Vector2) -> Vector2i:
+	return Vector2i(
+		clampi(roundi((point.x - PAD - SLOT * 0.5) / (SLOT + GAP)), 0, COLUMNS - 1),
+		clampi(roundi((point.y - HEADER - PAD - SLOT * 0.5) / (SLOT + ROW_GAP)), 0, _rows() - 1)
+	)
 
 
 ## No panel behind the rack: only the slots (and an open missile list) take
@@ -151,14 +179,9 @@ func _gun_count() -> int:
 	return n
 
 
-## Centre of slot `i` (guns first, then radars on the second row).
+## Centre of slot `i`: its module's grid cell.
 func _slot_center(i: int) -> Vector2:
-	var guns: int = _gun_count()
-	var row: int = 0 if i < guns else 1
-	var col: int = i if row == 0 else i - guns
-	var x: float = PAD + SLOT * 0.5 + col * (SLOT + GAP) + (SLOT + GAP) * 0.5 * row
-	var y: float = HEADER + PAD + SLOT * 0.5 + row * (SLOT + ROW_GAP)
-	return Vector2(x, y)
+	return _cell_center(_weapons[i].get("cell", Vector2i(i % COLUMNS, i / COLUMNS)))
 
 
 func _slot_at(point: Vector2) -> int:
@@ -174,7 +197,7 @@ func _gui_input(event: InputEvent) -> void:
 		_hover = _slot_at(event.position)
 		_picker_hover = _picker_row_at(event.position)
 		if _press >= 0 and not _dragging and _mouse.distance_to(_press_pos) > DRAG_THRESHOLD:
-			_dragging = not _weapons[_press].get("radar", false)
+			_dragging = true
 		queue_redraw()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
 		if event.pressed:
@@ -207,10 +230,10 @@ func _gui_input(event: InputEvent) -> void:
 		else:
 			if _press >= 0 and _press < _weapons.size():
 				var slot: Dictionary = _weapons[_press]
-				if slot.get("radar", false):
-					radar_scan_requested.emit(int(slot["id"]))
-				elif _dragging:
+				if _dragging:
 					_drop(event.position)
+				elif slot.get("radar", false):
+					radar_scan_requested.emit(int(slot["id"]))
 				else:
 					weapon_picked.emit(int(slot["id"]))
 			_press = -1
@@ -219,19 +242,12 @@ func _gui_input(event: InputEvent) -> void:
 		accept_event()
 
 
-## Moves the dragged gun to the gun slot nearest `point` along the row.
+## Drops the dragged module on the grid cell nearest `point` (solar_system.gd
+## moves it there, swapping with whatever held the cell).
 func _drop(point: Vector2) -> void:
-	var guns: int = _gun_count()
-	var to: int = clampi(roundi((point.x - PAD - SLOT * 0.5) / (SLOT + GAP)), 0, guns - 1)
-	if to == _press:
-		return
-	var ids: Array = []
-	for i in guns:
-		ids.append(int(_weapons[i]["id"]))
-	var moved: int = ids[_press]
-	ids.remove_at(_press)
-	ids.insert(to, moved)
-	order_changed.emit(ids)
+	var to: Vector2i = _cell_at(point)
+	if to != _weapons[_press].get("cell", Vector2i(-1, -1)):
+		module_moved.emit(int(_weapons[_press]["id"]), to)
 
 
 func _icon(module_id: StringName) -> Texture2D:
@@ -257,6 +273,8 @@ func _draw() -> void:
 		draw_string(font, Vector2(PAD, HEADER + PAD + 14.0), "No weapons mounted", HORIZONTAL_ALIGNMENT_LEFT, size.x - PAD * 2.0, 10, HudPanelStyle.COLOR_TEXT_MUTED)
 		return
 	var guns: int = _gun_count()
+	if _dragging and _press >= 0:
+		_draw_grid_sockets()
 	for i in _weapons.size():
 		if _dragging and i == _press:
 			continue
@@ -266,9 +284,28 @@ func _draw() -> void:
 		else:
 			_draw_gun_slot(font, _slot_center(i), w, i, i < 9 and i < guns)
 	if _dragging and _press >= 0:
-		_draw_gun_slot(font, _mouse, _weapons[_press], _press, false)
+		if _weapons[_press].get("radar", false):
+			_draw_radar_slot(font, _mouse, _weapons[_press], _press)
+		else:
+			_draw_gun_slot(font, _mouse, _weapons[_press], _press, false)
 	if _picker >= 0:
 		_draw_picker(font)
+
+
+## While dragging: every cell of the grid as a faint socket, the one the
+## module would land in lit up.
+func _draw_grid_sockets() -> void:
+	var target: Vector2i = _cell_at(_mouse)
+	for row in _rows():
+		for col in COLUMNS:
+			var cell := Vector2i(col, row)
+			var c: Vector2 = _cell_center(cell)
+			if cell == target:
+				draw_circle(c, SLOT * 0.5, Color(HudPanelStyle.COLOR_CYAN, 0.14))
+				draw_arc(c, SLOT * 0.5 - 1.0, 0.0, TAU, 40, HudPanelStyle.COLOR_CYAN, 2.0, true)
+			else:
+				draw_circle(c, SLOT * 0.5, Color(SLOT_BG, 0.45))
+				draw_arc(c, SLOT * 0.5 - 1.0, 0.0, TAU, 40, Color(HudPanelStyle.COLOR_TEXT_FAINT, 0.9), 1.0, true)
 
 
 ## The hovered slot, for the caption: name and state.
