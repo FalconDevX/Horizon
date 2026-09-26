@@ -47,8 +47,6 @@ static func build(style: StringName, mesh_seed: int) -> ArrayMesh:
 			_bones(st, rng)
 		&"slabs":
 			_slabs(st, rng)
-		&"wind_crystals":
-			_wind_crystals(st, rng)
 		&"bubbles":
 			_bubbles(st, rng)
 		&"sphere_arch":
@@ -204,21 +202,6 @@ static func _geyser(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
 		path.append(Vector3(0.0, 0.1 + t * height, 0.0) + lean * t * t * height)
 		radii.append(lerpf(0.1, 0.38, pow(t, 0.7)) * (1.0 - smoothstep(0.85, 1.0, t) * 0.7))
 	_tube(st, path, radii, 8, Color(0.97, 0.98, 1.0))
-
-
-## Thin crystal blades all leaning the same way, as if blown flat by a wind
-## that never stops.
-static func _wind_crystals(st: SurfaceTool, rng: RandomNumberGenerator) -> void:
-	var wind := Vector3(cos(rng.randf() * TAU), 0.0, sin(rng.randf() * TAU)).normalized()
-	for i in range(rng.randi_range(5, 8)):
-		var around: float = rng.randf_range(0.0, TAU)
-		var reach: float = 0.0 if i == 0 else rng.randf_range(0.08, 0.32)
-		var base := Vector3(cos(around) * reach, -0.1, sin(around) * reach)
-		var lean: float = rng.randf_range(0.45, 0.8)
-		var axis: Vector3 = (Vector3.UP * (1.0 - lean) + wind * lean + Vector3(rng.randf_range(-0.1, 0.1), 0.0, rng.randf_range(-0.1, 0.1))).normalized()
-		var length: float = rng.randf_range(0.45, 0.95) * (1.25 if i == 0 else 1.0)
-		var tone: float = rng.randf_range(0.8, 1.0)
-		_spike(st, base, axis, rng.randf_range(0.05, 0.09), length, rng.randf_range(0.0, TAU), Color(tone, tone, tone))
 
 
 ## Glowing bubbles of gas, big and small, floating clear of the cloud tops.

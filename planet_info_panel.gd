@@ -266,7 +266,8 @@ func _select(index: int) -> void:
 	_viewing = {}
 	_pending_twin = null
 	_viewed_twin = null
-	if _known_body(body):
+	# A planet not in this system was never built: its silhouette only.
+	if _known_body(body) and body.get("present") != false:
 		_preview = body.call("make_preview")
 	else:
 		# Uncharted: only its dark shape against the stars.
@@ -665,6 +666,24 @@ func _draw_list(font: Font) -> void:
 		elif i == _hovered:
 			draw_rect(row, Color(1.0, 1.0, 1.0, 0.04))
 
+		if body.get("present") == false:
+			# Not in this system: named once any of its variants has been
+			# seen somewhere, its journal pages still open.
+			draw_rect(row, Color(0.0, 0.0, 0.0, 0.5))
+			draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, Color(0.1, 0.1, 0.12))
+			if _seen_anywhere(body):
+				draw_string(
+					font, row.position + Vector2(38.0, 19.0), String(body.get("body_name")).to_upper(),
+					HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 42.0, 14, HudPanelStyle.COLOR_TEXT_MUTED
+				)
+			else:
+				_draw_redacted(row.position.x + 38.0, row.position.y + 19.0, String(body.get("body_name")).length() * 10.0, 14)
+			draw_string(
+				font, row.position + Vector2(38.0, row.size.y - 7.0), "Not in this system", HORIZONTAL_ALIGNMENT_LEFT,
+				row.size.x - 42.0, 10, HudPanelStyle.COLOR_TEXT_FAINT
+			)
+			_draw_variant_tally(font, body, row)
+			continue
 		if not _known_body(body):
 			draw_rect(row, Color(0.0, 0.0, 0.0, 0.35))
 			draw_circle(row.position + Vector2(20.0, row.size.y * 0.5), 7.0, Color(0.1, 0.1, 0.12))
@@ -709,6 +728,9 @@ func _draw_text(font: Font) -> void:
 	# description, its resources), or the planet as it is here. The orbit and
 	# the body itself are always the planet's.
 	var look: Node2D = _viewed_twin if _viewed_twin != null and is_instance_valid(_viewed_twin) else body
+	if body.get("present") == false and look == body:
+		_draw_absent_text(font, body)
+		return
 	if not _known_body(body) and look == body:
 		_draw_uncharted_text(font, body)
 		return
@@ -1154,7 +1176,7 @@ func _card_at(point: Vector2) -> int:
 ## Whether the world in front of the player now is this card.
 func _card_is_here(body: Node2D, name: String, is_trait: bool) -> bool:
 	var params: Dictionary = body.get("terrain_params")
-	return _known_body(body) and (
+	return _known_body(body) and body.get("present") != false and (
 		params.get(name, false) == true if is_trait else params.get("variant", "") == name
 	)
 
@@ -1341,6 +1363,34 @@ func _draw_variant_card(font: Font, body: Node2D, card: Rect2, name: String, is_
 			draw_circle(Vector2(x + 4.0, y - 4.0), 3.0, Color(0.1, 0.1, 0.12))
 			_draw_redacted(x + 12.0, y, (inner - 12.0) * (0.45 + 0.3 * fposmod(String(type_name).hash() * 0.618, 1.0)), 10)
 		y += 14.0
+
+
+## Whether any variant of `body` has been seen, in any system.
+func _seen_anywhere(body: Node2D) -> bool:
+	return Journal.seen_count(String(body.get("body_name")), body.get("terrain_kind")) > 0
+
+
+## A planet this system does not have: its name if it has been seen
+## somewhere, and where to look at it - its variant cards below.
+func _draw_absent_text(font: Font, body: Node2D) -> void:
+	var text: Rect2 = _text_rect()
+	var x: float = text.position.x
+	var y: float = text.position.y + 18.0
+	var seen: bool = _seen_anywhere(body)
+	if seen:
+		draw_string(font, Vector2(x, y), String(body.get("body_name")).to_upper(), HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 22, HudPanelStyle.COLOR_TEXT_MUTED)
+	else:
+		_draw_redacted(x, y, String(body.get("body_name")).length() * 15.0, 22)
+	y += 22.0
+	draw_string(font, Vector2(x, y), "Not in this system", HORIZONTAL_ALIGNMENT_LEFT, text.size.x, 12, HudPanelStyle.COLOR_AMBER)
+	y += 22.0
+	var rarity: String = PlanetRoster.TIER_NAMES.get(PlanetRoster.tier(String(body.get("body_name"))), "")
+	var line: String = "Not every system has every planet"
+	if rarity != "":
+		line += " - this one is %s." % rarity.to_lower()
+	if seen:
+		line += " Click a seen variant below to look at it."
+	_draw_paragraph(font, line, x, y, text.size.x, 11, HudPanelStyle.COLOR_TEXT_SECONDARY)
 
 
 ## A planet the ship has not charted: the headings are there, the data is not.
