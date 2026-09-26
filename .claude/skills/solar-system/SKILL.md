@@ -1,6 +1,6 @@
 ---
 name: solar-system
-description: Map of the Horizon orbital-sim codebase - solar_system.gd (2770 lines, the main scene script), celestial_body.gd, orbit_math.gd, interplanetary_planner.gd, ship.gd and solar_system.tscn. Use when adding or editing planets/moons/orbits, autopilot phases, trajectory prediction, SOI logic, the HUD, or anything else in solar_system.gd, so you can jump straight to the right region instead of reading the whole file.
+description: Map of the Horizon orbital-sim codebase - solar_system.gd (the main scene script), celestial_body.gd, orbit_math.gd, ship.gd, CombatControl.gd and solar_system.tscn. Use when adding or editing planets/moons/orbits, the warp, combat control, trajectory prediction, SOI logic, the HUD, or anything else in solar_system.gd, so you can jump straight to the right region instead of reading the whole file.
 ---
 
 # Horizon solar system
@@ -23,7 +23,7 @@ grep -n "^func \|^const \|^var \|^class " solar_system.gd
 
 | File | Role |
 | --- | --- |
-| `solar_system.gd` | Main scene script: sim loop, autopilot, trajectory prediction, HUD, camera, input |
+| `solar_system.gd` | Main scene script: sim loop, warp, trajectory prediction, HUD, camera, input |
 | `solar_system.tscn` | Scene: `Sun`, `Planets/*` (20 planets + the black hole Erebus), `Ship`, line/marker nodes, `HUD/*` |
 | `celestial_body.gd` | `@tool` Node2D for the sun and every planet: exports, `_draw` (glow, SOI ring), surface sprite + spin |
 | `planet_surface.gd` | `PlanetSurface` static lib: palette generator, blob generation, CPU-side blob lookup |
@@ -556,9 +556,8 @@ plate, fed by `_update_landing_prompt()` every frame.
   the planet the opposite way under the ship (rotation about `step x BACK`, angle
   `|step| / draw radius`). `surface_driven` stops the auto-spin;
   `point_under_view()` is the planet-space point under the ship.
-- **Locks while landed**: time warp forced and clamped to 1x (`set_time_scale`),
-  `$BehindWorld`, time-warp panel and Pe/Ap gauges hidden, zoom clamped to
-  `LANDED_VIEW_MAX_RADII` planet radii when zooming out (zooming in only by `ZOOM_MAX`, so the true-scale ship sprite shows past zoom 4), no pan / body picking / autopilot (F). HUD speed
+- **Locks while landed**: `$BehindWorld` and Pe/Ap gauges hidden, zoom clamped to
+  `LANDED_VIEW_MAX_RADII` planet radii when zooming out (zooming in only by `ZOOM_MAX`, so the true-scale ship sprite shows past zoom 4), no pan / body picking / warp. HUD speed
   shows ground speed, orbit row "Landed <name>".
 - **Take-off**: circular orbit round the planet, prograde in the direction the ship
   came in, at the landing distance clamped to `[TAKE_OFF_MIN_RADII * R, 0.8 * SOI]`;
@@ -602,53 +601,76 @@ can be reached.
 
 ## Flight model
 
-- **No RCS.** Main engine only: A/D (or arrows) turn, RMB aims at the cursor, W burns,
-  S cuts, X locks the throttle (W/S then trim it, a beep per two bar segments from
-  `sounds/throttle_beep_1..9.wav`), Z/C hold prograde/retrograde, Shift = 20% precision.
-- **Flight assist** (V, on by default, `[FA]` in the HUD): W pushes along the nose like
-  the locked throttle (no speed cap) plus vectored sideways thrust that cancels drift
-  relative to the SOI body, so velocity follows the nose; S brakes to a stop. Knobs in
-  `ship.gd`: `MAIN_ENGINE_BOOST` (12 = 3 for handling x 4 for world scale),
-  `TURN_RATE_SCALE`, `ASSIST_MAX_ACCEL`, `ASSIST_RESPONSE`, `throttle_ramp_time`.
-- Manual thrust/turn input (W/A/S/D, arrows, RMB) disengages the autopilot with
-  `sounds/autopilot_off.wav`; X disengages it silently (`disengage_autopilot(false)`).
-- The speed gauge shows speed relative to the current SOI body (the sun out in deep
-  space), not relative to the sun.
+- **No time acceleration.** `time_scale` is only 1 or 0: 0 while the player pauses
+  (P / 0 / Space) or any full-screen panel is open (`_is_menu_open`: galaxy map, builder,
+  tech tree, catalog, cargo, settings, pause and enemy menus); `_refresh_time_scale`
+  also freezes enemies and shots (`process_mode`) while held. Long trips use the warp.
+- **G is 16x the 4x-scale value** (`G = 3 072 000`): orbital speeds 4x, periods a quarter.
+- **No RCS.** Main engine only: A/D (or arrows) turn, RMB aims the picked turret, W burns,
+  S cuts, X locks the throttle (silent), Z/C hold prograde/retrograde, Shift = 20% precision.
+  `MAIN_ENGINE_BOOST` 450 gives the starter ship ~300 SU/s^2; the engines stop pushing past
+  `CRUISE_SPEED_LIMIT` (2000 SU/s, relative to the SOI body).
+- **Flight assist** (V, on by default, ASSIST chip in the HUD): vectored thrust bleeds off
+  sideways drift (`ASSIST_TURN_RESPONSE`, a little slide in turns) so the ship flies where
+  the nose points; engine off it loses `ASSIST_COAST_DRAG` of its speed per second; S
+  brakes (`ASSIST_BRAKE_ACCEL`). All of that only while the player touched W/A/D in the
+  last `ASSIST_IDLE_TIME` s - left alone the ship coasts and keeps its orbit.
+- The speed gauge shows speed relative to the current SOI body, as a whole number.
+- Engine exhaust is sprite animation: `textures/fx/engine_flame_1..3.png` (RC Art
+  "Boost A", recoloured and softened), drawn by `ship.gd` `draw_flame()` - the local view
+  (bottom right) uses the same.
+- **Camera lock** follows `_drawn_position(node)`: the interpolated position between the
+  last two physics ticks (`_record_tick_positions`), not the raw one - that made the ship
+  shake when zoomed in. `set_ship_state` drops the history (a teleport).
 - **Trajectory line**: predictions carry per-point sim times and are redrawn every frame
   from the ship (`refresh_trajectory_line`); when the whole prediction stays inside the
   starting SOI it is stored and drawn relative to that planet (a clean ellipse). Points
   are added every `PREDICTION_DRAW_INTERVAL` steps or sooner on turns
-  (`PREDICTION_DRAW_TURN`).
+  (`PREDICTION_DRAW_TURN`); re-predicted every `PREDICTION_UPDATE_INTERVAL` (0.03 s).
 
-## Autopilot
+## Warp (between planets) and HYPER WARP (between systems)
 
-The `AutopilotPhase` enum drives everything; `autopilot_phase` is the state variable.
-Two families:
+- **Warp**: Ctrl+LMB on a planet sets `warp_target` (again drops it); a dashed line runs
+  to the arrival ring. The WARP button (`local_warp_button`, a `WarpButton`) or Q starts
+  a jump once `_warp_problem()` is empty: not landed, outside every planet SOI, target
+  outside its own SOI and `WARP_MIN_DISTANCE`, enough `ship.warp_fuel`, and the straight
+  path clear of other bodies (`WARP_CLEARANCE_RADII`; absent roster planets ignored).
+- Phases (`WarpPhase`): ALIGN (nose onto the target at the normal turn rate; W/A/S/D
+  aborts), SPOOL (fuel paid, ship on rails surging ahead), JUMP (eased crossing to a point
+  that rides with the planet), EXIT (drops into a circular orbit round the target at
+  `_warp_arrive_radius`). `warp_active` is true while on rails; the predictor is skipped.
+- `WarpFX` (`scripts/ui/WarpFX.gd` + `warp_lens.gdshader`) is a screen-space lensing /
+  streak / shockwave pass on canvas layer 1 - the HUD is moved to layer 2 for it.
+- Warp fuel: `ship.warp_fuel` (every ship, 100 = `WARP_RANGE` 12 M SU), refilled while
+  landed, saved. Shown as the violet WARP bar on the resource panel with the jump's cost
+  blinking (`resource_bars_panel.set_warp`).
+- **HYPER WARP** is the old galaxy-map jump (`warp_button`, `start_hyperspace_jump`).
 
-- **Local** (same SOI): `WAIT_FIRST_BURN -> FIRST_BURN -> COAST -> SECOND_BURN ->
-  COMPLETE`, then `STATION_KEEPING_WAIT / STATION_KEEPING_BURN`. Hohmann-style apsis burns.
-- **Interplanetary** (route): `DEPARTURE_WAIT -> DEPARTURE_BURN -> DEPARTURE_COAST ->
-  TRANSFER_BURN -> TRANSFER_COAST -> ARRIVAL_COAST -> ARRIVAL_BURN`, then hands off to
-  the local family. `ESCAPE_BURN / INTERPLANETARY_CRUISE / CAPTURE_BURN` are the older
-  non-route path.
+## Autopilot (removed)
 
-- Engaging on an escape path (unbound, even from the sun) goes to `CAPTURE_BURN` first,
-  which brakes into orbit and hands over to the local plan.
-- F in free flight (outside every planet SOI) defaults the target to the **nearest
-  planet**, not the sun (Tab still reaches the sun). `engage_autopilot()` clamps the
-  target altitude to the body's range, so it never aims outside the SOI.
-- `INTERPLANETARY_CRUISE` from free flight flies a **Lambert intercept**
-  (`OrbitMath.lambert`, `plan_intercept()`): it samples `INTERCEPT_SAMPLES` flight times
-  in both directions, scores burn-now + arrival-speed + `INTERCEPT_TIME_COST` per second
-  (so it heads more or less straight in), then burns continuously onto the transfer and
-  re-solves it in flight. Inside `INTERPLANETARY_HOMING_SOI_FACTOR` x SOI the homing
-  branch takes over, then `CAPTURE_BURN`. Falls back to `_cruise_match_target_radius()`
-  when no transfer is found.
+The orbital and interplanetary autopilots were removed (no time warp, the warp replaces
+them). Their code - phase machine, route planner (`interplanetary_planner.gd`), Lambert
+intercept, target-orbit visuals, HUD panel - is kept verbatim in
+`docs/autopilot_archive.txt`. `orbit_math.gd` stays (predictor and orbit readouts).
 
-Use `is_interplanetary_autopilot_phase()` / `is_route_phase()` rather than testing phases
-by hand. Route planning and trajectory prediction both run on `WorkerThreadPool` with a
-dictionary holder (`route_task_holder`, `trajectory_task_holder`); anything they touch
-must be a plain snapshot, never a live node.
+## Combat control
+
+`scripts/ship/CombatControl.gd` (a child `Node2D` of the scene, `combat`), updated every
+running frame:
+- Contacts: enemies within `passive_range()` (longest gun, at least 8000) with a clear
+  line of sight (planets and the sun hide them, `is_occluded`), plus whatever a radar
+  scan swept; kept `CONTACT_HOLD` s.
+- Radars are circular (360 deg, 60 k / 150 k / 400 k) with `scan_time` and `reload_time`
+  (`ModuleData.scan_time`). A scan is fired by hand (weapons panel row, or R): a green
+  beam turns round the ship, then the radar recharges.
+- Contacts panel (`enemy_contacts_panel.gd`): type glyph + code (`EnemyCatalog.MARKERS`
+  `abbr`), name, distance, status; click targets, Ctrl+click locks (`LOCK_TIME`).
+- Weapons panel: with a lock, clicking a gun toggles AUTO - it turns (`ship.aim_device`)
+  and fires on every reload while the target is in its cone. Radars are listed below
+  the guns.
+- Weapon reaches are 3x (`ModuleCatalog.WEAPON_RANGE_SCALE`; the builder preview scale
+  `FovUtil.BUILDER_SU_PER_CELL` went up with it), shots 2x faster
+  (`PlayerShot.SPEED_SCALE`); the player sniper fires a full-length `SniperBeam`.
 
 ## Conventions
 
@@ -666,9 +688,9 @@ must be a plain snapshot, never a live node.
 
 There is no test suite. Changes are checked by running the game in Godot 4.7
 (`run/main_scene` is the main menu; New Game shows the loading screen, then
-`solar_system.tscn`). Controls: `F` arm/disarm autopilot, `Tab` cycle target, mouse wheel
-zoom (or altitude while arming), middle-drag pan, `1`-`7` time warp, `.` toggle camera
-follow, `N` reroll the world seed, `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `T` tech tree, `M` galaxy map,
+`solar_system.tscn`). Controls: mouse wheel zoom, middle-drag pan, Ctrl+LMB lock a
+warp target, `Q` warp, `R` radar scan, `1`-`9` pick a gun, `G` fire at the target, `.`
+toggle camera follow, `N` reroll the world seed (god mode only), `B` ship builder, `I` cargo hold, `J` planetary log (catalog), `T` tech tree, `M` galaxy map,
 `E` collect while landed (enemy menu in space), `ENTER` land / take off, plus the flight keys above.
 
 ## Inventory

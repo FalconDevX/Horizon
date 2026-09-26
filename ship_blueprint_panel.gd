@@ -18,8 +18,6 @@ const ZOOM_MAX := 20.0
 const ZOOM_START := 3.0
 const ZOOM_STEP := 1.2
 const SHIP_TEXTURE := preload("res://textures/ship_blueprint.png")
-const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
-const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
 const PAD := 8.0
 const LABEL_HEIGHT := 18.0
 
@@ -176,15 +174,6 @@ func _draw_ship_overlay() -> void:
 		o.draw_texture_rect(turret["texture"], Rect2(-size_local * 0.5, size_local), false)
 	o.draw_set_transform(centre, turn, Vector2(k, k))
 	if throttle > 0.02:
-		var flicker: float = 0.85 + 0.15 * sin(Time.get_ticks_msec() / 1000.0 * 24.0)
 		for point: Vector2 in visual.get("engines", []):
-			var length: float = 7.0 * throttle * flicker
-			o.draw_colored_polygon(
-				PackedVector2Array([point + Vector2(0.0, -1.1), point + Vector2(0.0, 1.1), point + Vector2(-length, 0.0)]),
-				Color(MAIN_OUTER_COLOR, 0.75)
-			)
-			o.draw_colored_polygon(
-				PackedVector2Array([point + Vector2(0.0, -0.5), point + Vector2(0.0, 0.5), point + Vector2(-length * 0.55, 0.0)]),
-				MAIN_CORE_COLOR
-			)
+			ship.draw_flame(o, point, ship.ENGINE_MAX_LENGTH, throttle, int(point.y * 7.0))
 	o.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

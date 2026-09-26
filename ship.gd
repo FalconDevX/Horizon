@@ -733,11 +733,37 @@ func set_built_visual(visual: Dictionary) -> void:
 
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 
-const ENGINE_OUTER_HALF_WIDTH := 3.0
 const ENGINE_MAX_LENGTH := 11.0
-const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
-const MAIN_MID_COLOR := Color(1.0, 0.65, 0.2)
-const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
+## Main engine exhaust: RC Art "Boost A" pixel frames, recoloured and
+## softened (textures/fx/engine_flame_*.png, nozzle on the right edge, the
+## flame trailing left), played at FLAME_FPS.
+const FLAME_FRAMES: Array[Texture2D] = [
+	preload("res://textures/fx/engine_flame_1.png"),
+	preload("res://textures/fx/engine_flame_2.png"),
+	preload("res://textures/fx/engine_flame_3.png"),
+]
+const FLAME_FPS := 14.0
+
+
+## The flame frame for this moment; `offset` staggers several nozzles.
+static func flame_frame(offset: int = 0) -> Texture2D:
+	var i: int = int(Time.get_ticks_msec() / 1000.0 * FLAME_FPS) + offset
+	return FLAME_FRAMES[posmod(i, FLAME_FRAMES.size())]
+
+
+## Draws the exhaust on `canvas` with its nozzle at `tip`, trailing along -x,
+## `length` long at full size; `level` 0..1 is the throttle.
+static func draw_flame(canvas: CanvasItem, tip: Vector2, length: float, level: float, offset: int = 0) -> void:
+	var texture: Texture2D = flame_frame(offset)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var flicker: float = 0.9 + 0.1 * sin(t * 23.0 + offset * 1.7)
+	var long: float = length * lerpf(0.35, 1.0, level) * flicker
+	var aspect: float = texture.get_height() / float(texture.get_width())
+	var tall: float = length * aspect * 0.8 * lerpf(0.65, 1.0, level)
+	# A soft, wider copy underneath for glow, then the flame itself.
+	var glow := Rect2(tip.x - long * 1.25, tip.y - tall * 0.7, long * 1.25, tall * 1.4)
+	canvas.draw_texture_rect(texture, glow, false, Color(1.0, 0.6, 0.3, 0.3 * level))
+	canvas.draw_texture_rect(texture, Rect2(tip.x - long, tip.y - tall * 0.5, long, tall), false, Color(1, 1, 1, lerpf(0.6, 1.0, level)))
 
 
 var MARKER_POINTS := PackedVector2Array([
@@ -871,79 +897,6 @@ func _image_to_local(frac: Vector2, draw_size: Vector2) -> Vector2:
 	return ((frac - Vector2(0.5, 0.5)) * draw_size).rotated(PI * 0.5)
 
 
-# The edge waves sinusoidally instead of being a perfectly straight triangle -
-# same approach as the main engine (see ship_blueprint_panel.gd).
-func _draw_wavy_flame(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, color: Color
-) -> void:
-	var segments := 4
-	var left_points := PackedVector2Array()
-	var right_points := PackedVector2Array()
-
-	for i in range(segments + 1):
-		var f: float = float(i) / float(segments)
-		var pos: Vector2 = tip + direction * (length * f)
-		var taper: float = 1.0 - f
-		var wobble: float = sin(t * 16.0 + f * 6.0) * half_width * 0.2 * f
-		var width: float = half_width * taper + wobble
-		left_points.append(pos + side * width)
-		right_points.append(pos - side * width)
-
-	var points := PackedVector2Array()
-	points.append_array(left_points)
-	right_points.reverse()
-	points.append_array(right_points)
-	draw_colored_polygon(points, color)
-
-
-# A few tiny sparks breaking off the stream, flickering independently
-# of the main flame - same approach as ship_blueprint_panel.gd, so the
-# ship looks identical out in space.
-func _draw_sparks(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
-) -> void:
-	var spark_count := 3
-	for i in range(spark_count):
-		var phase_seed: float = float(i) * 17.3
-		var f: float = fmod(t * 0.7 + phase_seed, 1.0)
-		var pos: Vector2 = tip + direction * (length * (0.35 + f * 0.9))
-		var drift: float = sin(t * 9.0 + phase_seed) * half_width * 0.5 * f
-		pos += side * drift
-		var alpha: float = (1.0 - f) * 0.8
-		var radius: float = maxf(0.4, 0.9 * (1.0 - f * 0.6) * (half_width / 3.0))
-		draw_circle(pos, radius, Color(spark_color, alpha))
-
-
-# Multi-layer main engine flame (outer + middle wavy-flame, triangle core,
-# sparks) - same look as the ship preview in the bottom-right corner
-# (ship_blueprint_panel.gd).
+## One engine's exhaust (draw_flame) - the local view draws the same.
 func _draw_engine_flame(tip: Vector2) -> void:
-	var direction := Vector2.LEFT
-	var side: Vector2 = direction.orthogonal()
-
-	var t: float = Time.get_ticks_msec() / 1000.0
-	var flicker: float = 0.85 + 0.15 * sin(t * 24.0) + 0.08 * sin(t * 61.0 + 1.3)
-	var length: float = ENGINE_MAX_LENGTH * throttle * flicker
-
-	_draw_wavy_flame(
-		tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t,
-		Color(MAIN_OUTER_COLOR, 0.55 * flicker)
-	)
-
-	var mid_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.75
-	_draw_wavy_flame(
-		tip, direction, side, mid_half_width, length * 0.8, t + 3.1,
-		Color(MAIN_MID_COLOR, 0.7 * flicker)
-	)
-
-	var inner_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.4
-	draw_colored_polygon(
-		PackedVector2Array([
-			tip + side * inner_half_width,
-			tip - side * inner_half_width,
-			tip + direction * (length * 0.6)
-		]),
-		Color(MAIN_CORE_COLOR, 0.95 * flicker)
-	)
-
-	_draw_sparks(tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t, Color(1.0, 0.8, 0.4))
+	draw_flame(self, tip, ENGINE_MAX_LENGTH, throttle, int(tip.y * 7.0))
