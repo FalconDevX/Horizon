@@ -323,8 +323,11 @@ var resource_deposits: Array = []
 ## settings from `world`, as it has no owner.
 var preview_only := false
 var world: Node = null
-## False while this system does not have the planet (PlanetRoster): hidden,
-## parked far out, with no SOI (solar_system.gd get_soi_radius).
+## False while this system does not have the planet (PlanetRoster): nothing
+## generated (no terrain bake, no deposits), not processing, hidden, parked
+## far out with no SOI (solar_system.gd get_soi_radius). solar_system.gd sets
+## it in its _enter_tree, before this body's _ready, so a planet the first
+## system lacks is never built.
 var present := true
 ## Seeds of deposits already collected in this world (seed -> true). Placement
 ## skips them, so a system the player comes back to stays picked clean; the
@@ -350,6 +353,8 @@ func _ready() -> void:
 		build_star()
 	elif is_black_hole and _sphere_3d != null:
 		build_black_hole()
+	elif not present:
+		pass  # Not in this system: built only if a system the ship reaches has it.
 	elif _uses_terrain():
 		build_terrain()
 	elif surface_blob_count > 0:
@@ -360,6 +365,8 @@ func _ready() -> void:
 		and not Engine.is_editor_hint()
 	)
 	set_physics_process(_anchor_3d != null)
+	if not present:
+		set_present(false)
 
 
 func _exit_tree() -> void:
@@ -1145,6 +1152,20 @@ func rebuild_surface() -> void:
 		_stale_terrain_tasks.append(_terrain_task)
 		_terrain_task = -1
 
+	if not present and _uses_terrain():
+		# Not in this system: drop the old world and build nothing.
+		for shell: MeshInstance3D in [_clouds_3d, _atmosphere_3d, _rings_3d]:
+			if shell != null:
+				shell.queue_free()
+		_clouds_3d = null
+		_atmosphere_3d = null
+		_rings_3d = null
+		_clear_deposits()
+		terrain_material = null
+		terrain_params = {}
+		terrain_data = {}
+		return
+
 	if _uses_terrain():
 		# The new world may have clouds, air, or neither; build_terrain() makes
 		# whatever it needs.
@@ -1192,6 +1213,9 @@ func set_present(value: bool) -> void:
 	visible = value
 	if _anchor_3d != null:
 		_anchor_3d.visible = value and not preview_only
+	if not Engine.is_editor_hint():
+		set_process(value and (surface_material != null or terrain_material != null or is_star))
+		set_physics_process(value and _anchor_3d != null)
 
 
 func _world_setting(setting: StringName, fallback: Variant) -> Variant:

@@ -219,6 +219,8 @@ var autopilot_selectable_bodies: Array[Node2D] = []
 ## it (PlanetRoster.roll(world_seed)).
 var orbit_radii: PackedFloat64Array = []
 var planet_present: Array[bool] = []
+## The PhysicsBody of every planet this system has - the only ones stepped.
+var _active_physics_planets: Array = []
 var route_plan: Dictionary = {}
 var route_task_id := -1
 var route_task_holder: Dictionary = {}
@@ -668,6 +670,7 @@ func set_world_seed(value: int) -> void:
 	_restore_system_state(saved)
 	_update_system_title()
 
+	_roll_roster()
 	for i in planets.size():
 		var collected: Dictionary = saved.get("collected", {}).get(i, {})
 		planets[i].set("collected_deposit_seeds", collected.duplicate())
@@ -901,6 +904,9 @@ func _ready() -> void:
 		orbit_lines.append(line)
 		orbit_line_radii.append(-1.0)
 		line.add_point(planet.position)
+	for i in planets.size():
+		if planet_present[i]:
+			_active_physics_planets.append(physics_planets[i])
 	_show_roster()
 
 	autopilot_off_sound = AudioStreamPlayer.new()
@@ -1052,6 +1058,12 @@ func _ready() -> void:
 func _enter_tree() -> void:
 	if SaveGame.pending.has("world_seed"):
 		world_seed = int(SaveGame.pending["world_seed"])
+	# Before the planets' own _ready: the ones this system lacks skip building.
+	var roster: Dictionary = PlanetRoster.roll(world_seed)
+	for child in get_node("Planets").get_children():
+		if child is Node2D:
+			var name: String = child.get("body_name")
+			child.set("present", not PlanetRoster.TIERS.has(name) or roster.has(name))
 
 
 ## Everything about the flight a saved game needs (SaveGame adds the galaxy
@@ -3163,7 +3175,12 @@ func update_trajectory_prediction_async(delta: float) -> void:
 
 
 func build_trajectory_snapshot() -> Dictionary:
-	var count: int = planets.size()
+	# Only the planets this system has; `indices` maps back to planets[].
+	var here: Array[Node2D] = present_planets()
+	var indices := PackedInt32Array()
+	for planet: Node2D in here:
+		indices.append(planets.find(planet))
+	var count: int = here.size()
 	var positions := PackedVector2Array()
 	var velocities := PackedVector2Array()
 	var radii := PackedFloat64Array()
@@ -3177,12 +3194,12 @@ func build_trajectory_snapshot() -> Dictionary:
 	soi_radii.resize(count)
 
 	for i in range(count):
-		positions[i] = planets[i].position
-		velocities[i] = planets[i].velocity
-		radii[i] = planets[i].get("radius")
-		masses[i] = planets[i].get("mass")
-		soi_radii[i] = get_soi_radius(planets[i])
-		names.append(get_body_name(planets[i]))
+		positions[i] = here[i].position
+		velocities[i] = here[i].velocity
+		radii[i] = here[i].get("radius")
+		masses[i] = here[i].get("mass")
+		soi_radii[i] = get_soi_radius(here[i])
+		names.append(get_body_name(here[i]))
 
 	return {
 		"ship_pos": ship.position,
@@ -3199,7 +3216,8 @@ func build_trajectory_snapshot() -> Dictionary:
 		"soi_radii": soi_radii,
 		"names": names,
 		"t0": total_sim_time,
-		"ref": planets.find(get_current_orbit_body()),
+		"ref": here.find(get_current_orbit_body()),
+		"indices": indices,
 		"prediction_steps": 12000 if (settings_mgr != null and settings_mgr.trajectory_long_prediction) else PREDICTION_STEPS,
 	}
 
@@ -3211,7 +3229,10 @@ func apply_trajectory_result(result: Dictionary) -> void:
 	_trajectory_points = result.get("points", PackedVector2Array())
 	_trajectory_times = result.get("times", PackedFloat32Array())
 	_trajectory_t0 = result.get("t0", total_sim_time)
-	_trajectory_ref = result.get("ref", -1)
+	# The predictor saw only the planets that are here: back to planets[].
+	var ref: int = result.get("ref", -1)
+	var indices: PackedInt32Array = result.get("indices", PackedInt32Array())
+	_trajectory_ref = indices[ref] if ref >= 0 and ref < indices.size() else -1
 	_trajectory_rel_points = result.get("rel_points", PackedVector2Array())
 	refresh_trajectory_line()
 	update_trajectory_status(result.get("status", "ORBIT"), result.get("target", ""))
@@ -3405,6 +3426,7 @@ static func predict_trajectory(snap: Dictionary) -> Dictionary:
 		"times": times,
 		"t0": snap.get("t0", 0.0),
 		"ref": ref if stays_in_ref and rel_points.size() == points.size() else -1,
+		"indices": snap.get("indices", PackedInt32Array()),
 		"rel_points": rel_points,
 		"status": predicted_status,
 		"target": predicted_target,
@@ -3738,7 +3760,7 @@ func _spawn_planet_guards() -> void:
 	# Discovery order in the galaxy: first system = 0, each new jump +1.
 	var system_depth: int = maxi(0, GalaxyMap.index_of(world_seed))
 	_planet_guards = PlanetGuardsScript.spawn_system(
-		self, planets, G, _planet_nearest_ship(), system_depth
+		self, present_planets(), G, _planet_nearest_ship(), system_depth
 	)
 
 
@@ -4605,13 +4627,12 @@ func _chart_known_bodies() -> void:
 ## has at a random point `rng` picks on their own orbits, the rest parked far
 ## out and hidden. Velocities follow; the physics state too once it exists.
 func _apply_roster(rng: RandomNumberGenerator) -> void:
-	var roster: Dictionary = PlanetRoster.roll(world_seed)
+	_roll_roster()
 	var sun_mass: float = sun.get("mass")
+	_active_physics_planets.clear()
 	for i in planets.size():
 		var planet: Node2D = planets[i]
-		var name: String = planet.get("body_name")
-		var here: bool = not PlanetRoster.TIERS.has(name) or roster.has(name)
-		planet_present[i] = here
+		var here: bool = planet_present[i]
 		var radius: float = orbit_radii[i] if here else PARK_RADIUS + float(i) * PARK_SPACING
 		planet.position = sun.position + Vector2(radius, 0.0).rotated(rng.randf() * TAU)
 		planet.velocity = get_circular_orbit_velocity(planet.position, sun.position, sun_mass)
@@ -4621,6 +4642,28 @@ func _apply_roster(rng: RandomNumberGenerator) -> void:
 		planet.call("snap_visual_position")
 		if i < soi_radii_cache.size():
 			soi_radii_cache[i] = get_soi_radius(planet)
+		if here and i < physics_planets.size():
+			_active_physics_planets.append(physics_planets[i])
+
+
+## Which planets this system has (PlanetRoster.roll(world_seed)), into
+## planet_present and each planet's `present` - before rebuild_surface, so the
+## ones it lacks build nothing.
+func _roll_roster() -> void:
+	var roster: Dictionary = PlanetRoster.roll(world_seed)
+	for i in planets.size():
+		var name: String = planets[i].get("body_name")
+		planet_present[i] = not PlanetRoster.TIERS.has(name) or roster.has(name)
+		planets[i].set("present", planet_present[i])
+
+
+## The planets this system has.
+func present_planets() -> Array[Node2D]:
+	var result: Array[Node2D] = []
+	for i in planets.size():
+		if planet_present[i]:
+			result.append(planets[i])
+	return result
 
 
 ## Orbit lines and the autopilot's targets for the planets this system has.
@@ -4695,10 +4738,11 @@ func _physics_process(delta: float) -> void:
 		steps += 1
 
 	if steps > 0:
-		for body: PhysicsBody in physics_planets:
+		for body: PhysicsBody in _active_physics_planets:
 			body.push_to_node()
 		for i in range(planets.size()):
-			update_orbit_line(planets[i], orbit_lines[i], i)
+			if planet_present[i]:
+				update_orbit_line(planets[i], orbit_lines[i], i)
 
 	# Global so every planet shader lights itself from the sun without each
 	# body needing to know where the sun is.
@@ -4773,7 +4817,8 @@ func simulation_step(dt: float) -> void:
 	var sun_y: float = sun.position.y
 	var half_dt: float = 0.5 * dt
 	var half_dt2: float = 0.5 * dt * dt
-	for body: PhysicsBody in physics_planets:
+	# Only the planets this system has; the parked ones stay put.
+	for body: PhysicsBody in _active_physics_planets:
 		var dx: float = sun_x - body.x
 		var dy: float = sun_y - body.y
 		var d2: float = dx * dx + dy * dy

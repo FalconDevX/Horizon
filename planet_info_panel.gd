@@ -266,7 +266,8 @@ func _select(index: int) -> void:
 	_viewing = {}
 	_pending_twin = null
 	_viewed_twin = null
-	if _known_body(body):
+	# A planet not in this system was never built: its silhouette only.
+	if _known_body(body) and body.get("present") != false:
 		_preview = body.call("make_preview")
 	else:
 		# Uncharted: only its dark shape against the stars.
@@ -1175,7 +1176,7 @@ func _card_at(point: Vector2) -> int:
 ## Whether the world in front of the player now is this card.
 func _card_is_here(body: Node2D, name: String, is_trait: bool) -> bool:
 	var params: Dictionary = body.get("terrain_params")
-	return _known_body(body) and (
+	return _known_body(body) and body.get("present") != false and (
 		params.get(name, false) == true if is_trait else params.get("variant", "") == name
 	)
 

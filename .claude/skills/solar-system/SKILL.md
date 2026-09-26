@@ -126,10 +126,16 @@ Taurvane). Planets not in `TIERS` (Erebus) are always there and do not count. Me
 over 20 000 systems: tier 1 ~75%, 2 ~32%, 3 ~21%, 4 ~9%, 5 ~2%; 6 planets 46%, 7 22%,
 8 17%, 9 10%, 10 6%.
 
-`solar_system.gd` `_apply_roster(rng)` (in `_ready` and `set_world_seed`) places the ones
-there on their scene orbit radius (`orbit_radii`) at a random angle and parks the rest at
-`PARK_RADIUS` + i * `PARK_SPACING`, calling `CelestialBody.set_present()` (hides 2D and 3D);
-`planet_present[i]` mirrors it. `_show_roster()` hides their orbit lines (also honoured by
+Absent planets are **not generated**: `solar_system.gd` `_enter_tree` sets each planet's
+`present` before the planets' own `_ready`, which then skips the bake and deposits;
+`set_world_seed` calls `_roll_roster()` before `rebuild_surface()`, which drops an absent
+planet's world instead of building it (and builds one that has become present).
+`_apply_roster(rng)` places the present ones on their scene orbit radius (`orbit_radii`)
+at a random angle and parks the rest at `PARK_RADIUS` + i * `PARK_SPACING`, calling
+`CelestialBody.set_present()` (hides 2D and 3D, stops processing); `planet_present[i]`
+mirrors it and `_active_physics_planets` is the only set the sim steps. The trajectory
+snapshot holds only `present_planets()` (its `indices` map back to `planets[]`), and
+`PlanetGuards.spawn_system` gets `present_planets()`. `_show_roster()` hides their orbit lines (also honoured by
 the "show orbit lines" setting) and rebuilds `autopilot_selectable_bodies`. An absent
 planet has no SOI (`get_soi_radius` returns 0), cannot be landed on or charted, and the
 arrival after a jump only picks present planets. `home_planet_index()` is Coralyss when
@@ -752,10 +758,14 @@ the body's current variant, so finds carry across systems per variant.
   every planet charted (`is_charted`), every variant/trait seen, every type known
   and found - plus the whole tech tree and warp anywhere. The real discovery is
   still recorded underneath (and saved: `Journal.to_dict`). Off by default.
+- Resource `tier` (TYPES): 1 common (scrap, silver, gold, ice/pink crystal), 2 uncommon
+  (sky stone, bone, moonbloom, frozen moonbloom), 3 rare (toxic ore, gold pillar, hel,
+  ice wurm), 4 special (slime jelly, silver spheres), 5 wildcard (egg); scenery 0.
+  `PlanetGuards` gives worlds with any tier >= 3 deposit the elite roster. Wind crystals
+  were folded into sky stones.
 - Spawn key `per_feature` (Vector2i): that many round every sigil of the world
   instead of `count` per world (`_place_per_feature`, `_near()`); `snow_hump`
-  spawns also aim at a hump's top. Types added: wind_crystal (`wind_crystals`
-  mesh), hel (`bubbles`, gas giants only - excluded from Quake's random finds),
+  spawns also aim at a hump's top. Types added: hel (`bubbles`, gas giants only - excluded from Quake's random finds),
   silver_spheres (`sphere_arch`, Gloom), ice_wurm (was the scenery geyser).
 - **The bake is an imported `RDShaderFile`**: after editing
   `planet_terrain_bake.glsl`, a command-line run keeps the old compiled bake until
