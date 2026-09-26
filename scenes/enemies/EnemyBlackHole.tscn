@@ -9,6 +9,7 @@ ship_texture = ExtResource("2_tex")
 title = "Black hole"
 kind_id = "black_hole"
 visual_length = 44.0
+max_health = 90.0
 move_speed = 95.0
 turn_speed = 1.6
 can_fire = false

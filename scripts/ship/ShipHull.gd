@@ -1,11 +1,13 @@
 class_name ShipHull
 extends Node2D
 ## Shipyard build grid with two layers:
-##   structure  - HULL pieces + CONNECTOR
-##   equipment  - engines/utilities on DECK / mounts; weapons on the outer truss ring
+##   structure  - HULL / COCKPIT / CONNECTOR / TRUSS
+##   equipment  - interior modules on DECK; engines aft; weapons on the truss ring
 ##
 ## Rules:
 ##   - Hull pieces and the cockpit may not touch each other edge-to-edge (must use a connector).
+##   - Interior gear (fuel, batteries, shields, radars, utilities, …): on hull DECK
+##     cells only — anything that is not structure / engine / weapon (ModuleData.is_deck_equipment).
 ##   - Main engines stand in open space on a hull's left (aft) side: grid -x, whatever
 ##     way the hull is turned. At least one engine cell must touch the hull's left face.
 ##   - Corrective / RCS engines only on truss cells adjacent to DECK.
@@ -101,7 +103,12 @@ func get_fov_devices() -> Array[Dictionary]:
 			"local_origin": offset_cells * FovUtil.WORLD_UNITS_PER_CELL,
 			"damage": module.data.damage,
 			"reload_time": module.data.reload_time,
+			"scan_time": module.data.scan_time,
 			"energy": module.data.energy_consumption,
+			"turret_arc": module.data.turret_arc_deg,
+			# Where the turret turns about: the module's middle.
+			"center": (FovUtil.module_center_cell(module.origin, module.data, module.rotation) - centroid)
+				* FovUtil.WORLD_UNITS_PER_CELL,
 			"hull_rects": hull_rects,
 			"ignore_rects": ignore_rects,
 		})
@@ -383,12 +390,6 @@ func can_place(
 
 	var cells := data.get_occupied_cells(origin, rotation)
 
-	if data.is_equipment():
-		var equip_count := _count_equipment_cells(ignore_instance_id)
-		var cap := _total_hull_capacity(ignore_instance_id)
-		if equip_count + cells.size() > cap:
-			return false
-
 	for cell: Vector2i in cells:
 		if not is_cell_in_bounds(cell):
 			return false
@@ -397,6 +398,12 @@ func can_place(
 
 	if data.is_hull_like():
 		if _hull_would_touch_other_hull(cells, ignore_instance_id):
+			return false
+
+	# A connector joins things: it must touch a hull, the cockpit or another
+	# connector, never float on its own.
+	if data.category == ModuleData.Category.CONNECTOR:
+		if not _touches_solid_structure(cells, ignore_instance_id):
 			return false
 
 	if data.category == ModuleData.Category.TRUSS:
@@ -634,15 +641,26 @@ func cell_to_local_center(cell: Vector2i) -> Vector2:
 
 
 func are_hulls_connected() -> bool:
+	return unconnected_hull_like().is_empty()
+
+
+## Hulls and cockpits not joined (through connectors and other structure) to
+## the first hull - what keeps a ship from leaving the yard.
+func unconnected_hull_like() -> Array[PlacedModule]:
 	var hulls: Array[PlacedModule] = []
 	for m: PlacedModule in _modules.values():
 		if m.data != null and m.data.is_hull_like():
 			hulls.append(m)
+	var loose: Array[PlacedModule] = []
 	if hulls.size() <= 1:
-		return true
+		return loose
+	# Grow from a real hull when there is one, so a lone cockpit is the loose part.
+	hulls.sort_custom(func(a: PlacedModule, b: PlacedModule) -> bool:
+		return a.data.category == ModuleData.Category.HULL and b.data.category != ModuleData.Category.HULL
+	)
 	var start_cells := hulls[0].get_occupied_cells()
 	if start_cells.is_empty():
-		return true
+		return loose
 	var visited: Dictionary = {}
 	var queue: Array[Vector2i] = [start_cells[0]]
 	visited[start_cells[0]] = true
@@ -657,10 +675,9 @@ func are_hulls_connected() -> bool:
 			visited[n] = true
 			queue.append(n)
 	for h: PlacedModule in hulls:
-		for cell: Vector2i in h.get_occupied_cells():
-			if not visited.has(cell):
-				return false
-	return true
+		if not visited.has(h.get_occupied_cells()[0]):
+			loose.append(h)
+	return loose
 
 
 ## Ship-level (not per-hull): ≥1 corrective engine on each outer side
@@ -847,27 +864,32 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 	var eq := get_equipment_at(cell)
 	if eq != null and eq.instance_id != ignore_instance_id:
 		return false
-	# Weapons stand on truss beams; otherwise, like RCS, never on structure.
-	if data.category == ModuleData.Category.WEAPON and is_truss_beam_cell(cell, ignore_instance_id):
-		return true
-	if get_structure_at(cell) != null:
-		var s2 := get_structure_at(cell)
-		if s2.instance_id != ignore_instance_id:
-			if data.category == ModuleData.Category.WEAPON or data.is_rcs_engine():
-				return false
-	match data.category:
-		ModuleData.Category.WEAPON:
-			return is_weapon_mount_cell(cell, ignore_instance_id)
-		_:
-			if data.is_main_engine():
-				# Open space only; must not overlap any hull or truss.
-				var s3 := get_structure_at(cell)
-				return s3 == null or s3.instance_id == ignore_instance_id
-			if data.is_rcs_engine():
-				return is_deck_adjacent_truss_cell(cell, ignore_instance_id)
-			if data.is_deck_equipment():
-				return _equipment_floor_ok(data, cell)
+
+	# Interior modules share the hull's cells (structure + equipment layers).
+	if data.is_deck_equipment():
+		return _equipment_floor_ok(data, cell)
+
+	# Weapons may sit on a truss beam (structure); otherwise not on structure.
+	if data.category == ModuleData.Category.WEAPON:
+		if is_truss_beam_cell(cell, ignore_instance_id):
+			return true
+		var sw := get_structure_at(cell)
+		if sw != null and sw.instance_id != ignore_instance_id:
 			return false
+		return is_weapon_mount_cell(cell, ignore_instance_id)
+
+	if data.is_main_engine():
+		# Open space only; must not overlap any hull or truss.
+		var s3 := get_structure_at(cell)
+		return s3 == null or s3.instance_id == ignore_instance_id
+
+	if data.is_rcs_engine():
+		var sr := get_structure_at(cell)
+		if sr != null and sr.instance_id != ignore_instance_id:
+			return false
+		return is_deck_adjacent_truss_cell(cell, ignore_instance_id)
+
+	return false
 
 
 func _equipment_floor_ok(data: ModuleData, cell: Vector2i) -> bool:
@@ -875,7 +897,7 @@ func _equipment_floor_ok(data: ModuleData, cell: Vector2i) -> bool:
 
 
 func _equipment_floor_type_ok(_data: ModuleData, floor: HullData.FloorType) -> bool:
-	# General deck gear on DECK.
+	# Interior modules (is_deck_equipment) only on hull DECK cells.
 	# Main / RCS engines use their own open-space / truss checks.
 	return HullData.is_deck_floor(floor)
 
@@ -899,6 +921,68 @@ static func _cells_left_of(cells: Array[Vector2i], hull_cells: Dictionary) -> bo
 		if hull_cells.has(cell - AFT):
 			return true
 	return false
+
+
+func _touches_solid_structure(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
+	var own: Dictionary = {}
+	for c: Vector2i in cells:
+		own[c] = true
+	for c: Vector2i in cells:
+		for d: Vector2i in _DIRS:
+			var n := c + d
+			if own.has(n):
+				continue
+			var s := get_structure_at(n)
+			if s == null or s.data == null or s.instance_id == ignore_instance_id:
+				continue
+			if s.data.is_hull_like() or s.data.category == ModuleData.Category.CONNECTOR:
+				return true
+	return false
+
+
+## Modules that no longer hold to the ship - each checked against the rules
+## as if placed now, among the rest (a gun whose truss was taken away, an
+## engine off the hull, a connector left touching nothing) - plus connectors
+## not joined to the hulls. Leaving the yard needs this empty.
+func unattached_modules() -> Array[PlacedModule]:
+	var loose: Array[PlacedModule] = []
+	for m: PlacedModule in _modules.values():
+		if m.data == null or m.data.is_hull_like():
+			continue
+		if not can_place(m.data, m.origin, m.rotation, m.instance_id):
+			loose.append(m)
+	# Connectors must also lead back to the hulls, not just touch each other.
+	var reached: Dictionary = _structure_reached_from_first_hull()
+	if not reached.is_empty():
+		for m: PlacedModule in _modules.values():
+			if m.data != null and m.data.category == ModuleData.Category.CONNECTOR and not loose.has(m):
+				if not reached.has(m.get_occupied_cells()[0]):
+					loose.append(m)
+	return loose
+
+
+## Every structure cell reachable, edge to edge, from the first hull.
+func _structure_reached_from_first_hull() -> Dictionary:
+	var start: PlacedModule = null
+	for m: PlacedModule in _modules.values():
+		if m.data != null and m.data.category == ModuleData.Category.HULL:
+			start = m
+			break
+	var visited: Dictionary = {}
+	if start == null:
+		return visited
+	var first: Vector2i = start.get_occupied_cells()[0]
+	var queue: Array[Vector2i] = [first]
+	visited[first] = true
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_front()
+		for d: Vector2i in _DIRS:
+			var n := c + d
+			if visited.has(n) or get_structure_at(n) == null:
+				continue
+			visited[n] = true
+			queue.append(n)
+	return visited
 
 
 func _hull_would_touch_other_hull(cells: Array[Vector2i], ignore_instance_id: int) -> bool:
@@ -928,29 +1012,6 @@ func _remove_from_maps(placed: PlacedModule) -> void:
 			_equipment.erase(cell)
 
 
-func _count_equipment_cells(ignore_instance_id: int = -1) -> int:
-	var count := 0
-	for m: PlacedModule in _modules.values():
-		if m.data == null or not m.data.is_equipment():
-			continue
-		if m.instance_id == ignore_instance_id:
-			continue
-		count += m.data.get_cell_count()
-	return count
-
-
-func _total_hull_capacity(ignore_instance_id: int = -1) -> int:
-	var cap := 0
-	for m: PlacedModule in _modules.values():
-		if m.data == null or m.instance_id == ignore_instance_id:
-			continue
-		if m.data.category != ModuleData.Category.HULL:
-			continue
-		if m.data.hull_data != null:
-			cap += m.data.hull_data.capacity
-	return cap
-
-
 func _recalculate_stats() -> void:
 	var stats := ShipStats.new()
 	for module: PlacedModule in _modules.values():
@@ -961,12 +1022,9 @@ func _recalculate_stats() -> void:
 		if d.category == ModuleData.Category.HULL and d.hull_data != null:
 			stats.mass += d.hull_data.base_mass
 			stats.durability += d.hull_data.base_durability
-			stats.capacity += d.hull_data.capacity
 		else:
 			stats.mass += d.mass
 			stats.health += module.current_health
-		if d.is_equipment():
-			stats.occupied_cells += d.get_cell_count()
 		stats.energy_consumption += d.energy_consumption
 		match d.category:
 			ModuleData.Category.ENGINE:

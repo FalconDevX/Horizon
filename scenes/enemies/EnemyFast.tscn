@@ -9,6 +9,7 @@ ship_texture = ExtResource("2_tex")
 title = "Fast"
 kind_id = "fast"
 visual_length = 18.0
+max_health = 18.0
 move_speed = 280.0
 turn_speed = 3.6
 fire_cooldown = 0.28

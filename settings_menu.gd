@@ -57,7 +57,6 @@ var _tab_rects: Array[Rect2] = []
 var _zoom_slider_rect := Rect2()
 var _pan_slider_rect := Rect2()
 var _toggle_smoothing_rect := Rect2()
-var _toggle_warp_drop_rect := Rect2()
 var _toggle_god_mode_rect := Rect2()
 
 # Tab 1: Graphics rects
@@ -203,11 +202,6 @@ func _handle_gameplay_clicks(pos: Vector2) -> void:
 		settings.camera_smoothing = not settings.camera_smoothing
 		settings.save_settings()
 		setting_changed.emit("camera_smoothing", settings.camera_smoothing)
-		queue_redraw()
-	elif _toggle_warp_drop_rect.has_point(pos):
-		settings.auto_drop_warp_on_thrust = not settings.auto_drop_warp_on_thrust
-		settings.save_settings()
-		setting_changed.emit("auto_drop_warp_on_thrust", settings.auto_drop_warp_on_thrust)
 		queue_redraw()
 	elif _toggle_god_mode_rect.has_point(pos):
 		settings.god_mode = not settings.god_mode
@@ -430,13 +424,7 @@ func _draw_tab_gameplay(top_y: float) -> void:
 	var ctrl_x: float = col1_x + 175.0
 	var ctrl_w: float = 177.0
 
-	# 1. Drop Warp on Thrust
-	_draw_setting_label(Vector2(inner_x, y), "Drop Warp on Thrust", "Reset to 1x when pressing W")
-	_toggle_warp_drop_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
-	_draw_switch(_toggle_warp_drop_rect, settings.auto_drop_warp_on_thrust, "ON", "OFF")
-
-	# 2. God Mode (debug)
-	y += 74.0
+	# God Mode (debug)
 	_draw_setting_label(Vector2(inner_x, y), "God Mode", "Debug: unlock tree, catalog, warp")
 	_toggle_god_mode_rect = Rect2(ctrl_x + ctrl_w - 76.0, y + 4.0, 76.0, 22.0)
 	_draw_switch(_toggle_god_mode_rect, settings.god_mode, "ON", "OFF")
@@ -565,33 +553,35 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "W / S", "Main Engine (Burn / Brake)")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "X", "Throttle Lock Toggle")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "A / D", "Rotate ship (also arrows)")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "RMB (Hold)", "Turn toward cursor")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "RMB (Hold)", "Aim the selected turret")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "Shift (Hold)", "Precision: 20% thrust and turning")
 
 	var y_time: float = top_y + 192.0
-	_draw_section_header(Vector2(col1_x, y_time), "Time Warp & Simulation", col_w)
+	_draw_section_header(Vector2(col1_x, y_time), "Warp Drive & Simulation", col_w)
 	var card_time := Rect2(col1_x, y_time + 20.0, col_w, 138.0)
 	_draw_card_background(card_time)
 
 	y = card_time.position.y + 14.0
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "Space / P", "Pause / Resume simulation")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "1 .. 7", "Time multipliers: 1x, 2x .. 200x")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "Step (▶|)", "Single simulation step (paused)")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Ctrl+LMB", "Lock a planet as warp target")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Q", "Warp to the locked target")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Enter / E", "Land or take off / collect")
 
 	# --- Column 2 ---
-	_draw_section_header(Vector2(col2_x, top_y), "Orbital Autopilot", col_w)
-	var card2 := Rect2(col2_x, top_y + 20.0, col_w, 176.0)
+	_draw_section_header(Vector2(col2_x, top_y), "Combat & Handling", col_w)
+	var card2 := Rect2(col2_x, top_y + 20.0, col_w, 228.0)
 	_draw_card_background(card2)
 
 	y = card2.position.y + 14.0
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "F", "Engage / Disengage Autopilot")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "Tab", "Cycle target celestial body")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "Scroll (Target)", "Adjust target orbit altitude")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "G", "Fire weapon at FOV lock")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "1 .. 9", "Pick a weapon (panel order)")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "LMB (Hold)", "Fire the picked weapon")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "G", "Fire every gun at the target")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Z / C", "Hold prograde / retrograde")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "V", "Flight assist (arcade handling)")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "B / T", "Ship builder / tech tree")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "I / J / M", "Cargo / planet log / galaxy map")
 
-	var y_cam: float = top_y + 218.0
+	var y_cam: float = top_y + 270.0
 	_draw_section_header(Vector2(col2_x, y_cam), "Camera & Tracking", col_w)
 	var card_cam := Rect2(col2_x, y_cam + 20.0, col_w, 138.0)
 	_draw_card_background(card_cam)

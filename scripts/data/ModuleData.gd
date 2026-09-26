@@ -25,7 +25,7 @@ enum Category {
 @export var plan_texture: Texture2D
 @export var id: StringName = &""
 
-## For Category.HULL — defines local size, mass, capacity (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
+## For Category.HULL — defines local size, mass (weapon truss is ShipHull.WEAPON_MOUNT_DEPTH).
 @export var hull_data: HullData
 
 @export_group("Shared")
@@ -48,6 +48,8 @@ enum Category {
 @export var damage: float = 0.0
 @export var reload_time: float = 1.0
 @export var accuracy: float = 1.0
+## Radars: how long one scan runs (seconds); reload_time is the recharge after.
+@export var scan_time: float = 0.0
 
 @export_group("Utility")
 @export var capacity: float = 0.0
@@ -61,6 +63,9 @@ enum Category {
 @export_group("Field of View")
 ## Full cone angle in real degrees (same in builder preview and on the map).
 @export var fov_angle_deg: float = 0.0
+## Weapons on a turret turn this far in all (degrees) about the way they
+## were placed; 0 = a fixed mount that fires straight ahead.
+@export var turret_arc_deg: float = 0.0
 ## Detection / engagement range in world SU. Builder preview scales this down.
 @export var fov_range: float = 0.0
 
@@ -101,18 +106,19 @@ func is_equipment() -> bool:
 	)
 
 
-## Engines, utilities, tanks, batteries, shields and radars mount on hull deck cells.
-## Main engines stand in open space on a hull's left (aft) face instead.
-## Corrective engines and weapons only on truss cells adjacent to normal DECK.
+## Modules that build inside a hull (on its deck cells).
+## Excludes structure (Hull / Cockpit / Truss / Connector), engines and weapons —
+## those have their own placement rules (open space, truss ring, etc.).
 func is_deck_equipment() -> bool:
 	return (
-		category == Category.ENGINE
-		or category == Category.UTILITY
-		or category == Category.FUEL_TANK
-		or category == Category.BATTERY
-		or category == Category.SHIELD
-		or category == Category.RADAR
+		not is_structure()
+		and category != Category.ENGINE
+		and category != Category.WEAPON
 	)
+
+
+func is_turret() -> bool:
+	return category == Category.WEAPON and turret_arc_deg > 0.0
 
 
 func has_fov() -> bool:
@@ -228,6 +234,8 @@ func get_stat(key: StringName, default: Variant = 0.0) -> Variant:
 			return damage
 		"reload_time":
 			return reload_time
+		"scan_time":
+			return scan_time
 		"accuracy":
 			return accuracy
 		"capacity":
@@ -268,6 +276,8 @@ func category_name() -> String:
 			return "Connector"
 		Category.RADAR:
 			return "Radar"
+		Category.TRUSS:
+			return "Truss"
 		Category.COCKPIT:
 			return "Cockpit"
 		_:

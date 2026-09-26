@@ -110,7 +110,7 @@ var fov_contact: int = 0:
 ## Draws the body as a black hole (black_hole.gdshader): `radius` is the event
 ## horizon. The ball is hidden; a ray-traced quad shows the shadow, a lensed
 ## accretion disk and the bent starfield behind. Gravity, SOI, prediction and
-## the autopilot treat it like any other body.
+## the warp treat it like any other body.
 @export var is_black_hole: bool = false
 
 ## Rolls what the body is from the world seed: a black hole only now and then

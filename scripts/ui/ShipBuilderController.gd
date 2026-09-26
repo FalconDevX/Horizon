@@ -475,15 +475,15 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 				floor_hint = "empty cell between hulls"
 			ModuleData.Category.COCKPIT:
 				floor_hint = "open space, joined to a hull by a connector"
+			ModuleData.Category.TRUSS:
+				floor_hint = "weapon-mount ring"
 			ModuleData.Category.WEAPON:
 				floor_hint = "truss next to deck"
-			ModuleData.Category.RADAR:
-				floor_hint = "deck"
 			ModuleData.Category.ENGINE:
 				floor_hint = "open space touching a hull's left side"
 			_:
 				if module.is_deck_equipment():
-					floor_hint = "deck"
+					floor_hint = "inside hull (deck)"
 		var fov_hint := ""
 		if module.has_fov():
 			fov_hint = " | FOV %.0f° / %.0f SU" % [module.fov_angle_deg, module.fov_range]

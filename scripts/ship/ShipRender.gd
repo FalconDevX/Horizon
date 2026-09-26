@@ -10,7 +10,9 @@ extends RefCounted
 const CELL_PX := 32
 
 
-## {texture, rect, engines} for `hull`, or {} with nothing built. `rect` is
+## {texture, rect, engines, turrets} for `hull`, or {} with nothing built.
+## Turret guns are left out of the picture and listed in `turrets` -
+## {id, texture, center, size} in ship-local units - so ship.gd can turn them. `rect` is
 ## where the picture goes in ship-local units, centred on the structure the
 ## same way the weapon and radar mounts are (FovUtil.WORLD_UNITS_PER_CELL per
 ## cell), so their cones leave the right spots; `engines` are the main
@@ -35,6 +37,7 @@ static func compose(hull: ShipHull) -> Dictionary:
 	var centroid: Vector2 = hull.structure_centroid()
 	var unit: float = FovUtil.WORLD_UNITS_PER_CELL
 	var engines: Array[Vector2] = []
+	var turrets: Array[Dictionary] = []
 	for m: PlacedModule in ordered:
 		var corner: Vector2i = _top_left(m)
 		var bounds: Vector2i = m.get_bounding_size()
@@ -45,6 +48,14 @@ static func compose(hull: ShipHull) -> Dictionary:
 		if art == null:
 			continue
 		art.resize(bounds.x * CELL_PX, bounds.y * CELL_PX, Image.INTERPOLATE_BILINEAR)
+		if m.data.is_turret():
+			turrets.append({
+				"id": m.instance_id,
+				"texture": ImageTexture.create_from_image(art),
+				"center": (Vector2(corner) + Vector2(bounds) * 0.5 - centroid) * unit,
+				"size": Vector2(bounds) * unit,
+			})
+			continue
 		image.blend_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), (corner - lo) * CELL_PX)
 
 	var texture := ImageTexture.create_from_image(image)
@@ -52,6 +63,7 @@ static func compose(hull: ShipHull) -> Dictionary:
 		"texture": texture,
 		"rect": Rect2((Vector2(lo) - centroid) * unit, Vector2(size_cells) * unit),
 		"engines": engines,
+		"turrets": turrets,
 	}
 
 

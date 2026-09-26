@@ -8,17 +8,18 @@ const BASIC_IDS: Array[String] = ["basic", "tank", "sniper", "kamikaze"]
 ## Ids that orbit worlds with at least one T3 deposit.
 const ELITE_IDS: Array[String] = ["cruiser", "mothership", "minelayer", "black_hole"]
 
-## Flat marker look per id: colour + glyph name (see draw_glyph).
+## Flat marker look per id: colour + glyph name (see draw_glyph), and the
+## short code written next to it on the map and in the contacts panel.
 const MARKERS := {
-	"basic": {"color": Color(1.0, 0.32, 0.22), "glyph": "triangle"},
-	"tank": {"color": Color(1.0, 0.72, 0.12), "glyph": "square"},
-	"sniper": {"color": Color(0.95, 0.9, 0.2), "glyph": "diamond"},
-	"kamikaze": {"color": Color(1.0, 0.2, 0.45), "glyph": "cross"},
-	"fast": {"color": Color(0.15, 0.85, 1.0), "glyph": "dart"},
-	"cruiser": {"color": Color(1.0, 0.45, 0.2), "glyph": "hex"},
-	"mothership": {"color": Color(0.72, 0.35, 1.0), "glyph": "bar"},
-	"minelayer": {"color": Color(0.25, 0.9, 0.45), "glyph": "ring"},
-	"black_hole": {"color": Color(0.55, 0.4, 1.0), "glyph": "hole"},
+	"basic": {"color": Color(1.0, 0.32, 0.22), "glyph": "triangle", "abbr": "BS"},
+	"tank": {"color": Color(1.0, 0.72, 0.12), "glyph": "square", "abbr": "TK"},
+	"sniper": {"color": Color(0.95, 0.9, 0.2), "glyph": "diamond", "abbr": "SN"},
+	"kamikaze": {"color": Color(1.0, 0.2, 0.45), "glyph": "cross", "abbr": "KZ"},
+	"fast": {"color": Color(0.15, 0.85, 1.0), "glyph": "dart", "abbr": "FT"},
+	"cruiser": {"color": Color(1.0, 0.45, 0.2), "glyph": "hex", "abbr": "CR"},
+	"mothership": {"color": Color(0.72, 0.35, 1.0), "glyph": "bar", "abbr": "MS"},
+	"minelayer": {"color": Color(0.25, 0.9, 0.45), "glyph": "ring", "abbr": "ML"},
+	"black_hole": {"color": Color(0.55, 0.4, 1.0), "glyph": "hole", "abbr": "BH"},
 }
 
 ## Cached combat numbers read once from each enemy scene.
@@ -160,6 +161,10 @@ static func scene_for(enemy_id: String) -> PackedScene:
 
 static func marker_of(enemy_id: String) -> Dictionary:
 	return MARKERS.get(enemy_id, MARKERS["basic"]) as Dictionary
+
+
+static func abbreviation(enemy_id: String) -> String:
+	return str(marker_of(enemy_id).get("abbr", "??"))
 
 
 static func marker_color(enemy_id: String) -> Color:

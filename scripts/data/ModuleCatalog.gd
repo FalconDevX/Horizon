@@ -59,6 +59,8 @@ static func trusses() -> Array[ModuleData]:
 static func cockpit() -> ModuleData:
 	# Stands in open space like a hull and joins one through a connector.
 	var m := _base("Cockpit", &"cockpit", ModuleData.Category.COCKPIT, 6.0, 30.0, 1.0, _shape_rect(3, 2))
+	# A small tank of its own, so any ship with a cockpit can get moving.
+	m.fuel_capacity = 60.0
 	_use_art(m, "cockpit")
 	return m
 
@@ -147,30 +149,51 @@ static func _engine_family(
 	return list
 
 
+## Every weapon's reach relative to the ranges written below: the ship now
+## cruises at up to 2000 SU/s, so fights open much further out.
+const WEAPON_RANGE_SCALE := 3.0
+## Weapons that stay fixed, firing straight ahead of their mount.
+const FIXED_WEAPONS: Array[StringName] = [&"weapon_sniper", &"weapon_drones"]
+## How far a turret turns, in all, about the way it was placed.
+const TURRET_ARC_DEG := 160.0
+
+
 static func weapons() -> Array[ModuleData]:
-	return [
+	var list: Array[ModuleData] = [
 		# angle / range tuned per role; range is world SU (builder scales preview).
 		_with_art(_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1())),
 		_with_art(_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1())),
-		_with_art(_weapon("Laser DEW", &"weapon_laser", 22.0, 0.4, 0.95, 6.0, 12.0, 12.0, 2800.0, _shape_1x1())),
-		_with_art(_weapon("Particle Cannon", &"weapon_particle", 80.0, 3.5, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1())),
+		# Red laser: modest spread within its preview cone and a longer reach.
+		# Energy 1: half a unit a shot, so a stock ship can hold the trigger down.
+		_with_art(_weapon("Laser DEW", &"weapon_laser", 5.0, 1.0, 0.95, 6.0, 1.0, 6.0, 4000.0, _shape_1x1())),
+		# Slow blue balls: a long reload.
+		_with_art(_weapon("Particle Cannon", &"weapon_particle", 80.0, 7.0, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1())),
 		# Long yellow beam (ship.gd SNIPER_ID): the longest reach by far, in a
 		# narrow cone, slow to reload.
-		_with_art(_weapon("Sniper Laser", &"weapon_sniper", 70.0, 4.0, 0.99, 14.0, 20.0, 6.0, 12000.0, _shape_line(4))),
+		_with_art(_weapon("Sniper Laser", &"weapon_sniper", 120.0, 12.0, 0.99, 14.0, 20.0, 6.0, 16000.0, _shape_line(4))),
 		# From the board's star ratings (DMG / reload / accuracy): see _stars_weapon.
-		_stars_weapon("Revolver Cannon", &"weapon_revolver", 4, 4, 4, 9.0, 4.0, 30.0, 2000.0, _shape_2x1()),
+		# Five quick heavy rounds a burst (PlayerShot "burst"), then a longer reload.
+		_with_art(_weapon("Revolver Cannon", &"weapon_revolver", 40.0, 3.0, 0.9, 9.0, 4.0, 30.0, 2000.0, _shape_2x1())),
 		_stars_weapon("Coilgun: Shotgun", &"weapon_coilgun", 5, 4, 1, 10.0, 10.0, 50.0, 1200.0, _shape_2x1()),
 		_stars_weapon("Rocket Launcher", &"weapon_rockets", 5, 1, 5, 12.0, 2.0, 25.0, 3000.0, _shape_2x1()),
 		_stars_weapon("Drone Bay", &"weapon_drones", 2, 3, 3, 6.0, 8.0, 90.0, 2500.0, _shape_1x1()),
 	]
+	# Everything but the sniper and the drone bay turns on a turret (the player aims the selected one with RMB in flight).
+	for m: ModuleData in list:
+		if not FIXED_WEAPONS.has(m.id):
+			m.turret_arc_deg = TURRET_ARC_DEG
+	return list
 
 
-## Deck-mounted sensors. Wider / longer FOV than weapons; no damage.
+## Deck-mounted sensors, used like a weapon: the player fires a scan (weapons
+## panel), a green sweep turns round the ship for scan_time seconds finding
+## enemies all round out to the range - not behind planets - then the radar
+## recharges for reload_time. Bigger arrays reach much further, recharge longer.
 static func radars() -> Array[ModuleData]:
 	return [
-		_radar("Proximity Radar", &"radar_proximity", 4.0, 12.0, 2.0, 90.0, 2200.0, _shape_1x1()),
-		_radar("Survey Radar", &"radar_survey", 7.0, 18.0, 4.0, 60.0, 4800.0, _shape_2x1()),
-		_radar("Deep Space Array", &"radar_deep", 14.0, 28.0, 8.0, 35.0, 9000.0, _shape_2x2()),
+		_radar("Proximity Radar", &"radar_proximity", 4.0, 12.0, 2.0, 60000.0, 3.0, 12.0, _shape_1x1()),
+		_radar("Survey Radar", &"radar_survey", 7.0, 18.0, 4.0, 150000.0, 4.0, 20.0, _shape_2x1()),
+		_radar("Deep Space Array", &"radar_deep", 14.0, 28.0, 8.0, 400000.0, 5.0, 35.0, _shape_2x2()),
 	]
 
 
@@ -218,6 +241,8 @@ static func _battery(
 	var m := _base(title, id, ModuleData.Category.BATTERY, mass, health, 0.0, shape)
 	m.capacity = energy_cap
 	m.texture = make_battery_texture(shape, armored)
+	# Drawn art (textures/modules/battery_*.png) replaces the placeholder.
+	_use_art(m, String(id))
 	return m
 
 
@@ -525,7 +550,7 @@ static func _weapon(
 	m.reload_time = reload
 	m.accuracy = accuracy
 	m.fov_angle_deg = fov_angle_deg
-	m.fov_range = fov_range
+	m.fov_range = fov_range * WEAPON_RANGE_SCALE
 	return m
 
 
@@ -561,13 +586,16 @@ static func _radar(
 	mass: float,
 	health: float,
 	energy: float,
-	fov_angle_deg: float,
 	fov_range: float,
+	scan_time: float,
+	reload: float,
 	shape: Array[Vector2i]
 ) -> ModuleData:
 	var m := _base(title, id, ModuleData.Category.RADAR, mass, health, energy, shape)
-	m.fov_angle_deg = fov_angle_deg
+	m.fov_angle_deg = 360.0
 	m.fov_range = fov_range
+	m.scan_time = scan_time
+	m.reload_time = reload
 	_use_art(m, String(id))
 	return m
 

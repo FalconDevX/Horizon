@@ -6,12 +6,8 @@
 [ext_resource type="Script" path="res://speed_gauge.gd" id="4_speed_gauge"]
 [ext_resource type="Script" path="res://hud_status_panel.gd" id="5_hud_status"]
 [ext_resource type="Script" path="res://orbit_value_gauge.gd" id="6_orbit_value"]
-[ext_resource type="Script" path="res://autopilot_panel.gd" id="7_autopilot_panel"]
 [ext_resource type="Script" path="res://ship_blueprint_panel.gd" id="8_ship_blueprint"]
 [ext_resource type="Texture2D" path="res://textures/background.png" id="9_background"]
-[ext_resource type="AudioStream" path="res://sounds/autopilot_on.wav" id="10_autopilot_on"]
-[ext_resource type="AudioStream" path="res://sounds/thrust_locked.wav" id="10_thrust_locked"]
-[ext_resource type="Script" path="res://time_warp_panel.gd" id="11_time_warp"]
 [ext_resource type="Script" path="res://left_panel_bg.gd" id="12_left_panel_bg"]
 [ext_resource type="Script" path="res://planet_info_panel.gd" id="13_planet_info"]
 [ext_resource type="Script" path="res://music_toast.gd" id="14_music_toast"]
@@ -93,18 +89,6 @@ width = 1.5
 default_color = Color(0.85, 0.85, 0.85, 0.5)
 antialiased = true
 
-[node name="TargetOrbit" type="Line2D" parent="BehindWorld" unique_id=722839800]
-visible = false
-width = 2.0
-default_color = Color(0.55, 1, 0.62, 0.8)
-antialiased = true
-
-[node name="InterplanetaryRoute" type="Line2D" parent="BehindWorld" unique_id=616883616]
-visible = false
-width = 2.0
-default_color = Color(1, 0.41, 0.7, 0.85)
-antialiased = true
-
 [node name="PeriapsisMarker" type="Node2D" parent="BehindWorld" unique_id=72141260]
 visible = false
 
@@ -124,39 +108,6 @@ offset_top = -12.0
 offset_right = 27.0
 offset_bottom = 11.0
 text = "AP"
-
-[node name="DepartureBurnMarker" type="Node2D" parent="BehindWorld" unique_id=1031075272]
-visible = false
-
-[node name="Label" type="Label" parent="BehindWorld/DepartureBurnMarker" unique_id=1463624216]
-offset_left = 6.0
-offset_top = -12.0
-offset_right = 27.0
-offset_bottom = 11.0
-theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
-text = "DepartureBurnMarker"
-
-[node name="TransferBurnMarker" type="Node2D" parent="BehindWorld" unique_id=2087320388]
-visible = false
-
-[node name="Label" type="Label" parent="BehindWorld/TransferBurnMarker" unique_id=120431003]
-offset_left = 6.0
-offset_top = -12.0
-offset_right = 27.0
-offset_bottom = 11.0
-theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
-text = "TransferBurnMarker"
-
-[node name="ArrivalMarker" type="Node2D" parent="BehindWorld" unique_id=2076522040]
-visible = false
-
-[node name="Label" type="Label" parent="BehindWorld/ArrivalMarker" unique_id=646834989]
-offset_left = 6.0
-offset_top = -12.0
-offset_right = 27.0
-offset_bottom = 11.0
-theme_override_colors/font_color = Color(1, 0.41, 0.7, 1)
-text = "ArrivalMarker"
 
 [node name="Sun" type="Node2D" parent="." unique_id=592866294]
 script = ExtResource("1_hbvo3")
@@ -557,14 +508,6 @@ environment = SubResource("Environment_world3d")
 [node name="MusicPlayer" type="AudioStreamPlayer" parent="." unique_id=987654321]
 bus = &"Music"
 
-[node name="AutopilotOnSound" type="AudioStreamPlayer" parent="."]
-stream = ExtResource("10_autopilot_on")
-bus = &"SFX"
-
-[node name="ThrustLockedSound" type="AudioStreamPlayer" parent="."]
-stream = ExtResource("10_thrust_locked")
-bus = &"SFX"
-
 [node name="HUD" type="CanvasLayer" parent="." unique_id=1393702548]
 
 [node name="PanelContainer" type="PanelContainer" parent="HUD" unique_id=2076821922]
@@ -754,16 +697,6 @@ grow_vertical = 0
 mouse_filter = 2
 script = ExtResource("18_resource_bars")
 
-[node name="AutopilotPanel" type="Control" parent="HUD" unique_id=299792458]
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -312.0
-offset_top = 12.0
-offset_right = -12.0
-offset_bottom = 318.0
-mouse_filter = 2
-script = ExtResource("7_autopilot_panel")
-
 [node name="ShipBlueprintPanel" type="Control" parent="HUD" unique_id=577215664]
 anchor_left = 1.0
 anchor_top = 1.0
@@ -777,20 +710,6 @@ grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 1
 script = ExtResource("8_ship_blueprint")
-
-[node name="TimeWarpPanel" type="Control" parent="HUD" unique_id=161803399]
-anchor_left = 0.0
-anchor_top = 1.0
-anchor_right = 0.0
-anchor_bottom = 1.0
-offset_left = 16.0
-offset_top = -76.0
-offset_right = 486.0
-offset_bottom = -16.0
-grow_horizontal = 1
-grow_vertical = 0
-mouse_filter = 1
-script = ExtResource("11_time_warp")
 
 [node name="EnemyMenuPanel" parent="HUD" instance=ExtResource("19_enemy_menu")]
 visible = false

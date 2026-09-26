@@ -127,6 +127,12 @@ var _alerted: bool = false
 var _orbiting: bool = false
 
 
+func _init() -> void:
+	# Moved by hand in _process: interpolating it between physics ticks
+	# would make it shake.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
 func _ready() -> void:
 	if deploy_fighters:
 		_ability_timer = _next_deploy_delay()
@@ -458,7 +464,7 @@ func _play_laser_sound() -> void:
 ## (solar_system.gd _try_fire_fov_weapon). A kamikaze detonates at once; the
 ## rest go when the hits add up to max_health.
 func take_hit(amount: float) -> void:
-	if _exploding:
+	if _exploding or amount <= 0.0:
 		return
 	if explodes_on_hit:
 		explode()
@@ -466,6 +472,17 @@ func take_hit(amount: float) -> void:
 	_damage_taken += amount
 	if _damage_taken >= max_health:
 		explode()
+	else:
+		queue_redraw()
+
+
+func health_fraction() -> float:
+	return clampf((max_health - _damage_taken) / maxf(max_health, 1.0), 0.0, 1.0)
+
+
+## At wide zoom the enemy is a fixed-size marker; its hit area follows it.
+func hit_radius() -> float:
+	return maxf(collision_radius, 14.0 * scale.x) if not true_scale else collision_radius
 
 
 func is_alive() -> bool:
@@ -529,9 +546,12 @@ func _draw() -> void:
 		_draw_map_marker()
 		if _throttle > 0.05:
 			_draw_engine_flame(Vector2(-8, 0))
+		_draw_health_bar()
+		_draw_type_label()
 		return
 
 	if ship_texture == null:
+		_draw_health_bar()
 		return
 	var draw_size := _get_draw_size()
 	draw_set_transform(Vector2.ZERO, PI * 0.5, Vector2.ONE)
@@ -541,6 +561,35 @@ func _draw() -> void:
 	if _throttle > 0.05:
 		for exit in engine_exits:
 			_draw_engine_flame(_image_to_local(exit, draw_size))
+	_draw_health_bar()
+	_draw_type_label()
+
+
+## The type's short code ("MS" for a mothership...) in its marker colour,
+## upright, right of the craft - a fixed size on screen.
+func _draw_type_label() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var extent: float = (visual_length * 0.6) / px if true_scale else 11.0
+	draw_set_transform(Vector2.ZERO, -rotation, Vector2(px, px))
+	draw_string(
+		HudPanelStyle.get_font(), Vector2(extent + 4.0, 4.0), EnemyCatalog.abbreviation(kind_id),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, EnemyCatalog.marker_color(kind_id)
+	)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_health_bar() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var width: float = 36.0 * px
+	var height: float = 4.0 * px
+	var extent: float = visual_length * 0.6 if true_scale else 14.0 * px
+	var top: float = -(extent + 8.0 * px)
+	var rect := Rect2(Vector2(-width * 0.5, top), Vector2(width, height))
+	draw_set_transform(Vector2.ZERO, -rotation, Vector2.ONE)
+	draw_rect(rect.grow(1.0 * px), Color(0.04, 0.05, 0.08, 0.85))
+	draw_rect(rect, Color(0.35, 0.08, 0.08, 0.9))
+	draw_rect(Rect2(rect.position, Vector2(width * health_fraction(), height)), Color(0.35, 0.9, 0.45))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Far-zoom glyph: flat shape + colour from EnemyCatalog (not the ship art).

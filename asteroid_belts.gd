@@ -1,7 +1,7 @@
 class_name AsteroidBelts
 extends Node3D
 ## Asteroid belts round the sun - scenery only. They exert no gravity, never
-## collide, and nothing in the SOI, autopilot or planner layers knows they
+## collide, and nothing in the SOI or warp layers knows they
 ## exist. Each belt is one MultiMesh of rocks whose orbits are advanced on the
 ## GPU (asteroid_belt.gdshader), so thousands of rocks cost no CPU per frame.
 ##

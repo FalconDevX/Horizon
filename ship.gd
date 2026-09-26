@@ -3,7 +3,7 @@ extends Node2D
 signal ship_clicked
 
 @export var ship_mass: float = 10.0
-@export var thrust_force: float = 144.0
+@export var thrust_force: float = 3000.0
 @export var throttle_ramp_time := 0.15
 @export var lock_adjust_rate := 0.5
 @export var rotation_speed: float = 2.5
@@ -33,6 +33,9 @@ var fuel: float = 0.0
 var energy: float = 0.0
 var shield: float = 0.0
 var hull_hp: float = 0.0
+## Warp drive fuel (solar_system.gd Q), every ship - the stock one included.
+## Burned per unit of distance flown in warp, refilled on a planet's surface.
+var warp_fuel: float = WARP_FUEL_CAPACITY
 ## Whether the ship has power: stored energy, or (with no batteries) as much
 ## generated as is drawn. Unpowered, radars go dark, weapons cannot fire and
 ## shields and repairs stop - the engines still run, so the ship is never stuck.
@@ -41,6 +44,19 @@ var powered := true
 var _since_hit: float = 999.0
 ## instance_id -> seconds left before that weapon can fire again.
 var _weapon_cooldowns: Dictionary = {}
+
+## The weapon picked in the weapons panel (instance id, -1 for none): LMB
+## fires it, and RMB turns it toward the cursor if it sits on a turret.
+var selected_weapon: int = -1
+## Weapon instance ids in the order the weapons panel lists them (the player
+## drags rows to reorder); keys 1-9 pick by this order.
+var weapon_order: Array[int] = []
+## instance_id -> how far a turret is turned off the way it was placed
+## (radians, within half its arc).
+var turret_aim: Dictionary = {}
+## Radians per second a turret turns.
+const TURRET_TURN_SPEED := 3.0
+
 
 ## Fuel burned per second at full throttle, per unit of the engines' rated
 ## consumption (an S chemical engine empties an S tank in about a minute and a half).
@@ -53,57 +69,68 @@ const SHOT_ENERGY := 0.5
 ## Share of the tanks refilled (and batteries recharged) per second on a
 ## planet's surface.
 const GROUND_REFILL_FRACTION := 0.15
+const WARP_FUEL_CAPACITY := 100.0
+## Warp distance a full tank covers: Taurvane is ~5.6M out, so a couple of
+## long hops (or many short ones) before landing to refuel.
+const WARP_RANGE := 12000000.0
 
 ## Fallback when the shipyard has no modules yet (keeps the default orbital ship flyable).
 const DEFAULT_SHIP_MASS := 10.0
-const DEFAULT_THRUST_FORCE := 144.0
+const DEFAULT_THRUST_FORCE := 3000.0
 const MIN_SHIP_MASS := 1.0
 
-## Main engine output relative to the modules' rated thrust: 6x so the ship
-## stays punchy on its main engine alone (no RCS), times 4 for the 4x world
-## scale (solar_system.gd G) - speeds and distances are both 4x, so
-## accelerations must be too.
-const MAIN_ENGINE_BOOST := 24.0
+## Main engine output relative to the modules' rated thrust. With no time
+## warp the ship has to cover real distances in real time: the starter ship
+## (~40 thrust, ~60 mass) pulls ~300 units/s^2 and reaches CRUISE_SPEED_LIMIT
+## in about 7 s - far above any planet's pull (a few tens at most).
+const MAIN_ENGINE_BOOST := 450.0
 ## Turning speed relative to rotation_speed.
-const TURN_RATE_SCALE := 1.2
+const TURN_RATE_SCALE := 1.1
+## The engines stop pushing forward past this speed relative to the SOI body
+## (units/s). Gravity may still carry the ship faster; the warp drive
+## (solar_system.gd) is the way to go further, faster.
+const CRUISE_SPEED_LIMIT := 2000.0
 
 ## Holding Shift scales manual thrust and turning down to this, for fine
 ## orbit corrections.
 const PRECISION_SCALE := 0.2
 
-## Flight assist (V): arcade handling like the enemy craft, done with thrust.
-## W pushes along the nose exactly like the locked throttle does - no speed
-## cap - and on top of that vectored thrust cancels sideways drift (relative to
-## the SOI body), so the velocity swings round with the nose. Releasing W cuts
-## the engine and the ship coasts under gravity; S brakes to a stop.
-## Most sideways / braking push the assist may use, units/s^2. Holding a turn
-## at speed v and turn rate w takes v * w (80 units/s at 3 rad/s is ~240).
-const ASSIST_MAX_ACCEL := 600.0
+## Flight assist (V): arcade "space fighter" handling, done with thrust.
+## Vectored thrust always cancels sideways drift (relative to the SOI body),
+## so the ship flies where the nose points, W or not; W pushes along the
+## nose; with the engine off it slowly bleeds speed (ASSIST_COAST_DRAG); S
+## brakes to a stop. Coasting, all that only runs while the player is flying
+## (a flight key within ASSIST_IDLE_TIME) - left alone, the ship coasts under
+## gravity and keeps its orbit.
+## Most sideways push the assist may use, units/s^2. Holding a turn at speed
+## v and turn rate w takes v * w (2000 units/s at 3 rad/s is ~6000).
+const ASSIST_MAX_ACCEL := 9000.0
+## Share of its speed an unpowered assisted ship loses per second.
+const ASSIST_COAST_DRAG := 0.35
+## Seconds after the last flight key the coasting assist lets go.
+const ASSIST_IDLE_TIME := 3.0
+## Most braking push (S) - from CRUISE_SPEED_LIMIT to a stop in ~1.5 s.
+const ASSIST_BRAKE_ACCEL := 1500.0
 ## How quickly sideways drift (and, braking, speed) is cancelled, per second.
 const ASSIST_RESPONSE := 10.0
+## How quickly sideways drift is cancelled in a turn, per second - lower
+## than ASSIST_RESPONSE so the ship slides a little through its turns.
+const ASSIST_TURN_RESPONSE := 3.5
 
 ## Attitude hold (SAS): keeps the nose on a direction set by the flight path.
 enum AttitudeHold { NONE, PROGRADE, RETROGRADE }
 
 ## FOV devices synced from the shipyard (weapons + radars).
 var fov_devices: Array[Dictionary] = []
-## Body names currently inside at least one radar cone.
-var radar_contacts: Array[String] = []
-## Body names inside a weapon cone (engageable).
-var weapon_locks: Array[String] = []
-var _fire_flash_timer := 0.0
-var _fire_flash_to := Vector2.ZERO
-## Sniper Laser shots still on screen: {device, to (world), time}.
-var _sniper_beams: Array[Dictionary] = []
 var show_fov_cones := true
 
 var velocity := Vector2.ZERO
 var throttle := 0.0
-var autopilot_thrust := Vector2.ZERO
-var autopilot_main_engine_output := 0.0
 var throttle_locked := false
 var attitude_hold: AttitudeHold = AttitudeHold.NONE
 var flight_assist := true
+## Seconds since the player last pressed a flight key (update_rotation).
+var _since_flight_input: float = 999.0
 ## 0..1 share of full thrust the assist brake used last step (engine sound).
 var assist_brake_output := 0.0
 ## Speed along the nose the assist is flying at while W is held.
@@ -120,40 +147,20 @@ var true_scale := false:
 		queue_redraw()
 
 
-
 const MAIN_ENGINE_SOUND := preload("res://sounds/main_engine.wav")
 ## Loudest the main engine gets, at full throttle.
 const MAIN_ENGINE_VOLUME_DB := -4.0
 ## How fast the engine sound swells and dies away, in gain per second.
 const MAIN_ENGINE_FADE_RATE := 5.0
 
-## Locked-throttle beeps: one file per two segments of the HUD thrust bar
-## (hud_status_panel.gd BAR_SEGMENTS), rising with the throttle.
-const THROTTLE_BEEPS: Array[AudioStream] = [
-	preload("res://sounds/throttle_beep_1.wav"), preload("res://sounds/throttle_beep_2.wav"),
-	preload("res://sounds/throttle_beep_3.wav"), preload("res://sounds/throttle_beep_4.wav"),
-	preload("res://sounds/throttle_beep_5.wav"), preload("res://sounds/throttle_beep_6.wav"),
-	preload("res://sounds/throttle_beep_7.wav"), preload("res://sounds/throttle_beep_8.wav"),
-	preload("res://sounds/throttle_beep_9.wav"),
-]
-const THROTTLE_SEGMENTS := 18
-
 const LASER_SOUND := preload("res://sounds/laser.wav")
 var _laser_player: AudioStreamPlayer
-## The Sniper Laser (ModuleCatalog) fires a long yellow beam instead of the
-## short flash: it grows out to the target, then narrows and fades.
+## The Sniper Laser (ModuleCatalog) fires a long yellow beam out to its full
+## reach, like the enemy sniper's (SniperBeam, spawned by solar_system.gd).
 const SNIPER_ID := &"weapon_sniper"
-const SNIPER_BEAM_TIME := 0.9
-## Share of SNIPER_BEAM_TIME the beam takes to reach the target.
-const SNIPER_BEAM_GROW := 0.08
 const SNIPER_GLOW_COLOR := Color(1.0, 0.78, 0.12)
 const SNIPER_CORE_COLOR := Color(1.0, 0.97, 0.75)
 var _sniper_player: AudioStreamPlayer
-
-## A few players taken in turn, so a beep rings out under the next one
-## (changing a player's stream would cut it off).
-var _throttle_beeps: Array[AudioStreamPlayer] = []
-var _next_throttle_beep := 0
 
 ## Looping main engine burn; volume and pitch follow the throttle.
 var main_engine_sound: AudioStreamPlayer
@@ -186,13 +193,6 @@ func _ready() -> void:
 	_sniper_player.pitch_scale = 0.55
 	_sniper_player.max_polyphony = 2
 	add_child(_sniper_player)
-
-	for i in range(4):
-		var beep := AudioStreamPlayer.new()
-		beep.name = "ThrottleBeep%d" % i
-		beep.bus = &"SFX"
-		add_child(beep)
-		_throttle_beeps.append(beep)
 
 
 ## Applies aggregated ShipHull / ShipStats totals to flight parameters.
@@ -252,6 +252,7 @@ func apply_module_stats(stats: Dictionary) -> void:
 
 ## Everything back to full (a respawn, or a fresh start).
 func refill() -> void:
+	warp_fuel = WARP_FUEL_CAPACITY
 	fuel = fuel_capacity
 	energy = energy_capacity
 	shield = shield_strength
@@ -265,6 +266,16 @@ func has_fuel() -> bool:
 	return not resources_enabled or fuel > 0.0 or PlayerProgress.god_mode
 
 
+func has_warp_fuel_for(distance: float) -> bool:
+	return PlayerProgress.god_mode or warp_fuel >= distance * WARP_FUEL_CAPACITY / WARP_RANGE
+
+
+## Burns the warp fuel a jump of `distance` takes.
+func burn_warp_fuel(distance: float) -> void:
+	if not PlayerProgress.god_mode:
+		warp_fuel = maxf(warp_fuel - distance * WARP_FUEL_CAPACITY / WARP_RANGE, 0.0)
+
+
 ## One step of the ship's systems: fuel burned by the engines, energy made
 ## and drawn, shields recharging, repairs, weapons reloading. `engine_output`
 ## is the main engine's share of full power right now; `landed` refills.
@@ -273,6 +284,8 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 		_weapon_cooldowns[id] = float(_weapon_cooldowns[id]) - dt
 		if float(_weapon_cooldowns[id]) <= 0.0:
 			_weapon_cooldowns.erase(id)
+	if landed:
+		warp_fuel = minf(warp_fuel + WARP_FUEL_CAPACITY * GROUND_REFILL_FRACTION * dt, WARP_FUEL_CAPACITY)
 	if not resources_enabled:
 		powered = true
 		return
@@ -322,34 +335,161 @@ func is_destroyed() -> bool:
 
 func apply_fov_devices(devices: Array) -> void:
 	fov_devices.clear()
+	_dead_zones.clear()
 	for item in devices:
 		if typeof(item) != TYPE_DICTIONARY:
 			continue
 		fov_devices.append((item as Dictionary).duplicate(true))
-	radar_contacts.clear()
-	weapon_locks.clear()
 	queue_redraw()
 
 
-func clear_fov_contacts() -> void:
-	radar_contacts.clear()
-	weapon_locks.clear()
+## Where a device looks from, in ship-local units: a turret from its middle
+## (it turns about it), anything else from the muzzle edge.
+func device_local_origin(device: Dictionary) -> Vector2:
+	if float(device.get("turret_arc", 0.0)) > 0.0:
+		return device.get("center", Vector2.ZERO)
+	return device.get("local_origin", Vector2.ZERO)
 
 
-func set_fov_contacts(radar: Array[String], weapons: Array[String]) -> void:
-	radar_contacts = radar.duplicate()
-	weapon_locks = weapons.duplicate()
-	queue_redraw()
+## The way a device points in ship-local space, turret turn included.
+func device_local_facing(device: Dictionary) -> Vector2:
+	var local_facing: Vector2 = device.get("local_facing", Vector2.RIGHT)
+	return local_facing.rotated(float(turret_aim.get(int(device.get("instance_id", -1)), 0.0)))
 
 
 func device_world_origin(device: Dictionary) -> Vector2:
-	var local_origin: Vector2 = device.get("local_origin", Vector2.ZERO)
-	return global_position + local_origin.rotated(rotation)
+	return global_position + device_local_origin(device).rotated(rotation)
 
 
 func device_world_facing(device: Dictionary) -> Vector2:
-	var local_facing: Vector2 = device.get("local_facing", Vector2.RIGHT)
-	return local_facing.rotated(rotation)
+	return device_local_facing(device).rotated(rotation)
+
+
+## The mounted weapons in panel order: weapon_order first, any new ones after.
+func ordered_weapons() -> Array[Dictionary]:
+	var weapons: Array[Dictionary] = []
+	for device: Dictionary in fov_devices:
+		if str(device.get("kind", "")) == "weapon":
+			weapons.append(device)
+	weapons.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ia: int = weapon_order.find(int(a.get("instance_id", -1)))
+		var ib: int = weapon_order.find(int(b.get("instance_id", -1)))
+		if ia < 0:
+			ia = 1 << 20
+		if ib < 0:
+			ib = 1 << 20
+		return ia < ib
+	)
+	return weapons
+
+
+## Dead zones: for each weapon (instance id), which directions across its
+## turret arc - or, fixed, its cone - would put the ship in its line of fire,
+## sampled every DEAD_ZONE_STEP: {half, blocked: PackedByteArray}. Worked out
+## once per layout (apply_fov_devices clears it) and drawn red over the cones.
+var _dead_zones: Dictionary = {}
+const DEAD_ZONE_STEP := 0.035
+const DEAD_ZONE_FILL := Color(1.0, 0.2, 0.18, 0.13)
+const DEAD_ZONE_LINE := Color(1.0, 0.3, 0.25, 0.55)
+
+## How far out a shot's path is checked against the ship's own structure.
+const LINE_OF_FIRE_CHECK := 90.0
+const LINE_OF_FIRE_STEP := 0.3
+
+
+## True if the ship's own hull, cockpit or connectors stand in the way of
+## `device` firing along `direction` (ship-local) - a gun never shoots
+## through its own ship. Truss is an open frame and never blocks; the gun's
+## own cells are skipped.
+func is_shot_blocked(device: Dictionary, direction: Vector2) -> bool:
+	if direction.length_squared() < 1e-8:
+		return false
+	var dir: Vector2 = direction.normalized()
+	var from: Vector2 = device_local_origin(device)
+	var rects: Array = device.get("hull_rects", [])
+	var own: Array = device.get("ignore_rects", [])
+	var t: float = 0.0
+	while t < LINE_OF_FIRE_CHECK:
+		var point: Vector2 = from + dir * t
+		if not own.any(func(r: Rect2) -> bool: return r.has_point(point)):
+			if rects.any(func(r: Rect2) -> bool: return r.has_point(point)):
+				return true
+		t += LINE_OF_FIRE_STEP
+	return false
+
+
+func _dead_zone(device: Dictionary) -> Dictionary:
+	var id: int = int(device.get("instance_id", -1))
+	if _dead_zones.has(id):
+		return _dead_zones[id]
+	var arc: float = float(device.get("turret_arc", 0.0))
+	var span: float = deg_to_rad(arc if arc > 0.0 else float(device.get("angle_deg", 0.0)))
+	var half: float = span * 0.5
+	var base: Vector2 = device.get("local_facing", Vector2.RIGHT)
+	var count: int = int(ceil(span / DEAD_ZONE_STEP)) + 1
+	var blocked := PackedByteArray()
+	blocked.resize(count)
+	for i in count:
+		var offset: float = minf(-half + i * DEAD_ZONE_STEP, half)
+		blocked[i] = 1 if is_shot_blocked(device, base.rotated(offset)) else 0
+	var zone := {"half": half, "blocked": blocked}
+	_dead_zones[id] = zone
+	return zone
+
+
+## Red wedges over the directions between `from` and `to` (turn off the
+## placed facing, radians) where the gun would fire into its own ship.
+func _draw_dead_zone(device: Dictionary, from: float, to: float, origin: Vector2, reach: float, line_px: float) -> void:
+	var zone: Dictionary = _dead_zone(device)
+	var blocked: PackedByteArray = zone["blocked"]
+	var half: float = zone["half"]
+	var base: Vector2 = device.get("local_facing", Vector2.RIGHT)
+	var run: PackedVector2Array = PackedVector2Array()
+	for i in blocked.size():
+		var offset: float = minf(-half + i * DEAD_ZONE_STEP, half)
+		var inside: bool = offset >= from - 1e-4 and offset <= to + 1e-4
+		if inside and blocked[i] == 1:
+			run.append(origin + base.rotated(offset) * reach)
+			continue
+		_flush_dead_run(run, origin, line_px)
+		run = PackedVector2Array()
+	_flush_dead_run(run, origin, line_px)
+
+
+func _flush_dead_run(run: PackedVector2Array, origin: Vector2, line_px: float) -> void:
+	if run.size() < 2:
+		return
+	var wedge := PackedVector2Array([origin])
+	wedge.append_array(run)
+	draw_colored_polygon(wedge, DEAD_ZONE_FILL)
+	draw_line(origin, run[0], DEAD_ZONE_LINE, line_px, true)
+	draw_line(origin, run[run.size() - 1], DEAD_ZONE_LINE, line_px, true)
+
+
+func selected_device() -> Dictionary:
+	for device: Dictionary in fov_devices:
+		if int(device.get("instance_id", -1)) == selected_weapon:
+			return device
+	return {}
+
+
+## Turns the selected turret toward `world_pos`, as far as its arc allows.
+func aim_selected(world_pos: Vector2, dt: float) -> void:
+	aim_device(selected_device(), world_pos, dt)
+
+
+## Turns `device` (a turret) toward `world_pos`, as far as its arc allows.
+func aim_device(device: Dictionary, world_pos: Vector2, dt: float) -> void:
+	var arc: float = float(device.get("turret_arc", 0.0))
+	if device.is_empty() or arc <= 0.0:
+		return
+	var id: int = int(device["instance_id"])
+	var base: float = (device.get("local_facing", Vector2.RIGHT) as Vector2).angle()
+	var wanted: float = (to_local(world_pos) - device_local_origin(device)).angle()
+	var half: float = deg_to_rad(arc) * 0.5
+	var target: float = clampf(wrapf(wanted - base, -PI, PI), -half, half)
+	turret_aim[id] = move_toward(float(turret_aim.get(id, 0.0)), target, TURRET_TURN_SPEED * dt)
+	queue_redraw()
 
 
 func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
@@ -369,18 +509,10 @@ func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
 	return FovUtil.has_clear_los(local_origin, to_local, hull_rects, ignore_rects)
 
 
-## `target_radius`: a sniper beam stops that far short of `world_pos`, on the
-## target's surface.
-func try_fire_at(world_pos: Vector2, target_radius: float = 0.0) -> bool:
-	if weapon_locks.is_empty():
-		return false
-	return not fire_weapons_at(world_pos, target_radius).is_empty()
-
-
 ## Fires every loaded weapon whose cone holds `world_pos`, if there is the
 ## power for it; each shot costs energy and starts that weapon's reload.
 ## Returns the devices that fired (their `damage` is what the target takes).
-func fire_weapons_at(world_pos: Vector2, target_radius: float = 0.0) -> Array[Dictionary]:
+func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]:
 	var shots: Array[Dictionary] = []
 	if resources_enabled and not powered and not PlayerProgress.god_mode:
 		return shots
@@ -393,7 +525,12 @@ func fire_weapons_at(world_pos: Vector2, target_radius: float = 0.0) -> Array[Di
 		if not is_body_in_device_fov(device, world_pos):
 			continue
 		var id: int = int(device.get("instance_id", -1))
+		if only_id >= 0 and id != only_id:
+			continue
 		if _weapon_cooldowns.has(id):
+			continue
+		# Holds fire (costing nothing) while its own ship is in the way.
+		if is_shot_blocked(device, to_local(world_pos) - device_local_origin(device)):
 			continue
 		var cost: float = float(device.get("energy", 0.0)) * SHOT_ENERGY
 		if resources_enabled and energy_capacity > 0.0 and not PlayerProgress.god_mode:
@@ -403,24 +540,15 @@ func fire_weapons_at(world_pos: Vector2, target_radius: float = 0.0) -> Array[Di
 		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
 		shots.append(device)
 		if device.get("id", &"") == SNIPER_ID:
-			# Each sniper fires its own beam from its muzzle.
-			var muzzle: Vector2 = device_world_origin(device)
-			var hit: Vector2 = world_pos.move_toward(muzzle, minf(target_radius, muzzle.distance_to(world_pos)))
-			_sniper_beams.append({"device": device, "to": hit, "time": 0.0})
+			# Its long beam is spawned by solar_system.gd (SniperBeam).
 			sniper_fired = true
 			continue
-		var dist := device_world_origin(device).distance_to(world_pos)
-		if dist < best_range:
-			best_range = dist
-			_fire_flash_to = to_local(world_pos)
-			_fire_flash_timer = 0.35
-			fired = true
+		# The projectiles themselves are spawned by solar_system.gd (PlayerShot).
+		fired = true
 	if fired:
 		_laser_player.play()
 	if sniper_fired:
 		_sniper_player.play()
-	if fired or sniper_fired:
-		queue_redraw()
 	return shots
 
 
@@ -434,11 +562,16 @@ func _on_click_area_input_event(
 			ship_clicked.emit()
 
 
-## Manual attitude: A / D (or the arrows) turn, holding RMB points the nose
-## at the cursor, and either one cancels an attitude hold. With neither, an
+## Manual attitude: A / D (or the arrows) turn, which cancels an attitude
+## hold. (RMB aims the selected turret instead - solar_system.gd.) With neither, an
 ## active hold (Z prograde / C retrograde) steers the nose along the flight path.
 func update_rotation(delta: float) -> void:
 	var turn_rate: float = get_turn_rate() * precision_scale()
+	var flying: bool = (
+		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_D)
+		or Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_RIGHT)
+	)
+	_since_flight_input = 0.0 if flying else _since_flight_input + delta
 
 	var turn: float = 0.0
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -448,13 +581,6 @@ func update_rotation(delta: float) -> void:
 	if turn != 0.0:
 		attitude_hold = AttitudeHold.NONE
 		rotation = wrapf(rotation + turn * turn_rate * delta, -PI, PI)
-		return
-
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		attitude_hold = AttitudeHold.NONE
-		var to_cursor: Vector2 = get_global_mouse_position() - global_position
-		if to_cursor.length_squared() >= 1.0:
-			rotation = rotate_toward(rotation, to_cursor.angle(), turn_rate * delta)
 		return
 
 	if attitude_hold != AttitudeHold.NONE and hold_reference_velocity.length_squared() > 1e-6:
@@ -477,13 +603,6 @@ func get_turn_rate() -> float:
 ## 1, or PRECISION_SCALE while Shift is held.
 func precision_scale() -> float:
 	return PRECISION_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
-
-
-func update_autopilot_rotation(delta: float) -> void:
-	if autopilot_thrust == Vector2.ZERO:
-		return
-
-	rotation = rotate_toward(rotation, autopilot_thrust.angle(), get_turn_rate() * delta)
 
 
 func disengage_manual_main_engine() -> void:
@@ -509,14 +628,10 @@ func update_throttle(delta: float, is_realtime: bool = true) -> void:
 		return
 
 	if throttle_locked:
-		var segments_before: int = roundi(throttle * THROTTLE_SEGMENTS)
 		if Input.is_key_pressed(KEY_W):
 			throttle = clampf(throttle + lock_adjust_rate * delta, 0.0, 1.0)
 		elif Input.is_key_pressed(KEY_S):
 			throttle = clampf(throttle - lock_adjust_rate * delta, 0.0, 1.0)
-		var segments_after: int = roundi(throttle * THROTTLE_SEGMENTS)
-		if segments_after != segments_before:
-			_play_throttle_beep(segments_after)
 		return
 
 	# S cuts the engine at once; W spools it up.
@@ -525,16 +640,6 @@ func update_throttle(delta: float, is_realtime: bool = true) -> void:
 		return
 	var target := 1.0 if Input.is_key_pressed(KEY_W) else 0.0
 	throttle = move_toward(throttle, target, delta / throttle_ramp_time)
-
-
-## Segment n of the thrust bar (1..18) plays beep ceil(n / 2) - two segments
-## per sound. Dropping to empty plays the lowest one.
-func _play_throttle_beep(segments: int) -> void:
-	var index: int = clampi((maxi(segments, 1) - 1) / 2, 0, THROTTLE_BEEPS.size() - 1)
-	var player: AudioStreamPlayer = _throttle_beeps[_next_throttle_beep]
-	_next_throttle_beep = (_next_throttle_beep + 1) % _throttle_beeps.size()
-	player.stream = THROTTLE_BEEPS[index]
-	player.play()
 
 
 ## Manual engine output for this sim step: plain thrust along the nose, or
@@ -549,22 +654,25 @@ func get_manual_acceleration() -> Vector2:
 
 	# S: brake to a stop relative to the body we orbit.
 	if Input.is_key_pressed(KEY_S):
-		var brake: Vector2 = (-velocity_rel * ASSIST_RESPONSE).limit_length(assist_cap)
-		assist_brake_output = brake.length() / assist_cap
+		var brake_cap: float = ASSIST_BRAKE_ACCEL * precision_scale()
+		var brake: Vector2 = (-velocity_rel * ASSIST_RESPONSE).limit_length(brake_cap)
+		assist_brake_output = brake.length() / brake_cap
 		return brake
 
 	assist_brake_output = 0.0
-	if throttle <= 0.0:
-		# Engine off: coast.
-		return Vector2.ZERO
-
-	# The same push along the nose as the locked throttle, plus a vectored
-	# sideways push that cancels drift.
+	# A vectored sideways push that cancels drift, so the velocity swings
+	# round with the nose...
 	var forward := Vector2.RIGHT.rotated(rotation)
 	var side: Vector2 = forward.orthogonal()
 	var drift: float = velocity_rel.dot(side)
-	var lateral: float = clampf(-drift * ASSIST_RESPONSE, -assist_cap, assist_cap)
-	return get_thrust_acceleration() + side * lateral * throttle
+	var lateral: float = clampf(-drift * ASSIST_TURN_RESPONSE, -assist_cap, assist_cap)
+	if throttle <= 0.0:
+		if _since_flight_input > ASSIST_IDLE_TIME:
+			# Left alone: coast on the orbit.
+			return Vector2.ZERO
+		# ...and with the engine off, a slow bleed of forward speed.
+		return side * lateral - forward * velocity_rel.dot(forward) * ASSIST_COAST_DRAG
+	return get_thrust_acceleration() + side * lateral
 
 
 func toggle_flight_assist() -> void:
@@ -577,55 +685,25 @@ func get_thrust_acceleration() -> Vector2:
 
 	var direction := Vector2.RIGHT.rotated(rotation)
 	var acceleration: float = thrust_force * throttle * precision_scale() / ship_mass
+	# Fades out over the last 5% below the speed limit, so the ship settles on
+	# it instead of stuttering across it.
+	var forward_speed: float = hold_reference_velocity.dot(direction)
+	acceleration *= clampf((CRUISE_SPEED_LIMIT - forward_speed) / (CRUISE_SPEED_LIMIT * 0.05), 0.0, 1.0)
 
 	return direction * acceleration
 
 
-func set_autopilot_thrust(command: Vector2) -> void:
-	autopilot_thrust = Vector2(
-		clampf(command.x, -1.0, 1.0),
-		clampf(command.y, -1.0, 1.0)
-	)
-
-
-func clear_autopilot_thrust() -> void:
-	autopilot_thrust = Vector2.ZERO
-
-
-## The autopilot flies on the main engine only: it turns the nose onto the
-## burn direction (update_autopilot_rotation) and fires as much of the burn as
-## the nose is lined up with.
-func get_autopilot_acceleration(max_force: float) -> Vector2:
-	if autopilot_thrust == Vector2.ZERO or not has_fuel():
-		autopilot_main_engine_output = 0.0
-		return Vector2.ZERO
-
-	var forward: Vector2 = Vector2.RIGHT.rotated(rotation)
-	var alignment: float = forward.dot(autopilot_thrust.normalized())
-	if alignment <= 0.0:
-		autopilot_main_engine_output = 0.0
-		return Vector2.ZERO
-	autopilot_main_engine_output = autopilot_thrust.length() * alignment
-	return forward * (autopilot_main_engine_output * max_force / ship_mass)
-
-
 func _process(delta: float) -> void:
-	if _fire_flash_timer > 0.0:
-		_fire_flash_timer = maxf(0.0, _fire_flash_timer - delta)
-	for i in range(_sniper_beams.size() - 1, -1, -1):
-		_sniper_beams[i]["time"] = float(_sniper_beams[i]["time"]) + delta
-		if float(_sniper_beams[i]["time"]) >= SNIPER_BEAM_TIME:
-			_sniper_beams.remove_at(i)
 	queue_redraw()
 	_update_main_engine_sound(delta)
 
 
-## Manual throttle or the autopilot's main-engine burn, whichever is higher.
-## Fades in and out rather than cutting, and falls silent on pause.
+## The throttle, or the assist's braking, whichever is higher. Fades in and
+## out rather than cutting, and falls silent on pause.
 func _update_main_engine_sound(delta: float) -> void:
 	var level: float = 0.0
 	if not paused:
-		level = clampf(maxf(maxf(throttle, autopilot_main_engine_output), assist_brake_output), 0.0, 1.0)
+		level = clampf(maxf(throttle, assist_brake_output), 0.0, 1.0)
 	var target: float = lerpf(0.45, 1.0, level) if level > 0.01 else 0.0
 	_main_engine_gain = move_toward(_main_engine_gain, target, MAIN_ENGINE_FADE_RATE * delta)
 
@@ -655,11 +733,37 @@ func set_built_visual(visual: Dictionary) -> void:
 
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 
-const ENGINE_OUTER_HALF_WIDTH := 3.0
 const ENGINE_MAX_LENGTH := 11.0
-const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
-const MAIN_MID_COLOR := Color(1.0, 0.65, 0.2)
-const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
+## Main engine exhaust: RC Art "Boost A" pixel frames, recoloured and
+## softened (textures/fx/engine_flame_*.png, nozzle on the right edge, the
+## flame trailing left), played at FLAME_FPS.
+const FLAME_FRAMES: Array[Texture2D] = [
+	preload("res://textures/fx/engine_flame_1.png"),
+	preload("res://textures/fx/engine_flame_2.png"),
+	preload("res://textures/fx/engine_flame_3.png"),
+]
+const FLAME_FPS := 14.0
+
+
+## The flame frame for this moment; `offset` staggers several nozzles.
+static func flame_frame(offset: int = 0) -> Texture2D:
+	var i: int = int(Time.get_ticks_msec() / 1000.0 * FLAME_FPS) + offset
+	return FLAME_FRAMES[posmod(i, FLAME_FRAMES.size())]
+
+
+## Draws the exhaust on `canvas` with its nozzle at `tip`, trailing along -x,
+## `length` long at full size; `level` 0..1 is the throttle.
+static func draw_flame(canvas: CanvasItem, tip: Vector2, length: float, level: float, offset: int = 0) -> void:
+	var texture: Texture2D = flame_frame(offset)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var flicker: float = 0.9 + 0.1 * sin(t * 23.0 + offset * 1.7)
+	var long: float = length * lerpf(0.35, 1.0, level) * flicker
+	var aspect: float = texture.get_height() / float(texture.get_width())
+	var tall: float = length * aspect * 0.8 * lerpf(0.65, 1.0, level)
+	# A soft, wider copy underneath for glow, then the flame itself.
+	var glow := Rect2(tip.x - long * 1.25, tip.y - tall * 0.7, long * 1.25, tall * 1.4)
+	canvas.draw_texture_rect(texture, glow, false, Color(1.0, 0.6, 0.3, 0.3 * level))
+	canvas.draw_texture_rect(texture, Rect2(tip.x - long, tip.y - tall * 0.5, long, tall), false, Color(1, 1, 1, lerpf(0.6, 1.0, level)))
 
 
 var MARKER_POINTS := PackedVector2Array([
@@ -680,6 +784,7 @@ func _draw() -> void:
 		# the weapon and radar cones start from.
 		draw_texture_rect(built_visual["texture"], built_visual["rect"], false)
 		engine_points = built_visual["engines"]
+		_draw_turrets()
 	elif true_scale:
 		var texture_size: Vector2 = SHIP_TEXTURE.get_size()
 		var draw_size := Vector2(
@@ -704,44 +809,10 @@ func _draw() -> void:
 			for point: Vector2 in engine_points:
 				_draw_engine_flame(point)
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		draw_line(Vector2.ZERO, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.35), 1.0)
-
-	if _fire_flash_timer > 0.0:
-		var alpha := clampf(_fire_flash_timer / 0.35, 0.0, 1.0)
-		draw_line(Vector2.ZERO, _fire_flash_to, Color(1.0, 0.45, 0.2, 0.85 * alpha), 2.0)
-
-	for beam in _sniper_beams:
-		_draw_sniper_beam(beam)
-
-
-## A sniper shot: a yellow beam that shoots out to the target in a blink,
-## flares where it hits, then thins and fades. Sizes are in screen pixels.
-func _draw_sniper_beam(beam: Dictionary) -> void:
-	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
-	var t: float = float(beam["time"]) / SNIPER_BEAM_TIME
-	var grow: float = clampf(t / SNIPER_BEAM_GROW, 0.0, 1.0)
-	var fade: float = 1.0 - smoothstep(SNIPER_BEAM_GROW, 1.0, t)
-	# From the muzzle as it is now, so the beam stays on the moving ship.
-	var from: Vector2 = to_local(device_world_origin(beam["device"]))
-	var to: Vector2 = to_local(beam["to"])
-	var tip: Vector2 = from.lerp(to, grow)
-	# Wide soft glow, a bright band, then a white-hot core.
-	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.1 * fade), 18.0 * px * (0.5 + 0.5 * fade))
-	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.25 * fade), 9.0 * px * (0.5 + 0.5 * fade))
-	draw_line(from, tip, Color(SNIPER_GLOW_COLOR, 0.8 * fade), 4.0 * px * (0.4 + 0.6 * fade))
-	draw_line(from, tip, Color(SNIPER_CORE_COLOR, fade), 1.8 * px)
-	# Muzzle flash.
-	var flash: float = 1.0 - smoothstep(0.0, 0.35, t)
-	if flash > 0.0:
-		draw_circle(from, 12.0 * px * flash, Color(SNIPER_GLOW_COLOR, 0.45 * flash))
-		draw_circle(from, 5.0 * px * flash, Color(SNIPER_CORE_COLOR, 0.9 * flash))
-	# Impact flare once the beam lands.
-	if grow >= 1.0:
-		var hit: float = 1.0 - smoothstep(SNIPER_BEAM_GROW, 0.7, t)
-		draw_circle(to, 30.0 * px * hit, Color(SNIPER_GLOW_COLOR, 0.15 * hit))
-		draw_circle(to, 14.0 * px * hit, Color(SNIPER_GLOW_COLOR, 0.4 * hit))
-		draw_circle(to, 6.0 * px * hit, Color(SNIPER_CORE_COLOR, 0.95 * hit))
+	# RMB aims the selected turret: a faint line from it to the cursor.
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not selected_device().is_empty():
+		var from: Vector2 = device_local_origin(selected_device())
+		draw_line(from, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.3), 1.0)
 
 
 func _draw_fov_cones() -> void:
@@ -749,22 +820,44 @@ func _draw_fov_cones() -> void:
 		return
 	# Ship visual scale (screen-space sizing) must not stretch world-SU cones.
 	var inv_scale := 1.0 / maxf(scale.x, 0.0001)
+	# Outlines a steady 1.2 screen pixels at any zoom, so they stay crisp.
+	var line_px: float = 1.2 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
 	for device in fov_devices:
-		var local_origin: Vector2 = device.get("local_origin", Vector2.ZERO) * inv_scale
-		var local_facing: Vector2 = device.get("local_facing", Vector2.RIGHT)
+		# Radars sweep all round (CombatControl draws their scans), no cone.
+		if str(device.get("kind", "")) == "radar":
+			continue
+		var local_origin: Vector2 = device_local_origin(device) * inv_scale
+		var local_facing: Vector2 = device_local_facing(device)
 		var angle_deg := float(device.get("angle_deg", 0.0))
 		var range_su := float(device.get("range", 0.0)) * inv_scale
 		var is_weapon := str(device.get("kind", "")) == "weapon"
+		# Weapons grey (the selected one brighter), radars cyan.
+		var picked: bool = is_weapon and int(device.get("instance_id", -1)) == selected_weapon
 		var fill := (
-			Color(0.9, 0.25, 0.2, 0.08) if is_weapon
+			Color(0.8, 0.83, 0.88, 0.1 if picked else 0.05) if is_weapon
 			else Color(0.25, 0.75, 0.85, 0.07)
 		)
 		var outline := (
-			Color(0.95, 0.4, 0.3, 0.35) if is_weapon
+			Color(0.85, 0.88, 0.92, 0.55 if picked else 0.25) if is_weapon
 			else Color(0.45, 0.9, 1.0, 0.3)
 		)
 		var hull_rects: Array = _scale_rects(device.get("hull_rects", []), inv_scale)
 		var ignore_rects: Array = _scale_rects(device.get("ignore_rects", []), inv_scale)
+		# A selected turret also shows how far it can turn, faintly, with the
+		# part where it would fire into its own ship in red.
+		var turret_arc: float = float(device.get("turret_arc", 0.0))
+		if picked and turret_arc > 0.0:
+			FovUtil.draw_cone_rects(
+				self, local_origin, device.get("local_facing", Vector2.RIGHT), turret_arc, range_su,
+				Color(0.8, 0.83, 0.88, 0.03), Color(0.85, 0.88, 0.92, 0.18), line_px, hull_rects, ignore_rects
+			)
+			var half_arc: float = deg_to_rad(turret_arc) * 0.5
+			_draw_dead_zone(device, -half_arc, half_arc, local_origin, range_su, line_px)
+		elif is_weapon:
+			# The cone it fires in now: red where the ship is in the way.
+			var aim_off: float = float(turret_aim.get(int(device.get("instance_id", -1)), 0.0))
+			var half_cone: float = deg_to_rad(angle_deg) * 0.5
+			_draw_dead_zone(device, aim_off - half_cone, aim_off + half_cone, local_origin, range_su, line_px)
 		FovUtil.draw_cone_rects(
 			self,
 			local_origin,
@@ -773,10 +866,22 @@ func _draw_fov_cones() -> void:
 			range_su,
 			fill,
 			outline,
-			1.0,
+			line_px,
 			hull_rects,
 			ignore_rects
 		)
+
+
+## Turret guns over the hull, each turned by its aim; the selected one ringed.
+func _draw_turrets() -> void:
+	for turret: Dictionary in built_visual.get("turrets", []):
+		var id: int = int(turret["id"])
+		var size_local: Vector2 = turret["size"]
+		draw_set_transform(turret["center"], float(turret_aim.get(id, 0.0)), Vector2.ONE)
+		draw_texture_rect(turret["texture"], Rect2(-size_local * 0.5, size_local), false)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		if id == selected_weapon:
+			draw_arc(turret["center"], size_local.length() * 0.55, 0.0, TAU, 32, Color(0.85, 0.9, 1.0, 0.8), 0.25)
 
 
 func _scale_rects(rects: Array, inv_scale: float) -> Array:
@@ -792,79 +897,6 @@ func _image_to_local(frac: Vector2, draw_size: Vector2) -> Vector2:
 	return ((frac - Vector2(0.5, 0.5)) * draw_size).rotated(PI * 0.5)
 
 
-# The edge waves sinusoidally instead of being a perfectly straight triangle -
-# same approach as the main engine (see ship_blueprint_panel.gd).
-func _draw_wavy_flame(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, color: Color
-) -> void:
-	var segments := 4
-	var left_points := PackedVector2Array()
-	var right_points := PackedVector2Array()
-
-	for i in range(segments + 1):
-		var f: float = float(i) / float(segments)
-		var pos: Vector2 = tip + direction * (length * f)
-		var taper: float = 1.0 - f
-		var wobble: float = sin(t * 16.0 + f * 6.0) * half_width * 0.2 * f
-		var width: float = half_width * taper + wobble
-		left_points.append(pos + side * width)
-		right_points.append(pos - side * width)
-
-	var points := PackedVector2Array()
-	points.append_array(left_points)
-	right_points.reverse()
-	points.append_array(right_points)
-	draw_colored_polygon(points, color)
-
-
-# A few tiny sparks breaking off the stream, flickering independently
-# of the main flame - same approach as ship_blueprint_panel.gd, so the
-# ship looks identical out in space.
-func _draw_sparks(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
-) -> void:
-	var spark_count := 3
-	for i in range(spark_count):
-		var phase_seed: float = float(i) * 17.3
-		var f: float = fmod(t * 0.7 + phase_seed, 1.0)
-		var pos: Vector2 = tip + direction * (length * (0.35 + f * 0.9))
-		var drift: float = sin(t * 9.0 + phase_seed) * half_width * 0.5 * f
-		pos += side * drift
-		var alpha: float = (1.0 - f) * 0.8
-		var radius: float = maxf(0.4, 0.9 * (1.0 - f * 0.6) * (half_width / 3.0))
-		draw_circle(pos, radius, Color(spark_color, alpha))
-
-
-# Multi-layer main engine flame (outer + middle wavy-flame, triangle core,
-# sparks) - same look as the ship preview in the bottom-right corner
-# (ship_blueprint_panel.gd).
+## One engine's exhaust (draw_flame) - the local view draws the same.
 func _draw_engine_flame(tip: Vector2) -> void:
-	var direction := Vector2.LEFT
-	var side: Vector2 = direction.orthogonal()
-
-	var t: float = Time.get_ticks_msec() / 1000.0
-	var flicker: float = 0.85 + 0.15 * sin(t * 24.0) + 0.08 * sin(t * 61.0 + 1.3)
-	var length: float = ENGINE_MAX_LENGTH * throttle * flicker
-
-	_draw_wavy_flame(
-		tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t,
-		Color(MAIN_OUTER_COLOR, 0.55 * flicker)
-	)
-
-	var mid_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.75
-	_draw_wavy_flame(
-		tip, direction, side, mid_half_width, length * 0.8, t + 3.1,
-		Color(MAIN_MID_COLOR, 0.7 * flicker)
-	)
-
-	var inner_half_width: float = ENGINE_OUTER_HALF_WIDTH * 0.4
-	draw_colored_polygon(
-		PackedVector2Array([
-			tip + side * inner_half_width,
-			tip - side * inner_half_width,
-			tip + direction * (length * 0.6)
-		]),
-		Color(MAIN_CORE_COLOR, 0.95 * flicker)
-	)
-
-	_draw_sparks(tip, direction, side, ENGINE_OUTER_HALF_WIDTH, length, t, Color(1.0, 0.8, 0.4))
+	draw_flame(self, tip, ENGINE_MAX_LENGTH, throttle, int(tip.y * 7.0))

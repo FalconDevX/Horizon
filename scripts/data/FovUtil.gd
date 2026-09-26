@@ -5,8 +5,10 @@ extends RefCounted
 ## Rot 0 faces +X (right edge of the module = muzzle / LOS exit).
 ## Rays that leave free space and then hit hull cells are blocked.
 
-## World SU mapped to one shipyard cell when previewing cones.
-const BUILDER_SU_PER_CELL := 250.0
+## World SU mapped to one shipyard cell when previewing cones (3x since the
+## weapon ranges went up 3x - ModuleCatalog.WEAPON_RANGE_SCALE - so previews
+## keep their size).
+const BUILDER_SU_PER_CELL := 750.0
 ## Grid cell → ship-local offset on the orbital map (keeps mounts near the hull icon).
 const WORLD_UNITS_PER_CELL := 1.8
 const CONE_SEGMENTS := 28

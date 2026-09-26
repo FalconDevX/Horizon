@@ -51,8 +51,8 @@ static func amount(id: StringName) -> int:
 	return inventory.count(id)
 
 
-## What the hold can put towards a cost in `id`: `id` plus everything that
-## pays like it (TechTree.EQUIVALENTS - frozen moonbloom for moonbloom).
+## What the hold has of `id` plus what always pays like it (frozen moonbloom
+## for moonbloom) - the wildcards not counted; `payment` adds those.
 static func stock(id: StringName) -> int:
 	var total := 0
 	for other: StringName in TechTree.payable_with(id):
@@ -90,11 +90,32 @@ static func missing_requirements(node: Dictionary) -> Array[String]:
 
 
 static func can_afford(node: Dictionary) -> bool:
+	return not payment(node).is_empty() or TechTree.unlock_cost(node).is_empty()
+
+
+## What unlocking `node` would take from the hold: the recipe's resources,
+## with any shortfall made up from their substitutes (TechTree.substitutes_for).
+## {} if the hold cannot cover it.
+static func payment(node: Dictionary) -> Dictionary:
 	var cost: Dictionary = TechTree.unlock_cost(node)
+	var spend: Dictionary = {}
+	var left := func(id: StringName) -> int: return amount(id) - int(spend.get(id, 0))
 	for id: StringName in cost:
-		if stock(id) < int(cost[id]):
-			return false
-	return true
+		var need: int = int(cost[id])
+		var take: int = mini(left.call(id), need)
+		if take > 0:
+			spend[id] = int(spend.get(id, 0)) + take
+		need -= take
+		for sub: StringName in TechTree.substitutes_for(node, id):
+			if need <= 0:
+				break
+			var from_sub: int = mini(left.call(sub), need)
+			if from_sub > 0:
+				spend[sub] = int(spend.get(sub, 0)) + from_sub
+				need -= from_sub
+		if need > 0:
+			return {}
+	return spend
 
 
 static func can_unlock(node: Dictionary) -> bool:
@@ -105,13 +126,8 @@ static func can_unlock(node: Dictionary) -> bool:
 static func unlock(node: Dictionary) -> bool:
 	if not can_unlock(node):
 		return false
-	var cost: Dictionary = TechTree.unlock_cost(node)
-	for id: StringName in cost:
-		# The id itself first, then its equivalents.
-		var left: int = cost[id]
-		for other: StringName in TechTree.payable_with(id):
-			var take: int = mini(left, amount(other))
-			inventory.remove(other, take)
-			left -= take
+	var spend: Dictionary = payment(node)
+	for id: StringName in spend:
+		inventory.remove(id, int(spend[id]))
 	_unlocked[node["id"]] = true
 	return true

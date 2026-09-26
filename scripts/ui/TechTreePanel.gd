@@ -98,11 +98,14 @@ func _refresh_resource_bar() -> void:
 		_resource_bar.add_child(item)
 
 
-## Every resource some cost names, in the order the tree first uses them.
+## Every resource some cost names, in the order the tree first uses them,
+## then the wildcards that can stand in for them.
 static func _recipe_resources() -> Array[StringName]:
 	var ids: Array[StringName] = []
 	for node: Dictionary in TechTree.NODES:
 		for id: StringName in TechTree.recipe(node):
 			if not ids.has(id):
 				ids.append(id)
+	for id: StringName in TechTree.WILDCARDS:
+		ids.append(id)
 	return ids

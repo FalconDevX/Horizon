@@ -11,11 +11,18 @@ extends RefCounted
 ## cockpit) is open from the start; every other node, tier 1 included, is
 ## bought. Costs name ResourceDeposits types - what the player gathers on
 ## planets (the board's "Snow wurm" is ice_wurm, "Moonbloom" is beanstalk).
-## Moonbloom and frozen moonbloom pay alike (EQUIVALENTS); slime jelly, eggs
-## and silver spheres are wildcards and in no cost. Drones and the fabricator
-## have no amounts on the board yet and keep placeholder costs. The
-## `requires` links are not on the board - they follow each branch's natural
+## Drones and the fabricator have no amounts on the board yet and keep
+## placeholder costs. Branches follow the board's "Receptury modułów" table
+## (fuel tanks under propulsion, shields under structure). The `requires`
+## links are not on the board - they follow each branch's natural
 ## progression.
+##
+## Substitutes (PlayerProgress pays with them when the named resource runs
+## short, in this order): frozen moonbloom for moonbloom (SUBSTITUTES - the
+## same flower recoloured, as the bones are); then the wildcards, which are
+## in no cost themselves - slime jelly for anything in a weapon or structure
+## cost, silver spheres for anything in a propulsion, power or support cost,
+## and egg for anything at all.
 
 enum Branch { STRUCTURE, WEAPONS, PROPULSION, POWER, SUPPORT }
 
@@ -31,11 +38,14 @@ const BRANCH_ORDER: Array[Branch] = [
 	Branch.STRUCTURE, Branch.WEAPONS, Branch.PROPULSION, Branch.POWER, Branch.SUPPORT,
 ]
 
-## Resources that pay for each other in a cost: a cost in the key can be
-## paid with any mix of the listed ids (frozen moonbloom is moonbloom
-## recoloured, as the bones are).
-const EQUIVALENTS := {
-	&"beanstalk": [&"beanstalk", &"frozen_beanstalk"],
+## Resources that stand in for one short in a cost, in the order they are
+## spent (see the header).
+const SUBSTITUTES := {&"beanstalk": [&"frozen_beanstalk"]}
+## Wildcard → the branches whose costs it can make up; &"egg" covers all.
+const WILDCARDS := {
+	&"slime_jelly": [Branch.WEAPONS, Branch.STRUCTURE],
+	&"silver_spheres": [Branch.PROPULSION, Branch.POWER, Branch.SUPPORT],
+	&"egg": [Branch.STRUCTURE, Branch.WEAPONS, Branch.PROPULSION, Branch.POWER, Branch.SUPPORT],
 }
 
 const TIER_NAMES := {1: "Basic", 2: "Advanced", 3: "Elite"}
@@ -62,6 +72,11 @@ const NODES := [
 		"cost": {&"scrap": 2, &"gold_ore": 1, &"pink_crystal": 1}, "requires": [&"hull_light"], "modules": [&"hull_standard"]},
 	{"id": &"hull_heavy", "title": "Heavy Hull", "branch": Branch.STRUCTURE, "tier": 3,
 		"cost": {&"gold_ore": 1, &"pink_crystal": 1, &"gold_pillar": 1}, "requires": [&"hull_standard"], "modules": [&"hull_heavy"]},
+
+	{"id": &"shields", "title": "Shields", "branch": Branch.STRUCTURE, "tier": 2,
+		"cost": {&"silver_ore": 6, &"ice_crystal": 2, &"beanstalk": 4}, "requires": [&"hull_light"],
+		"modules": [&"shield_deflector", &"shield_barrier", &"shield_aegis"],
+		"note": "An extra shield bar on top of HP; switchable, costs power."},
 
 	# --- Weapons ---
 	{"id": &"revolver", "title": "Revolver Cannon", "branch": Branch.WEAPONS, "tier": 1,
@@ -101,6 +116,10 @@ const NODES := [
 		"cost": {&"scrap": 4, &"ice_crystal": 4, &"pink_crystal": 4, &"sky_stone": 4, &"gold_pillar": 2, &"ice_wurm": 2}, "requires": [&"engine_plasma"],
 		"modules": [&"engine_fusion_s", &"engine_fusion_m", &"engine_fusion_l"]},
 
+	{"id": &"fuel_tank", "title": "Fuel Tank", "branch": Branch.PROPULSION, "tier": 1,
+		"cost": {&"scrap": 4}, "requires": [],
+		"modules": [&"fuel_s", &"fuel_s_armored", &"fuel_m", &"fuel_m_armored", &"fuel_l", &"fuel_l_armored"]},
+
 	# --- Power & storage ---
 	{"id": &"generator", "title": "Generator (fuel)", "branch": Branch.POWER, "tier": 1,
 		"cost": {&"scrap": 3, &"silver_ore": 3, &"gold_ore": 3}, "requires": [], "modules": [&"util_generator"]},
@@ -110,9 +129,6 @@ const NODES := [
 		"cost": {&"scrap": 2}, "requires": [],
 		"modules": [&"battery_s", &"battery_s_armored", &"battery_m", &"battery_m_armored",
 			&"battery_l", &"battery_l_armored"]},
-	{"id": &"fuel_tank", "title": "Fuel Tank", "branch": Branch.POWER, "tier": 1,
-		"cost": {&"scrap": 4}, "requires": [],
-		"modules": [&"fuel_s", &"fuel_s_armored", &"fuel_m", &"fuel_m_armored", &"fuel_l", &"fuel_l_armored"]},
 
 	# --- Support ---
 	{"id": &"sonar", "title": "Sonar / Radar", "branch": Branch.SUPPORT, "tier": 1,
@@ -122,10 +138,6 @@ const NODES := [
 	{"id": &"repair", "title": "Repair Module", "branch": Branch.SUPPORT, "tier": 2,
 		"cost": {&"gold_ore": 6, &"sky_stone": 2}, "requires": [&"sonar"], "modules": [&"util_repair"],
 		"note": "Repairs neighbouring modules; power hungry, can be switched off."},
-	{"id": &"shields", "title": "Shields", "branch": Branch.SUPPORT, "tier": 2,
-		"cost": {&"silver_ore": 6, &"ice_crystal": 2, &"beanstalk": 4}, "requires": [&"generator"],
-		"modules": [&"shield_deflector", &"shield_barrier", &"shield_aegis"],
-		"note": "An extra shield bar on top of HP; switchable, costs power."},
 	{"id": &"fabricator", "title": "Fabricator", "branch": Branch.SUPPORT, "tier": 2,
 		"cost": {&"scrap": 10, &"gold_ore": 10, &"pink_crystal": 10}, "requires": [&"repair"], "modules": [&"util_fabricator"],
 		"note": "No recipe on the board yet - this one is a placeholder."},
@@ -167,6 +179,23 @@ static func recipe(node: Dictionary) -> Array[StringName]:
 	return ids
 
 
-## The ids that pay for `id` in a cost (just `id` unless EQUIVALENTS says more).
-static func payable_with(id: StringName) -> Array:
-	return EQUIVALENTS.get(id, [id])
+## `id` and what pays like it in any cost (frozen moonbloom for moonbloom) -
+## the wildcards not included.
+static func payable_with(id: StringName) -> Array[StringName]:
+	var ids: Array[StringName] = [id]
+	for sub: StringName in SUBSTITUTES.get(id, []):
+		ids.append(sub)
+	return ids
+
+
+## What can make up a shortfall of `resource` in `node`'s cost, in the order
+## it is spent: SUBSTITUTES, then the wildcards whose branches include the
+## node's (egg last).
+static func substitutes_for(node: Dictionary, resource: StringName) -> Array[StringName]:
+	var list: Array[StringName] = []
+	for sub: StringName in SUBSTITUTES.get(resource, []):
+		list.append(sub)
+	for wildcard: StringName in WILDCARDS:
+		if wildcard != resource and (WILDCARDS[wildcard] as Array).has(node["branch"]):
+			list.append(wildcard)
+	return list

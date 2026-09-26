@@ -1,0 +1,2588 @@
+AUTOPILOT ARCHIVE
+=================
+
+The orbital autopilot (local orbit changes + station keeping) and the
+interplanetary autopilot (route planning, transfers, Lambert intercept,
+capture) were removed from the game on 2026-09-26: with no time
+acceleration and the warp drive for travel between planets they no longer
+made sense. This file keeps the code, verbatim, as it was at removal, so it
+can be brought back or mined for parts. It is not loaded by Godot.
+
+Where things lived:
+- solar_system.gd  - the phase machine, targeting input (F, Tab, wheel),
+                     route planning, target orbit / route visuals, HUD
+                     (section 1 below)
+- ship.gd          - autopilot thrust and turning (section 2)
+- interplanetary_planner.gd - the off-thread transfer planner (section 3)
+- autopilot_panel.gd        - the top-right AUTOPILOT HUD panel (section 4)
+- solar_system.tscn - nodes TargetOrbit, InterplanetaryRoute,
+                     DepartureBurnMarker, TransferBurnMarker, ArrivalMarker
+                     (under BehindWorld), HUD/AutopilotPanel, AutopilotOnSound
+- Controls: F arm / engage, Tab cycle target, mouse wheel = target altitude
+  while arming, manual input disengaged it (sounds/autopilot_off.wav).
+
+orbit_math.gd stays in the game (the trajectory predictor and the orbit
+readouts use it); its transfer helpers (lambert, closest_approach_*) were
+used only by the autopilot.
+
+
+==============================================================================
+1. solar_system.gd
+==============================================================================
+
+const AUTOPILOT_OFF_SOUND := preload("res://sounds/autopilot_off.wav")
+
+
+enum AutopilotPhase {
+	OFF,
+	ESCAPE_BURN,
+	INTERPLANETARY_CRUISE,
+	CAPTURE_BURN,
+	WAIT_FIRST_BURN,
+	FIRST_BURN,
+	COAST,
+	SECOND_BURN,
+	COMPLETE,
+	STATION_KEEPING_WAIT,
+	STATION_KEEPING_BURN,
+	DEPARTURE_WAIT,
+	DEPARTURE_BURN,
+	DEPARTURE_COAST,
+	TRANSFER_BURN,
+	TRANSFER_COAST,
+	ARRIVAL_COAST,
+	ARRIVAL_BURN
+}
+
+
+@onready var target_orbit: Line2D = $BehindWorld/TargetOrbit
+
+
+@onready var interplanetary_route_line: Line2D = $BehindWorld/InterplanetaryRoute
+
+
+@onready var departure_burn_marker: Node2D = $BehindWorld/DepartureBurnMarker
+
+
+@onready var transfer_burn_marker: Node2D = $BehindWorld/TransferBurnMarker
+
+
+@onready var arrival_marker: Node2D = $BehindWorld/ArrivalMarker
+
+
+@onready var autopilot_panel: Control = $HUD/AutopilotPanel
+
+
+@onready var autopilot_on_sound: AudioStreamPlayer = $AutopilotOnSound
+
+
+var autopilot_off_sound: AudioStreamPlayer
+
+
+var target_orbit_flash := 0.0
+
+
+var autopilot_selecting := false
+
+
+var autopilot_active := false
+
+
+var autopilot_body: Node2D = null
+
+
+var autopilot_target_altitude := 2000.0
+
+
+var autopilot_target_pe_altitude := 2000.0
+
+
+var autopilot_target_ap_altitude := 2000.0
+
+
+var autopilot_phase: AutopilotPhase = AutopilotPhase.OFF
+
+
+var autopilot_raising := true
+
+
+var autopilot_planned_delta_v1 := 0.0
+
+
+var autopilot_planned_delta_v2 := 0.0
+
+
+var autopilot_remaining_delta_v := 0.0
+
+
+var station_keeping_correcting_apoapsis := true
+
+
+var station_keeping_wait_time := 0.0
+
+
+var autopilot_departure_body: Node2D = null
+
+
+var autopilot_selectable_bodies: Array[Node2D] = []
+
+
+var route_plan: Dictionary = {}
+
+
+var route_task_id := -1
+
+
+var route_task_holder: Dictionary = {}
+
+
+var route_task_phase: AutopilotPhase = AutopilotPhase.OFF
+
+
+var route_replan_timer := 0.0
+
+
+var transfer_dv := Vector2.ZERO
+
+
+var transfer_delivered := Vector2.ZERO
+
+
+var last_transfer_burn_end := -INF
+
+
+var _cruise_burning := false
+
+
+## Planned free-flight intercept (plan_intercept): arrival sim time (-1 = none),
+## transfer direction, and the velocity the transfer wants right now.
+var _intercept_arrival := -1.0
+
+
+var _intercept_prograde := true
+
+
+var _intercept_velocity := Vector2.ZERO
+
+
+var _intercept_resolve_timer := 0.0
+
+
+const TARGET_ORBIT_COLOR := Color(0.55, 1.0, 0.62, 0.8)
+
+
+const TARGET_ORBIT_FLASH_COLOR := Color(0.8, 1.0, 0.85, 1.0)
+
+
+const TARGET_ORBIT_FLASH_FADE := 4.0
+
+
+const AUTOPILOT_TOLERANCE := 40.0
+
+
+const STATION_KEEPING_TRIGGER := 600.0
+
+
+const STATION_KEEPING_EMERGENCY_FACTOR := 2.5
+
+
+const STATION_KEEPING_MAX_WAIT_FRACTION := 0.55
+
+
+const AUTOPILOT_SCROLL_STEP := 1000.0
+
+
+const AUTOPILOT_SCROLL_STEP_FRACTION := 0.02
+
+
+const AUTOPILOT_MIN_ALTITUDE := 400.0
+
+
+const APSIS_BURN_WINDOW := 60.0
+
+
+const APSIS_BURN_MAX_ANGLE := deg_to_rad(60.0)
+
+
+const INTERPLANETARY_WINDOW_TOLERANCE := 0.12
+
+
+const INTERPLANETARY_ESCAPE_SOI_FACTOR := 1.5
+
+
+const INTERPLANETARY_HOMING_SOI_FACTOR := 4.0
+
+
+const INTERPLANETARY_APPROACH_TIME := 90.0
+
+
+## Speed error (units/s) that starts a cruise correction burn.
+const CRUISE_BURN_START := 1.0
+
+
+## Flight times tried when planning an intercept from free flight.
+const INTERCEPT_SAMPLES := 64
+
+
+## Planning penalty per second of flight, in units/s of delta-v: 0.02 makes an
+## hour of flight worth 72 units/s, so fast direct routes win.
+const INTERCEPT_TIME_COST := 0.02
+
+
+## Replan once the planned arrival is closer than this (s) - the homing
+## branch should have taken over by then.
+const INTERCEPT_MIN_TIME_LEFT := 20.0
+
+
+const ROUTE_REPLAN_INTERVAL := 0.5
+
+
+const ROUTE_CORRECTION_COOLDOWN := 300.0
+
+
+const ROUTE_MIN_CORRECTION_DV := 0.012
+
+
+const ROUTE_MIN_TIME_TO_ARRIVAL := 200.0
+
+
+func start_autopilot_selection() -> void:
+	autopilot_selecting = true
+	autopilot_active = false
+	autopilot_phase = AutopilotPhase.OFF
+	autopilot_body = get_current_orbit_body()
+	ship.clear_autopilot_thrust()
+
+	if autopilot_body == null:
+		autopilot_selecting = false
+		return
+
+	# Flying free (not in any planet's SOI)? Default to the nearest planet
+	# rather than to a solar orbit at the ship's current distance - that is
+	# almost always what the player wants. Tab still reaches the sun.
+	if autopilot_body == sun:
+		var nearby: Node2D = get_nearest_planet()
+		if nearby != null:
+			autopilot_body = null
+			set_autopilot_target_body(nearby)
+			return
+
+	var body_radius: float = autopilot_body.get("radius")
+	var current_altitude: float = (
+		ship.position.distance_to(autopilot_body.position)
+		- body_radius
+	)
+	var rounded_altitude: float = round(
+		current_altitude / AUTOPILOT_SCROLL_STEP
+	) * AUTOPILOT_SCROLL_STEP
+
+	autopilot_target_altitude = maxf(
+		rounded_altitude,
+		AUTOPILOT_MIN_ALTITUDE
+	)
+
+
+func get_autopilot_altitude_range(body: Node2D) -> Dictionary:
+	var body_radius: float = body.get("radius")
+	var max_radius: float
+
+	if body == sun:
+		max_radius = planets[-1].position.distance_to(sun.position) * 1.5
+	else:
+		max_radius = (
+			get_soi_radius(body)
+			* AUTOPILOT_MAX_SOI_FACTOR
+		)
+
+	var max_altitude: float = maxf(
+		max_radius - body_radius,
+		AUTOPILOT_MIN_ALTITUDE
+	)
+
+	var step: float = clampf(
+		max_altitude * AUTOPILOT_SCROLL_STEP_FRACTION,
+		AUTOPILOT_SCROLL_STEP,
+		max_altitude * 0.25
+	)
+
+	return {"max_altitude": max_altitude, "step": step}
+
+
+func change_autopilot_altitude(direction: float) -> void:
+	if autopilot_body == null:
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+
+	autopilot_target_altitude = clampf(
+		autopilot_target_altitude + direction * altitude_range.step,
+		AUTOPILOT_MIN_ALTITUDE,
+		altitude_range.max_altitude
+	)
+	flash_target_orbit()
+
+
+func can_edit_autopilot_apsis_targets() -> bool:
+	return (
+		autopilot_active
+		and not autopilot_selecting
+		and autopilot_body != null
+		and autopilot_body == get_current_orbit_body()
+	)
+
+
+func change_autopilot_target_pe(direction: float) -> void:
+	if not can_edit_autopilot_apsis_targets():
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_pe_altitude = clampf(
+		autopilot_target_pe_altitude + direction * altitude_range.step,
+		AUTOPILOT_MIN_ALTITUDE,
+		minf(altitude_range.max_altitude, autopilot_target_ap_altitude)
+	)
+	flash_target_orbit()
+
+
+func change_autopilot_target_ap(direction: float) -> void:
+	if not can_edit_autopilot_apsis_targets():
+		return
+
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_ap_altitude = clampf(
+		autopilot_target_ap_altitude + direction * altitude_range.step,
+		maxf(AUTOPILOT_MIN_ALTITUDE, autopilot_target_pe_altitude),
+		altitude_range.max_altitude
+	)
+	flash_target_orbit()
+
+
+## W / A / S / D or the turn arrows.
+func _is_manual_flight_input(event: InputEvent) -> bool:
+	if event is InputEventKey and event.pressed and not event.echo:
+		return event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_LEFT, KEY_RIGHT]
+	return false
+
+
+## `announce` plays the autopilot-off call - for F and for grabbing the
+## controls; the throttle lock (X) turns it off silently.
+func disengage_autopilot(announce: bool = true) -> void:
+	if announce and autopilot_active:
+		autopilot_off_sound.play()
+	autopilot_active = false
+	autopilot_selecting = false
+	autopilot_phase = AutopilotPhase.OFF
+	autopilot_body = null
+	autopilot_departure_body = null
+	route_plan = {}
+	ship.clear_autopilot_thrust()
+
+
+func cycle_autopilot_target_body() -> void:
+	if autopilot_selectable_bodies.is_empty():
+		return
+
+	var current_index: int = autopilot_selectable_bodies.find(autopilot_body)
+	var next_index: int = (current_index + 1) % autopilot_selectable_bodies.size()
+	set_autopilot_target_body(autopilot_selectable_bodies[next_index])
+
+
+func set_autopilot_target_body(body: Node2D) -> void:
+	if body == null or body == autopilot_body:
+		return
+
+	autopilot_body = body
+
+	var body_radius: float = body.get("radius")
+	var current_altitude: float = (
+		ship.position.distance_to(body.position)
+		- body_radius
+	)
+	var rounded_altitude: float = round(
+		current_altitude / AUTOPILOT_SCROLL_STEP
+	) * AUTOPILOT_SCROLL_STEP
+
+	autopilot_target_altitude = maxf(
+		rounded_altitude,
+		AUTOPILOT_MIN_ALTITUDE
+	)
+	change_autopilot_altitude(0.0)
+
+
+func update_autopilot_hover_selection() -> void:
+	if not autopilot_selecting:
+		return
+
+	var mouse_position: Vector2 = get_global_mouse_position()
+	var closest_body: Node2D = null
+	var closest_distance: float = INF
+
+	for body in autopilot_selectable_bodies:
+		var body_radius: float = body.get("radius")
+		var hover_radius: float = maxf(body_radius * 1.5, 40.0 / camera_zoom)
+		var distance: float = mouse_position.distance_to(body.position)
+
+		if distance <= hover_radius and distance < closest_distance:
+			closest_distance = distance
+			closest_body = body
+
+	if closest_body != null:
+		set_autopilot_target_body(closest_body)
+
+
+func engage_autopilot() -> void:
+	autopilot_selecting = false
+	_intercept_arrival = -1.0
+	_cruise_burning = false
+
+	ship.disengage_manual_main_engine()
+
+	if autopilot_body == null:
+		return
+
+	# Never aim for an orbit outside the target's SOI - the ship would leave it,
+	# fall back to chasing, re-capture and leave again forever.
+	var altitude_range: Dictionary = get_autopilot_altitude_range(autopilot_body)
+	autopilot_target_altitude = clampf(
+		autopilot_target_altitude, AUTOPILOT_MIN_ALTITUDE, altitude_range.max_altitude
+	)
+
+	var origin_body: Node2D = get_current_orbit_body()
+
+	if autopilot_body == origin_body:
+		engage_local_autopilot()
+	else:
+		engage_interplanetary_autopilot(origin_body)
+	if autopilot_active:
+		autopilot_on_sound.play()
+
+
+func engage_local_autopilot() -> void:
+	var elements = get_orbit_elements(autopilot_body)
+	if not elements.bound:
+		# On an escape path from the target (after a locked-throttle burn, or
+		# flying free fast enough to leave even the sun): brake into orbit
+		# first. CAPTURE_BURN hands over to the normal local plan once the
+		# orbit closes.
+		autopilot_active = true
+		autopilot_phase = AutopilotPhase.CAPTURE_BURN
+		return
+
+	var body_radius: float = autopilot_body.get("radius")
+	var body_mass: float = autopilot_body.get("mass")
+	var mu: float = G * body_mass
+	var current_average_altitude: float = 0.5 * (
+		elements.pe_alt + elements.ap_alt
+	)
+	var initial_radius: float = body_radius + current_average_altitude
+	var target_radius: float = body_radius + autopilot_target_altitude
+
+	if initial_radius <= 0.0 or target_radius <= 0.0:
+		return
+
+	var current_pe_radius: float = body_radius + elements.pe_alt
+	var current_ap_radius: float = body_radius + elements.ap_alt
+
+	if target_radius >= current_ap_radius:
+		autopilot_raising = true
+	elif target_radius <= current_pe_radius:
+		autopilot_raising = false
+	else:
+		autopilot_raising = (
+			absf(current_ap_radius - target_radius)
+			>= absf(target_radius - current_pe_radius)
+		)
+
+	var transfer_semi_major_axis: float = 0.5 * (
+		initial_radius + target_radius
+	)
+	var circular_velocity_1: float = sqrt(mu / initial_radius)
+	var transfer_velocity_1: float = sqrt(
+		mu * (
+			2.0 / initial_radius
+			- 1.0 / transfer_semi_major_axis
+		)
+	)
+	var transfer_velocity_2: float = sqrt(
+		mu * (
+			2.0 / target_radius
+			- 1.0 / transfer_semi_major_axis
+		)
+	)
+	var circular_velocity_2: float = sqrt(mu / target_radius)
+
+	autopilot_planned_delta_v1 = (
+		transfer_velocity_1 - circular_velocity_1
+	)
+	autopilot_planned_delta_v2 = (
+		circular_velocity_2 - transfer_velocity_2
+	)
+	autopilot_remaining_delta_v = absf(autopilot_planned_delta_v1)
+	autopilot_target_pe_altitude = autopilot_target_altitude
+	autopilot_target_ap_altitude = autopilot_target_altitude
+	autopilot_active = true
+	autopilot_phase = AutopilotPhase.WAIT_FIRST_BURN
+
+
+func engage_interplanetary_autopilot(origin_body: Node2D) -> void:
+	autopilot_departure_body = origin_body
+	_intercept_arrival = -1.0
+	_cruise_burning = false
+	autopilot_planned_delta_v1 = 0.0
+	autopilot_planned_delta_v2 = 0.0
+	autopilot_remaining_delta_v = 0.0
+	autopilot_active = true
+	route_plan = {}
+	route_replan_timer = ROUTE_REPLAN_INTERVAL
+
+	if origin_body == sun:
+		autopilot_phase = AutopilotPhase.INTERPLANETARY_CRUISE
+	elif autopilot_body == sun:
+		autopilot_phase = AutopilotPhase.ESCAPE_BURN
+	else:
+		autopilot_phase = AutopilotPhase.DEPARTURE_WAIT
+
+
+func is_interplanetary_autopilot_phase(phase: AutopilotPhase) -> bool:
+	return (
+		phase == AutopilotPhase.ESCAPE_BURN
+		or phase == AutopilotPhase.INTERPLANETARY_CRUISE
+		or phase == AutopilotPhase.CAPTURE_BURN
+		or is_route_phase(phase)
+	)
+
+
+func is_route_phase(phase: AutopilotPhase) -> bool:
+	return (
+		phase == AutopilotPhase.DEPARTURE_WAIT
+		or phase == AutopilotPhase.DEPARTURE_BURN
+		or phase == AutopilotPhase.DEPARTURE_COAST
+		or phase == AutopilotPhase.TRANSFER_BURN
+		or phase == AutopilotPhase.TRANSFER_COAST
+		or phase == AutopilotPhase.ARRIVAL_COAST
+		or phase == AutopilotPhase.ARRIVAL_BURN
+	)
+
+
+func update_orbit_autopilot(dt: float) -> void:
+	if not autopilot_active or autopilot_body == null:
+		ship.clear_autopilot_thrust()
+		return
+
+	if is_interplanetary_autopilot_phase(autopilot_phase):
+		update_interplanetary_autopilot(dt)
+	else:
+		update_local_orbit_autopilot(dt)
+
+
+func update_local_orbit_autopilot(dt: float) -> void:
+	if not is_inside_soi(ship.position, autopilot_body):
+		# Overshot the target's SOI (usually from arriving too fast to capture
+		# in one pass). Chase it down and try again instead of giving up -
+		# the same recovery path interplanetary arrivals already use.
+		ship.clear_autopilot_thrust()
+		autopilot_phase = AutopilotPhase.CAPTURE_BURN
+		return
+
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		body_velocity = autopilot_body.get("velocity")
+
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var relative_position: Vector2 = get_relative_position_precise(ship, autopilot_body)
+	var r: float = relative_position.length()
+
+	if relative_velocity.length() < 0.001 or r < 1.0:
+		ship.clear_autopilot_thrust()
+		return
+
+	var mu: float = G * autopilot_body.get("mass")
+	var body_radius: float = autopilot_body.get("radius")
+	var target_pe_radius: float = body_radius + autopilot_target_pe_altitude
+	var target_ap_radius: float = body_radius + autopilot_target_ap_altitude
+
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+	if orbit.e >= 1.0:
+		# Above escape velocity for this body - apsis burns assume an ellipse
+		# and have no periapsis/apoapsis to aim at. Braking toward a bound
+		# orbit (the same move used to capture on interplanetary arrival)
+		# beats giving up and coasting out of the system.
+		var radial_dir: Vector2 = relative_position.normalized()
+		var tangent_dir := Vector2(-radial_dir.y, radial_dir.x)
+		if relative_velocity.dot(tangent_dir) < 0.0:
+			tangent_dir = -tangent_dir
+		autopilot_remaining_delta_v = execute_apsis_targeting_burn(
+			r, target_pe_radius, mu, tangent_dir, relative_velocity
+		)
+		return
+
+	match autopilot_phase:
+		AutopilotPhase.WAIT_FIRST_BURN:
+			ship.clear_autopilot_thrust()
+			var first_target: float = target_ap_radius if autopilot_raising else target_pe_radius
+			var first_current: float = orbit.ra if autopilot_raising else orbit.rp
+			if absf(first_current - first_target) <= AUTOPILOT_TOLERANCE:
+				autopilot_phase = AutopilotPhase.COAST
+			elif is_apsis_burn_window(orbit, mu, autopilot_raising, first_target):
+				autopilot_phase = AutopilotPhase.FIRST_BURN
+
+		AutopilotPhase.FIRST_BURN:
+			var first_target_burn: float = target_ap_radius if autopilot_raising else target_pe_radius
+			if execute_apsis_change_burn(
+				autopilot_raising, first_target_burn, relative_position, relative_velocity, mu, dt
+			):
+				autopilot_phase = AutopilotPhase.COAST
+
+		AutopilotPhase.COAST:
+			ship.clear_autopilot_thrust()
+			var second_target: float = target_pe_radius if autopilot_raising else target_ap_radius
+			var second_current: float = orbit.rp if autopilot_raising else orbit.ra
+			if absf(second_current - second_target) <= AUTOPILOT_TOLERANCE:
+				finish_autopilot_maneuver()
+			elif is_apsis_burn_window(orbit, mu, not autopilot_raising, second_target):
+				autopilot_phase = AutopilotPhase.SECOND_BURN
+
+		AutopilotPhase.SECOND_BURN:
+			var second_target_burn: float = target_pe_radius if autopilot_raising else target_ap_radius
+			if execute_apsis_change_burn(
+				not autopilot_raising, second_target_burn, relative_position, relative_velocity, mu, dt
+			):
+				finish_autopilot_maneuver()
+
+		AutopilotPhase.COMPLETE:
+			ship.clear_autopilot_thrust()
+			autopilot_remaining_delta_v = 0.0
+
+			var pe_error: float = orbit.rp - target_pe_radius
+			var ap_error: float = orbit.ra - target_ap_radius
+
+			if absf(pe_error) > STATION_KEEPING_TRIGGER or absf(ap_error) > STATION_KEEPING_TRIGGER:
+				station_keeping_correcting_apoapsis = absf(ap_error) >= absf(pe_error)
+				station_keeping_wait_time = 0.0
+				autopilot_phase = AutopilotPhase.STATION_KEEPING_WAIT
+
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			ship.clear_autopilot_thrust()
+			station_keeping_wait_time += dt
+
+			var station_target: float = (
+				target_ap_radius if station_keeping_correcting_apoapsis else target_pe_radius
+			)
+			var ready: bool = is_apsis_burn_window(
+				orbit, mu, station_keeping_correcting_apoapsis, station_target
+			)
+
+			var worst_error: float = maxf(
+				absf(orbit.rp - target_pe_radius),
+				absf(orbit.ra - target_ap_radius)
+			)
+			var drift_critical: bool = (
+				worst_error > STATION_KEEPING_TRIGGER * STATION_KEEPING_EMERGENCY_FACTOR
+			)
+			var wait_too_long: bool = (
+				station_keeping_wait_time
+				> OrbitMath.orbital_period(orbit.a, mu) * STATION_KEEPING_MAX_WAIT_FRACTION
+			)
+			var correctable_is_apoapsis: bool = cos(orbit.nu) >= 0.0
+			var correctable_error: float = absf(
+				(orbit.ra - target_ap_radius) if correctable_is_apoapsis
+				else (orbit.rp - target_pe_radius)
+			)
+			var in_burn_arc: bool = absf(
+				wrapf(orbit.nu - (0.0 if correctable_is_apoapsis else PI), -PI, PI)
+			) <= APSIS_BURN_MAX_ANGLE
+
+			if ready:
+				station_keeping_wait_time = 0.0
+				autopilot_phase = AutopilotPhase.STATION_KEEPING_BURN
+			elif (
+				(drift_critical or wait_too_long)
+				and in_burn_arc
+				and correctable_error > 0.5 * STATION_KEEPING_TRIGGER
+			):
+				station_keeping_correcting_apoapsis = correctable_is_apoapsis
+				station_keeping_wait_time = 0.0
+				autopilot_phase = AutopilotPhase.STATION_KEEPING_BURN
+
+		AutopilotPhase.STATION_KEEPING_BURN:
+			var station_target_burn: float = (
+				target_ap_radius if station_keeping_correcting_apoapsis else target_pe_radius
+			)
+			if execute_apsis_change_burn(
+				station_keeping_correcting_apoapsis,
+				station_target_burn,
+				relative_position,
+				relative_velocity,
+				mu,
+				dt
+			):
+				autopilot_phase = AutopilotPhase.COMPLETE
+
+		_:
+			ship.clear_autopilot_thrust()
+
+
+func is_apsis_burn_window(
+	orbit: Dictionary,
+	mu: float,
+	at_periapsis: bool,
+	target_radius: float
+) -> bool:
+	if orbit.ra - orbit.rp < 2.0 * APSIS_BURN_WINDOW:
+		return true
+
+	var apsis_radius: float = orbit.rp if at_periapsis else orbit.ra
+	var delta_v: float = get_apsis_burn_delta_v(apsis_radius, orbit.a, target_radius, mu)
+	var half_burn: float = 0.5 * delta_v / get_autopilot_max_acceleration()
+	var period: float = OrbitMath.orbital_period(orbit.a, mu)
+	var time_to_apsis: float = (
+		OrbitMath.time_to_periapsis(orbit, mu) if at_periapsis
+		else OrbitMath.time_to_apoapsis(orbit, mu)
+	)
+
+	return time_to_apsis <= half_burn or time_to_apsis >= period - half_burn
+
+
+func get_apsis_burn_delta_v(
+	apsis_radius: float,
+	semi_major_axis: float,
+	target_radius: float,
+	mu: float
+) -> float:
+	var new_semi_major_axis: float = 0.5 * (apsis_radius + target_radius)
+	var speed_now: float = sqrt(maxf(mu * (2.0 / apsis_radius - 1.0 / semi_major_axis), 0.0))
+	var speed_after: float = sqrt(maxf(mu * (2.0 / apsis_radius - 1.0 / new_semi_major_axis), 0.0))
+	return absf(speed_after - speed_now)
+
+
+func execute_apsis_change_burn(
+	adjust_apoapsis: bool,
+	target_radius: float,
+	relative_position: Vector2,
+	relative_velocity: Vector2,
+	mu: float,
+	dt: float
+) -> bool:
+	var r: float = relative_position.length()
+	var goal: float = (
+		maxf(target_radius, r) if adjust_apoapsis
+		else minf(target_radius, r)
+	)
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+
+	var near_circular: bool = orbit.e < 1.0 and orbit.ra - orbit.rp < 2.0 * APSIS_BURN_WINDOW
+	var angle_from_burn_point: float = absf(
+		wrapf(orbit.nu - (0.0 if adjust_apoapsis else PI), -PI, PI)
+	)
+	if not near_circular and angle_from_burn_point > APSIS_BURN_MAX_ANGLE:
+		ship.clear_autopilot_thrust()
+		autopilot_remaining_delta_v = 0.0
+		return true
+
+	var prograde: Vector2 = relative_velocity.normalized()
+	var value: float = get_apsis_radius(relative_position, relative_velocity, mu, adjust_apoapsis)
+	var probe: float = 1e-3
+	var sensitivity: float = (
+		get_apsis_radius(relative_position, relative_velocity + prograde * probe, mu, adjust_apoapsis)
+		- value
+	) / probe
+	var error: float = goal - value
+
+	if (
+		absf(error) <= 0.5 * AUTOPILOT_TOLERANCE
+		or absf(sensitivity) < 1e-3
+		or not is_finite(sensitivity)
+	):
+		ship.clear_autopilot_thrust()
+		autopilot_remaining_delta_v = 0.0
+		return true
+
+	var needed_delta_v: float = error / sensitivity
+	var max_acceleration: float = get_autopilot_max_acceleration()
+	autopilot_remaining_delta_v = absf(needed_delta_v)
+	set_autopilot_direction(
+		prograde * signf(needed_delta_v),
+		minf(1.0, absf(needed_delta_v) / (max_acceleration * dt))
+	)
+	return false
+
+
+func get_apsis_radius(
+	relative_position: Vector2,
+	relative_velocity: Vector2,
+	mu: float,
+	apoapsis: bool
+) -> float:
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+	if orbit.e >= 1.0:
+		return INF if apoapsis else orbit.rp
+	return orbit.ra if apoapsis else orbit.rp
+
+
+func update_interplanetary_autopilot(dt: float) -> void:
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT:
+			update_departure_wait()
+
+		AutopilotPhase.DEPARTURE_BURN:
+			update_departure_burn()
+
+		AutopilotPhase.DEPARTURE_COAST:
+			update_departure_coast()
+
+		AutopilotPhase.TRANSFER_BURN:
+			update_transfer_burn(dt)
+
+		AutopilotPhase.TRANSFER_COAST:
+			update_transfer_coast()
+
+		AutopilotPhase.ARRIVAL_COAST:
+			update_arrival_coast()
+
+		AutopilotPhase.ARRIVAL_BURN:
+			update_circularization_burn()
+
+		AutopilotPhase.ESCAPE_BURN:
+			update_interplanetary_escape_burn()
+
+		AutopilotPhase.INTERPLANETARY_CRUISE:
+			update_interplanetary_cruise(dt)
+
+		AutopilotPhase.CAPTURE_BURN:
+			update_interplanetary_capture_burn()
+
+		_:
+			ship.clear_autopilot_thrust()
+
+
+func update_departure_wait() -> void:
+	ship.clear_autopilot_thrust()
+
+	if route_plan.get("ok", false) and total_sim_time >= route_plan.t_start:
+		autopilot_phase = AutopilotPhase.DEPARTURE_BURN
+
+
+func update_departure_burn() -> void:
+	var body_velocity: Vector2 = autopilot_departure_body.get("velocity")
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var r: float = ship.position.distance_to(autopilot_departure_body.position)
+	var mu: float = G * autopilot_departure_body.get("mass")
+	var eps_target: float = route_plan.get("eps_target", 0.0)
+	var energy: float = relative_velocity.length_squared() * 0.5 - mu / r
+
+	autopilot_remaining_delta_v = maxf(
+		sqrt(maxf(2.0 * (eps_target + mu / r), 0.0)) - relative_velocity.length(),
+		0.0
+	)
+
+	if energy >= eps_target:
+		ship.clear_autopilot_thrust()
+		autopilot_phase = AutopilotPhase.DEPARTURE_COAST
+		return
+
+	set_autopilot_direction(relative_velocity.normalized(), 1.0)
+
+
+func update_departure_coast() -> void:
+	ship.clear_autopilot_thrust()
+	var exit_radius: float = (
+		get_soi_radius(autopilot_departure_body) * INTERPLANETARY_ESCAPE_SOI_FACTOR
+	)
+
+	if ship.position.distance_to(autopilot_departure_body.position) > exit_radius:
+		begin_transfer_burn(route_plan.get("dv", Vector2.ZERO))
+
+
+func begin_transfer_burn(dv: Vector2) -> void:
+	transfer_dv = dv
+	transfer_delivered = Vector2.ZERO
+	autopilot_phase = AutopilotPhase.TRANSFER_BURN
+
+
+func update_transfer_burn(dt: float) -> void:
+	var remaining: Vector2 = transfer_dv - transfer_delivered
+	var remaining_length: float = remaining.length()
+	autopilot_remaining_delta_v = remaining_length
+
+	if remaining_length < 1e-4:
+		ship.clear_autopilot_thrust()
+		last_transfer_burn_end = total_sim_time
+		autopilot_phase = AutopilotPhase.TRANSFER_COAST
+		return
+
+	var max_acceleration: float = get_autopilot_max_acceleration()
+	var magnitude: float = minf(max_acceleration, remaining_length / dt)
+	var direction: Vector2 = remaining / remaining_length
+	set_autopilot_direction(direction, magnitude / max_acceleration)
+	transfer_delivered += direction * magnitude * dt
+
+
+func update_transfer_coast() -> void:
+	ship.clear_autopilot_thrust()
+
+	if is_inside_soi(ship.position, autopilot_body):
+		autopilot_phase = AutopilotPhase.ARRIVAL_COAST
+
+
+func update_arrival_coast() -> void:
+	ship.clear_autopilot_thrust()
+
+	if not is_inside_soi(ship.position, autopilot_body):
+		autopilot_phase = AutopilotPhase.TRANSFER_COAST
+		return
+
+	var body_velocity: Vector2 = autopilot_body.get("velocity")
+	var r_vec: Vector2 = ship.position - autopilot_body.position
+	var v_vec: Vector2 = ship.velocity - body_velocity
+	var mu: float = G * autopilot_body.get("mass")
+	var elements: Dictionary = OrbitMath.elements(r_vec, v_vec, mu)
+	var rp: float = elements.rp
+	var speed_at_periapsis: float = sqrt(maxf(2.0 * (elements.energy + mu / rp), 0.0))
+	var capture_delta_v: float = speed_at_periapsis - sqrt(mu / rp)
+	var burn_time: float = capture_delta_v / get_autopilot_max_acceleration()
+	var passed_periapsis: bool = r_vec.dot(v_vec) >= 0.0
+	var time_to_periapsis: float = (
+		0.0 if passed_periapsis
+		else OrbitMath.time_to_periapsis(elements, mu)
+	)
+	autopilot_remaining_delta_v = capture_delta_v
+
+	if passed_periapsis or time_to_periapsis <= 0.5 * burn_time:
+		autopilot_phase = AutopilotPhase.ARRIVAL_BURN
+
+
+func get_autopilot_max_acceleration() -> float:
+	return get_autopilot_thrust_force() / ship.ship_mass
+
+
+func get_autopilot_thrust_force() -> float:
+	return ship.thrust_force
+
+
+func is_autopilot_using_main_engine() -> bool:
+	return (
+		autopilot_active
+		and ship.autopilot_thrust != Vector2.ZERO
+	)
+
+
+func build_route_context() -> Dictionary:
+	var rel := PackedVector2Array()
+	var omega := PackedFloat64Array()
+	var mu := PackedFloat64Array()
+	var soi := PackedFloat64Array()
+
+	for planet in planets:
+		var offset: Vector2 = planet.position - sun.position
+		var planet_velocity: Vector2 = planet.get("velocity")
+		rel.append(offset)
+		omega.append(offset.cross(planet_velocity) / offset.length_squared())
+		mu.append(G * planet.get("mass"))
+		soi.append(get_soi_radius(planet))
+
+	var dep_index: int = planets.find(autopilot_departure_body)
+	var target_index: int = planets.find(autopilot_body)
+	var target_radius: float = autopilot_body.get("radius")
+	var a_transfer: float = 0.5 * (rel[dep_index].length() + rel[target_index].length())
+	var mu_sun: float = G * sun.get("mass")
+
+	return {
+		"t0": total_sim_time,
+		"sun_pos": sun.position,
+		"mu_sun": mu_sun,
+		"rel": rel,
+		"omega": omega,
+		"mu": mu,
+		"soi": soi,
+		"dep": dep_index,
+		"target": target_index,
+		"acc": get_autopilot_max_acceleration(),
+		"exit_radius": soi[dep_index] * INTERPLANETARY_ESCAPE_SOI_FACTOR,
+		"r_target": target_radius + autopilot_target_altitude,
+		"target_radius": target_radius,
+		"max_transfer_time": 2.5 * OrbitMath.half_period(a_transfer, mu_sun),
+	}
+
+
+func build_route_request() -> Dictionary:
+	var request := {
+		"pos": ship.position,
+		"vel": ship.velocity,
+		"t": total_sim_time,
+	}
+
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT:
+			request.stage = InterplanetaryPlanner.Stage.COAST_TO_BURN
+			if (
+				route_plan.get("ok", false)
+				and absf(route_plan.get("target_error", INF)) <= InterplanetaryPlanner.CORRECTION_TOLERANCE
+				and route_plan.t_start > total_sim_time
+			):
+				request.t_start = route_plan.t_start
+				request.eps_target = route_plan.eps_target
+				request.dv_guess = route_plan.get("dv", Vector2.ZERO)
+		AutopilotPhase.DEPARTURE_BURN:
+			request.stage = InterplanetaryPlanner.Stage.ESCAPE_BURN
+			request.eps_target = route_plan.eps_target
+		AutopilotPhase.DEPARTURE_COAST:
+			request.stage = InterplanetaryPlanner.Stage.ESCAPE_COAST
+			request.eps_target = route_plan.eps_target
+		AutopilotPhase.TRANSFER_BURN:
+			request.stage = InterplanetaryPlanner.Stage.TRANSFER_BURN
+			request.dv = transfer_dv
+			request.delivered = transfer_delivered
+		_:
+			request.stage = InterplanetaryPlanner.Stage.TRANSFER_COAST
+
+	return request
+
+
+func update_route_planning(delta: float) -> void:
+	if route_task_id != -1:
+		if not WorkerThreadPool.is_task_completed(route_task_id):
+			return
+		WorkerThreadPool.wait_for_task_completion(route_task_id)
+		route_task_id = -1
+
+		if autopilot_active and autopilot_phase == route_task_phase:
+			accept_route_plan(route_task_holder.get("result", {}))
+
+	if not autopilot_active or not is_route_phase(autopilot_phase):
+		return
+
+	if autopilot_phase == AutopilotPhase.ARRIVAL_BURN:
+		return
+
+	route_replan_timer += delta
+	if route_replan_timer < ROUTE_REPLAN_INTERVAL:
+		return
+	route_replan_timer = 0.0
+
+	var ctx: Dictionary = build_route_context()
+	var request: Dictionary = build_route_request()
+	var holder := {}
+	route_task_holder = holder
+	route_task_phase = autopilot_phase
+	route_task_id = WorkerThreadPool.add_task(
+		func() -> void: holder.result = InterplanetaryPlanner.plan(ctx, request)
+	)
+
+
+func accept_route_plan(result: Dictionary) -> void:
+	if result.is_empty():
+		return
+
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT, AutopilotPhase.DEPARTURE_BURN, AutopilotPhase.DEPARTURE_COAST:
+			if not result.ok and route_plan.get("ok", false):
+				return
+			route_plan = result
+			autopilot_planned_delta_v2 = result.get("dv", Vector2.ZERO).length()
+
+		AutopilotPhase.TRANSFER_COAST:
+			route_plan = result
+			var dv: Vector2 = result.get("dv", Vector2.ZERO)
+			var time_to_arrival: float = result.get("closest_t", INF) - total_sim_time
+			if (
+				result.get("correction", false)
+				and dv.length() >= ROUTE_MIN_CORRECTION_DV
+				and total_sim_time - last_transfer_burn_end >= ROUTE_CORRECTION_COOLDOWN
+				and time_to_arrival >= ROUTE_MIN_TIME_TO_ARRIVAL
+			):
+				autopilot_planned_delta_v2 = dv.length()
+				begin_transfer_burn(dv)
+
+		_:
+			route_plan = result
+
+
+func update_interplanetary_escape_burn() -> void:
+	if autopilot_departure_body == null:
+		autopilot_phase = AutopilotPhase.INTERPLANETARY_CRUISE
+		return
+
+	if not is_inside_soi(ship.position, autopilot_departure_body):
+		ship.clear_autopilot_thrust()
+		autopilot_phase = AutopilotPhase.INTERPLANETARY_CRUISE
+		return
+
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_departure_body != sun:
+		body_velocity = autopilot_departure_body.get("velocity")
+
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var relative_position: Vector2 = ship.position - autopilot_departure_body.position
+	var r: float = relative_position.length()
+
+	if r < 1.0:
+		ship.clear_autopilot_thrust()
+		return
+
+	var radial_dir: Vector2 = relative_position.normalized()
+	var tangent_dir := Vector2(-radial_dir.y, radial_dir.x)
+	if relative_velocity.dot(tangent_dir) < 0.0:
+		tangent_dir = -tangent_dir
+
+	var mu_departure: float = G * autopilot_departure_body.get("mass")
+	var escape_target_radius: float = (
+		get_soi_radius(autopilot_departure_body) * INTERPLANETARY_ESCAPE_SOI_FACTOR
+	)
+	var remaining: float = execute_apsis_targeting_burn(
+		r, escape_target_radius, mu_departure, tangent_dir, relative_velocity
+	)
+	autopilot_remaining_delta_v = remaining
+
+	if remaining <= 0.0:
+		autopilot_phase = AutopilotPhase.INTERPLANETARY_CRUISE
+
+
+func update_interplanetary_cruise(dt: float) -> void:
+	ship.clear_autopilot_thrust()
+
+	if (
+		autopilot_departure_body != null
+		and autopilot_departure_body != sun
+		and is_inside_soi(ship.position, autopilot_departure_body)
+	):
+		return
+
+	if is_inside_soi(ship.position, autopilot_body):
+		autopilot_phase = AutopilotPhase.CAPTURE_BURN
+		return
+
+	var target_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		target_velocity = autopilot_body.get("velocity")
+
+	var distance_to_target: float = ship.position.distance_to(autopilot_body.position)
+	var homing_range: float = (
+		get_soi_radius(autopilot_body) * INTERPLANETARY_HOMING_SOI_FACTOR
+	)
+
+	if distance_to_target <= homing_range:
+		var relative_position: Vector2 = get_relative_position_precise(ship, autopilot_body)
+		var relative_velocity: Vector2 = ship.velocity - target_velocity
+		var desired_relative_velocity: Vector2 = (
+			-relative_position / INTERPLANETARY_APPROACH_TIME
+		)
+		var error_vector: Vector2 = desired_relative_velocity - relative_velocity
+		var error_mag: float = error_vector.length()
+		autopilot_remaining_delta_v = error_mag
+
+		if error_mag > 0.05:
+			var throttle: float = clampf(error_mag, 0.2, 1.0)
+			set_autopilot_direction(error_vector.normalized(), throttle)
+		return
+
+	if _fly_intercept(dt):
+		return
+	_cruise_match_target_radius()
+
+
+## Out of the target's reach: fly a Lambert transfer that arrives where the
+## target will be (plan_intercept), burning whenever the velocity strays from
+## the transfer. False if no transfer could be found.
+func _fly_intercept(dt: float) -> bool:
+	if autopilot_body == sun:
+		return false
+	var time_left: float = _intercept_arrival - total_sim_time
+	if _intercept_arrival < 0.0 or time_left < INTERCEPT_MIN_TIME_LEFT:
+		if not plan_intercept():
+			return false
+		time_left = _intercept_arrival - total_sim_time
+
+	_intercept_resolve_timer -= dt
+	if _intercept_resolve_timer <= 0.0:
+		var solution: Dictionary = OrbitMath.lambert(
+			ship.position - sun.position,
+			_target_sun_offset_after(time_left),
+			time_left,
+			mu_sun,
+			_intercept_prograde
+		)
+		if not solution.ok:
+			_intercept_arrival = -1.0
+			return false
+		_intercept_velocity = solution.v1
+		_intercept_resolve_timer = 0.25 if _cruise_burning else 2.0
+
+	var error: Vector2 = _intercept_velocity - ship.velocity
+	var error_mag: float = error.length()
+	if error_mag > CRUISE_BURN_START:
+		_cruise_burning = true
+	elif error_mag < 0.1:
+		_cruise_burning = false
+	if _cruise_burning:
+		set_autopilot_direction(error / error_mag, clampf(error_mag, 0.2, 1.0))
+		_intercept_resolve_timer = minf(_intercept_resolve_timer, 0.25)
+	else:
+		ship.clear_autopilot_thrust()
+	autopilot_remaining_delta_v = error_mag
+	return true
+
+
+## Picks the best single-revolution transfer from here to the target: tries a
+## spread of flight times in both directions and scores each by the burn now,
+## the speed left to kill on arrival, and INTERCEPT_TIME_COST per second of
+## flight - so it brakes and heads more or less straight there rather than
+## saving fuel on an hours-long arc round the sun. Sets _intercept_*.
+func plan_intercept() -> bool:
+	var r1: Vector2 = ship.position - sun.position
+	var target_r: float = (autopilot_body.position - sun.position).length()
+	var r1n: float = r1.length()
+	if r1n < 1.0 or target_r < 1.0:
+		return false
+
+	# Flight times around a Hohmann half-orbit between the two radii.
+	var hohmann: float = PI * sqrt(pow(0.5 * (r1n + target_r), 3.0) / mu_sun)
+	var best_cost: float = INF
+	var best_tof: float = -1.0
+	var best_prograde: bool = true
+	var best_v1: Vector2 = Vector2.ZERO
+	for i in range(INTERCEPT_SAMPLES):
+		# Log-spaced from a fast, nearly straight dash to a slow drifting arc.
+		var tof: float = hohmann * 0.01 * pow(250.0, float(i) / float(INTERCEPT_SAMPLES - 1))
+		var r2: Vector2 = _target_sun_offset_after(tof)
+		var v_target: Vector2 = _target_sun_velocity_after(tof)
+		for prograde: bool in [true, false]:
+			var solution: Dictionary = OrbitMath.lambert(r1, r2, tof, mu_sun, prograde)
+			if not solution.ok:
+				continue
+			var cost: float = (
+				(solution.v1 - ship.velocity).length()
+				+ (solution.v2 - v_target).length()
+				+ tof * INTERCEPT_TIME_COST
+			)
+			if cost < best_cost:
+				best_cost = cost
+				best_tof = tof
+				best_prograde = prograde
+				best_v1 = solution.v1
+
+	if best_tof < 0.0:
+		return false
+	_intercept_arrival = total_sim_time + best_tof
+	_intercept_prograde = best_prograde
+	_intercept_velocity = best_v1
+	_intercept_resolve_timer = 0.0
+	return true
+
+
+## The target's offset from the sun `dt` seconds from now (circular orbit).
+func _target_sun_offset_after(dt: float) -> Vector2:
+	var rel: Vector2 = autopilot_body.position - sun.position
+	return rel.rotated(_target_angular_rate() * dt)
+
+
+func _target_sun_velocity_after(dt: float) -> Vector2:
+	var velocity: Vector2 = autopilot_body.get("velocity")
+	return velocity.rotated(_target_angular_rate() * dt)
+
+
+func _target_angular_rate() -> float:
+	var rel: Vector2 = autopilot_body.position - sun.position
+	var velocity: Vector2 = autopilot_body.get("velocity")
+	return (rel.x * velocity.y - rel.y * velocity.x) / maxf(rel.length_squared(), 1.0)
+
+
+## Fallback when no transfer is found: burn onto a solar orbit that at least
+## reaches the target's distance from the sun.
+func _cruise_match_target_radius() -> void:
+	var ship_r_vec: Vector2 = ship.position - sun.position
+	var ship_r: float = ship_r_vec.length()
+	var target_r: float = autopilot_body.position.distance_to(sun.position)
+
+	if ship_r < 1.0:
+		return
+
+	var radial_dir: Vector2 = ship_r_vec.normalized()
+	var tangent_dir := Vector2(-radial_dir.y, radial_dir.x)
+	if ship.velocity.dot(tangent_dir) < 0.0:
+		tangent_dir = -tangent_dir
+
+	# Burn continuously; lights up past CRUISE_BURN_START and runs down to the
+	# targeting burn's own cutoff, so the engine does not flicker.
+	var remaining: float = execute_apsis_targeting_burn(
+		ship_r, target_r, mu_sun, tangent_dir, ship.velocity
+	)
+	if remaining > CRUISE_BURN_START:
+		_cruise_burning = true
+	elif remaining <= 0.0:
+		_cruise_burning = false
+	if not _cruise_burning:
+		ship.clear_autopilot_thrust()
+	autopilot_remaining_delta_v = remaining
+
+
+func update_interplanetary_capture_burn() -> void:
+	if not is_inside_soi(ship.position, autopilot_body):
+		ship.clear_autopilot_thrust()
+		autopilot_phase = AutopilotPhase.INTERPLANETARY_CRUISE
+		return
+
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		body_velocity = autopilot_body.get("velocity")
+
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var relative_position: Vector2 = get_relative_position_precise(ship, autopilot_body)
+	var r: float = relative_position.length()
+
+	if r < 1.0:
+		ship.clear_autopilot_thrust()
+		return
+
+	var radial_dir: Vector2 = relative_position.normalized()
+	var tangent_dir := Vector2(-radial_dir.y, radial_dir.x)
+	if relative_velocity.dot(tangent_dir) < 0.0:
+		tangent_dir = -tangent_dir
+
+	var body_radius: float = autopilot_body.get("radius")
+	var mu: float = G * autopilot_body.get("mass")
+	var target_radius: float = body_radius + autopilot_target_altitude
+	var remaining: float = execute_apsis_targeting_burn(
+		r, target_radius, mu, tangent_dir, relative_velocity
+	)
+	autopilot_remaining_delta_v = remaining
+
+	if remaining <= 0.0:
+		var elements = get_orbit_elements(autopilot_body)
+		if elements.bound:
+			begin_local_capture()
+
+
+func begin_local_capture() -> void:
+	var elements = get_orbit_elements(autopilot_body)
+	var body_radius: float = autopilot_body.get("radius")
+	var target_radius: float = body_radius + autopilot_target_altitude
+
+	if elements.bound:
+		var current_average_altitude: float = 0.5 * (elements.pe_alt + elements.ap_alt)
+		var initial_radius: float = body_radius + current_average_altitude
+		autopilot_raising = target_radius > initial_radius
+	else:
+		autopilot_raising = true
+
+	autopilot_target_pe_altitude = autopilot_target_altitude
+	autopilot_target_ap_altitude = autopilot_target_altitude
+	autopilot_phase = AutopilotPhase.WAIT_FIRST_BURN
+
+
+func set_autopilot_direction(
+	direction: Vector2,
+	throttle: float = 1.0
+) -> void:
+	if direction.length() < 0.0001:
+		ship.clear_autopilot_thrust()
+		return
+
+	ship.set_autopilot_thrust(
+		direction.normalized() * clampf(throttle, 0.0, 1.0)
+	)
+
+
+func update_circularization_burn() -> void:
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		body_velocity = autopilot_body.get("velocity")
+
+	var r_vec: Vector2 = ship.position - autopilot_body.position
+	var v_vec: Vector2 = ship.velocity - body_velocity
+	var r: float = r_vec.length()
+
+	if r < 1.0:
+		ship.clear_autopilot_thrust()
+		return
+
+	var radial: Vector2 = r_vec.normalized()
+	var tangent := Vector2(-radial.y, radial.x)
+	if v_vec.dot(tangent) < 0.0:
+		tangent = -tangent
+
+	var mu: float = G * autopilot_body.get("mass")
+	var target_velocity: Vector2 = tangent * sqrt(mu / r)
+	var error_vector: Vector2 = target_velocity - v_vec
+	var error_mag: float = error_vector.length()
+	autopilot_remaining_delta_v = error_mag
+
+	if error_mag <= 0.05:
+		finish_autopilot_maneuver()
+		return
+
+	var throttle: float = clampf(error_mag, 0.2, 1.0)
+	set_autopilot_direction(error_vector.normalized(), throttle)
+
+
+func finish_autopilot_maneuver() -> void:
+	ship.clear_autopilot_thrust()
+	autopilot_phase = AutopilotPhase.COMPLETE
+
+
+func execute_apsis_targeting_burn(
+	r: float,
+	target_radius: float,
+	mu: float,
+	tangent_dir: Vector2,
+	relative_velocity: Vector2
+) -> float:
+	if r < 1.0 or target_radius <= 0.0:
+		ship.clear_autopilot_thrust()
+		return 0.0
+
+	var transfer_semi_major_axis: float = 0.5 * (r + target_radius)
+	var target_speed: float = sqrt(
+		mu * (2.0 / r - 1.0 / transfer_semi_major_axis)
+	)
+	var target_velocity: Vector2 = tangent_dir * target_speed
+	var error_vector: Vector2 = target_velocity - relative_velocity
+	var error_mag: float = error_vector.length()
+
+	if error_mag <= 0.05:
+		ship.clear_autopilot_thrust()
+		return 0.0
+
+	var throttle: float = clampf(error_mag, 0.2, 1.0)
+	set_autopilot_direction(error_vector.normalized(), throttle)
+	return error_mag
+
+
+func flash_target_orbit() -> void:
+	target_orbit_flash = 1.0
+
+
+func update_target_orbit_visual() -> void:
+	target_orbit.clear_points()
+
+	if not autopilot_selecting and not autopilot_active:
+		target_orbit.visible = false
+		target_orbit_flash = 0.0
+		return
+
+	if autopilot_body == null:
+		target_orbit.visible = false
+		target_orbit_flash = 0.0
+		return
+
+	target_orbit.visible = true
+
+	target_orbit_flash = maxf(
+		target_orbit_flash - get_process_delta_time() * TARGET_ORBIT_FLASH_FADE,
+		0.0
+	)
+	target_orbit.default_color = TARGET_ORBIT_COLOR.lerp(
+		TARGET_ORBIT_FLASH_COLOR,
+		target_orbit_flash
+	)
+
+	var body_radius: float = autopilot_body.get("radius")
+	var periapsis_radius: float
+	var apoapsis_radius: float
+
+	if autopilot_active and autopilot_body == get_current_orbit_body():
+		periapsis_radius = body_radius + autopilot_target_pe_altitude
+		apoapsis_radius = body_radius + autopilot_target_ap_altitude
+	else:
+		periapsis_radius = body_radius + autopilot_target_altitude
+		apoapsis_radius = periapsis_radius
+
+	if apoapsis_radius < periapsis_radius:
+		var swapped: float = periapsis_radius
+		periapsis_radius = apoapsis_radius
+		apoapsis_radius = swapped
+
+	var semi_major_axis: float = (periapsis_radius + apoapsis_radius) * 0.5
+
+	if semi_major_axis <= 0.0:
+		target_orbit.visible = false
+		return
+
+	var eccentricity: float = clampf(
+		(apoapsis_radius - periapsis_radius)
+		/ (apoapsis_radius + periapsis_radius),
+		0.0,
+		0.95
+	)
+	var semi_latus_rectum: float = (
+		semi_major_axis
+		* (1.0 - eccentricity * eccentricity)
+	)
+
+	var periapsis_direction: Vector2 = osculating_periapsis_direction
+
+	if periapsis_direction.length_squared() < 0.5:
+		periapsis_direction = Vector2.RIGHT
+
+	var perpendicular := Vector2(
+		-periapsis_direction.y,
+		periapsis_direction.x
+	)
+
+	const TARGET_ORBIT_POINTS := 180
+
+	for point_index in range(TARGET_ORBIT_POINTS + 1):
+		var theta: float = (
+			TAU * float(point_index) / float(TARGET_ORBIT_POINTS)
+		)
+		var orbit_radius: float = (
+			semi_latus_rectum
+			/ (1.0 + eccentricity * cos(theta))
+		)
+		target_orbit.add_point(
+			autopilot_body.position
+			+ periapsis_direction * cos(theta) * orbit_radius
+			+ perpendicular * sin(theta) * orbit_radius
+		)
+
+
+func update_interplanetary_route_visual() -> void:
+	var points: PackedVector2Array = route_plan.get("points", PackedVector2Array())
+	var should_show: bool = (
+		autopilot_active
+		and is_route_phase(autopilot_phase)
+		and autopilot_phase != AutopilotPhase.ARRIVAL_BURN
+		and points.size() >= 2
+	)
+
+	interplanetary_route_line.visible = should_show
+	departure_burn_marker.visible = false
+	transfer_burn_marker.visible = false
+	arrival_marker.visible = false
+
+	if not should_show:
+		interplanetary_route_line.clear_points()
+		return
+
+	interplanetary_route_line.points = points
+
+	if autopilot_phase == AutopilotPhase.DEPARTURE_WAIT:
+		place_route_marker(
+			departure_burn_marker,
+			route_plan.get("burn1_pos", Vector2.INF),
+			"BURN 1  T-%s" % format_duration(route_plan.get("burn1_t", INF) - total_sim_time)
+		)
+
+	if (
+		autopilot_phase == AutopilotPhase.DEPARTURE_WAIT
+		or autopilot_phase == AutopilotPhase.DEPARTURE_BURN
+		or autopilot_phase == AutopilotPhase.DEPARTURE_COAST
+	):
+		place_route_marker(
+			transfer_burn_marker,
+			route_plan.get("burn2_pos", Vector2.INF),
+			"BURN 2  Δv %.3f  T-%s" % [
+				route_plan.get("dv", Vector2.ZERO).length(),
+				format_duration(route_plan.get("burn2_t", INF) - total_sim_time),
+			]
+		)
+
+	place_route_marker(
+		arrival_marker,
+		route_plan.get("closest_pos", Vector2.INF),
+		"PE %s %.0f  T-%s" % [
+			get_body_name(autopilot_body),
+			absf(route_plan.get("closest_signed", INF)) - autopilot_body.get("radius"),
+			format_duration(route_plan.get("closest_t", INF) - total_sim_time),
+		]
+	)
+
+
+func place_route_marker(marker: Node2D, marker_position: Vector2, text: String) -> void:
+	if not marker_position.is_finite():
+		return
+
+	marker.position = marker_position
+	marker.get_node("Label").text = text
+	marker.visible = true
+
+
+const COLOR_ETA_TRANSFER := Color(0.95, 0.4, 0.75)
+
+
+func get_phase_color(phase: AutopilotPhase) -> Color:
+	match phase:
+		AutopilotPhase.OFF:
+			return COLOR_DIM
+		AutopilotPhase.COMPLETE:
+			return COLOR_GOOD
+		AutopilotPhase.WAIT_FIRST_BURN, AutopilotPhase.COAST, \
+		AutopilotPhase.STATION_KEEPING_WAIT, AutopilotPhase.DEPARTURE_WAIT, \
+		AutopilotPhase.DEPARTURE_COAST, AutopilotPhase.TRANSFER_COAST, \
+		AutopilotPhase.ARRIVAL_COAST, AutopilotPhase.INTERPLANETARY_CRUISE:
+			return COLOR_ORBIT_INFO
+		_:
+			return COLOR_WARN
+
+
+func update_autopilot_hud() -> void:
+	if autopilot_selecting:
+		autopilot_panel.set_state({
+			"active": false,
+			"selecting": true,
+			"body_name": get_body_name(autopilot_body),
+			"body_color": get_body_display_color(autopilot_body),
+			"target_altitude": autopilot_target_altitude,
+			"tolerance": AUTOPILOT_TOLERANCE,
+		})
+		return
+
+	if not autopilot_active:
+		autopilot_panel.set_state({"active": false, "selecting": false})
+		return
+
+	var burn_mode_text: String
+	var burn_mode_color: Color
+	if is_autopilot_using_main_engine():
+		burn_mode_text = "MAIN ENGINE"
+		burn_mode_color = Color(1.0, 0.6, 0.2)
+	elif ship.autopilot_thrust != Vector2.ZERO:
+		# Burn commanded but the nose is still swinging onto it.
+		burn_mode_text = "ALIGNING"
+		burn_mode_color = Color(0.4, 0.75, 1.0)
+	else:
+		burn_mode_text = "COASTING"
+		burn_mode_color = Color(0.55, 0.6, 0.68)
+
+	var eta: Dictionary = get_autopilot_eta()
+	var eta_text: String = ""
+	var eta_color: Color = Color.WHITE
+	if eta.get("valid", false):
+		var eta_is_orbit: bool = eta.get("is_orbit", true)
+		eta_text = (
+			("ORBIT IN: " if eta_is_orbit else "ARRIVAL IN: ")
+			+ format_duration(eta.get("time", 0.0))
+		)
+		eta_color = COLOR_GOOD if eta_is_orbit else COLOR_ETA_TRANSFER
+
+	autopilot_panel.set_state({
+		"active": true,
+		"selecting": false,
+		"body_name": get_body_name(autopilot_body),
+		"body_color": get_body_display_color(autopilot_body),
+		"target_altitude": autopilot_target_altitude,
+		"target_pe_altitude": autopilot_target_pe_altitude,
+		"target_ap_altitude": autopilot_target_ap_altitude,
+		"show_apsis_targets": not is_interplanetary_autopilot_phase(autopilot_phase),
+		"tolerance": AUTOPILOT_TOLERANCE,
+		"burn1": autopilot_planned_delta_v1,
+		"burn2": autopilot_planned_delta_v2,
+		"remaining_delta_v": autopilot_remaining_delta_v,
+		"remaining_color": get_delta_v_color(autopilot_remaining_delta_v),
+		"eta_text": eta_text,
+		"eta_color": eta_color,
+		"status_lines": get_autopilot_status().split("\n"),
+		"status_color": get_phase_color(autopilot_phase),
+		"burn_mode_text": burn_mode_text,
+		"burn_mode_color": burn_mode_color,
+	})
+
+
+func get_autopilot_eta() -> Dictionary:
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT, AutopilotPhase.DEPARTURE_BURN, AutopilotPhase.DEPARTURE_COAST, \
+		AutopilotPhase.TRANSFER_BURN, AutopilotPhase.TRANSFER_COAST, AutopilotPhase.ESCAPE_BURN, \
+		AutopilotPhase.INTERPLANETARY_CRUISE, AutopilotPhase.ARRIVAL_COAST:
+			var arrival_time: float = route_plan.get("closest_t", -1.0)
+			if arrival_time < 0.0:
+				return {"valid": false}
+			return {"valid": true, "is_orbit": false, "time": maxf(arrival_time - total_sim_time, 0.0)}
+
+		AutopilotPhase.ARRIVAL_BURN, AutopilotPhase.CAPTURE_BURN, AutopilotPhase.SECOND_BURN, \
+		AutopilotPhase.STATION_KEEPING_BURN:
+			return {"valid": true, "is_orbit": true, "time": 0.0}
+
+		AutopilotPhase.WAIT_FIRST_BURN, AutopilotPhase.FIRST_BURN, AutopilotPhase.COAST, \
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			var eta: float = get_local_orbit_eta()
+			if eta < 0.0:
+				return {"valid": false}
+			return {"valid": true, "is_orbit": true, "time": eta}
+
+		_:
+			return {"valid": false}
+
+
+func get_local_orbit_eta() -> float:
+	if autopilot_body == null or not is_inside_soi(ship.position, autopilot_body):
+		return -1.0
+
+	var body_velocity: Vector2 = Vector2.ZERO
+	if autopilot_body != sun:
+		body_velocity = autopilot_body.get("velocity")
+
+	var relative_velocity: Vector2 = ship.velocity - body_velocity
+	var relative_position: Vector2 = get_relative_position_precise(ship, autopilot_body)
+	var mu: float = G * autopilot_body.get("mass")
+	var orbit: Dictionary = OrbitMath.elements(relative_position, relative_velocity, mu)
+	if orbit.e >= 1.0:
+		return -1.0
+
+	var period: float = OrbitMath.orbital_period(orbit.a, mu)
+
+	match autopilot_phase:
+		AutopilotPhase.WAIT_FIRST_BURN:
+			return time_to_apsis(orbit, mu, autopilot_raising)
+		AutopilotPhase.FIRST_BURN:
+			return period * 0.5
+		AutopilotPhase.COAST:
+			return time_to_apsis(orbit, mu, not autopilot_raising)
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			return time_to_apsis(orbit, mu, station_keeping_correcting_apoapsis)
+		_:
+			return -1.0
+
+
+func get_autopilot_status() -> String:
+	match autopilot_phase:
+		AutopilotPhase.DEPARTURE_WAIT:
+			if not route_plan.get("ok", false):
+				return "INTERPLANETARY: PLANNING ROUTE..."
+			return (
+				"INTERPLANETARY: WAITING FOR WINDOW\n"
+				+ "BURN 1 IN: %s" % format_duration(route_plan.t_start - total_sim_time)
+			)
+		AutopilotPhase.DEPARTURE_BURN:
+			return "INTERPLANETARY: BURN 1 (ESCAPE)"
+		AutopilotPhase.DEPARTURE_COAST:
+			return (
+				"INTERPLANETARY: LEAVING SOI\n"
+				+ "BURN 2 IN: %s" % format_duration(route_plan.get("burn2_t", INF) - total_sim_time)
+			)
+		AutopilotPhase.TRANSFER_BURN:
+			return "INTERPLANETARY: TRANSFER BURN"
+		AutopilotPhase.TRANSFER_COAST:
+			return (
+				"INTERPLANETARY: CRUISE\n"
+				+ "ARRIVAL IN: %s" % format_duration(route_plan.get("closest_t", INF) - total_sim_time)
+			)
+		AutopilotPhase.ARRIVAL_COAST:
+			return "INTERPLANETARY: COASTING TO PERIAPSIS"
+		AutopilotPhase.ARRIVAL_BURN:
+			return "INTERPLANETARY: CAPTURE BURN"
+		AutopilotPhase.ESCAPE_BURN:
+			return "INTERPLANETARY: ESCAPE BURN"
+		AutopilotPhase.INTERPLANETARY_CRUISE:
+			return "INTERPLANETARY: CRUISE"
+		AutopilotPhase.CAPTURE_BURN:
+			return "INTERPLANETARY: CAPTURE BURN"
+		AutopilotPhase.WAIT_FIRST_BURN:
+			return "WAITING FOR APSIS"
+		AutopilotPhase.FIRST_BURN:
+			return "BURN 1: MATCHING ALTITUDE"
+		AutopilotPhase.COAST:
+			return "COASTING TO OPPOSITE APSIS"
+		AutopilotPhase.SECOND_BURN:
+			return "BURN 2: CIRCULARIZING"
+		AutopilotPhase.COMPLETE:
+			return "MONITORING ORBIT"
+		AutopilotPhase.STATION_KEEPING_WAIT:
+			return "STATION KEEPING: WAITING FOR APSIS"
+		AutopilotPhase.STATION_KEEPING_BURN:
+			return "STATION KEEPING: CORRECTION BURN"
+		_:
+			return "OFF"
+
+
+
+==============================================================================
+2. ship.gd
+==============================================================================
+
+var autopilot_thrust := Vector2.ZERO
+
+
+var autopilot_main_engine_output := 0.0
+
+
+## Set by solar_system.gd while the autopilot flies: the assist stays out.
+var assist_suspended := false
+
+
+func update_autopilot_rotation(delta: float) -> void:
+	if autopilot_thrust == Vector2.ZERO:
+		return
+
+	rotation = rotate_toward(rotation, autopilot_thrust.angle(), get_turn_rate() * delta)
+
+
+func set_autopilot_thrust(command: Vector2) -> void:
+	autopilot_thrust = Vector2(
+		clampf(command.x, -1.0, 1.0),
+		clampf(command.y, -1.0, 1.0)
+	)
+
+
+func clear_autopilot_thrust() -> void:
+	autopilot_thrust = Vector2.ZERO
+
+
+## The autopilot flies on the main engine only: it turns the nose onto the
+## burn direction (update_autopilot_rotation) and fires as much of the burn as
+## the nose is lined up with.
+func get_autopilot_acceleration(max_force: float) -> Vector2:
+	if autopilot_thrust == Vector2.ZERO or not has_fuel():
+		autopilot_main_engine_output = 0.0
+		return Vector2.ZERO
+
+	var forward: Vector2 = Vector2.RIGHT.rotated(rotation)
+	var alignment: float = forward.dot(autopilot_thrust.normalized())
+	if alignment <= 0.0:
+		autopilot_main_engine_output = 0.0
+		return Vector2.ZERO
+	autopilot_main_engine_output = autopilot_thrust.length() * alignment
+	return forward * (autopilot_main_engine_output * max_force / ship_mass)
+
+
+
+==============================================================================
+1b. solar_system.gd - helpers used only by the autopilot
+==============================================================================
+
+## The planet closest to the ship right now, or null.
+func get_nearest_planet() -> Node2D:
+	var best: Node2D = null
+	var best_distance: float = INF
+	for planet in planets:
+		var distance: float = ship.position.distance_to(planet.position)
+		if distance < best_distance:
+			best = planet
+			best_distance = distance
+	return best
+
+
+func get_orbit_elements(body: Node2D) -> Dictionary:
+	var body_velocity := Vector2.ZERO
+	if body != sun: body_velocity = body.get("velocity")
+
+	var r_vec: Vector2 = get_relative_position_precise(ship, body)
+	var v_vec: Vector2 = ship.velocity - body_velocity
+	var distance: float = r_vec.length()
+	var mu: float = G * body.get("mass")
+	var velocity_squared: float = v_vec.length_squared()
+	var energy: float = velocity_squared / 2.0 - mu / distance
+
+	if energy >= 0.0 or distance < 1.0:
+		return {"bound": false, "pe_alt": 0.0, "ap_alt": 0.0}
+
+	var a: float = -mu / (2.0 * energy)
+	var rv: float = r_vec.dot(v_vec)
+	var eccentricity_vector: Vector2 = (((velocity_squared - mu / distance) * r_vec - rv * v_vec) / mu)
+	var e: float = eccentricity_vector.length()
+	var body_radius: float = body.get("radius")
+
+	return {
+		"bound": true,
+		"pe_alt": a * (1.0 - e) - body_radius,
+		"ap_alt": a * (1.0 + e) - body_radius
+	}
+
+
+func is_bound_to_body(
+	object_position: Vector2,
+	object_velocity: Vector2,
+	body: Node2D
+) -> bool:
+	var body_velocity: Vector2 = Vector2.ZERO
+
+	if body != sun:
+		body_velocity = body.get("velocity")
+
+	var body_mass: float = body.get("mass")
+	var energy: float = get_orbital_energy(
+		object_position,
+		object_velocity,
+		body.position,
+		body_velocity,
+		body_mass
+	)
+
+	return energy < 0.0
+
+
+func refresh_orbit_parameters_for_body(body: Node2D) -> void:
+	var body_velocity: Vector2 = Vector2.ZERO
+
+	if body != sun:
+		body_velocity = body.get("velocity")
+
+	var r_vec: Vector2 = ship.position - body.position
+	var v_vec: Vector2 = ship.velocity - body_velocity
+	var distance: float = r_vec.length()
+	var body_mass: float = body.get("mass")
+	var body_radius: float = body.get("radius")
+	var mu: float = G * body_mass
+
+	if distance < 1.0:
+		has_bound_orbit = false
+		return
+
+	var velocity_squared: float = v_vec.length_squared()
+	var energy: float = velocity_squared / 2.0 - mu / distance
+
+	if energy >= 0.0:
+		has_bound_orbit = false
+		return
+
+	var semi_major_axis: float = -mu / (2.0 * energy)
+	var radial_velocity_term: float = r_vec.dot(v_vec)
+	var eccentricity_vector: Vector2 = (
+		(
+			(velocity_squared - mu / distance) * r_vec
+			- radial_velocity_term * v_vec
+		)
+		/ mu
+	)
+	var eccentricity: float = eccentricity_vector.length()
+
+	if eccentricity >= 1.0:
+		has_bound_orbit = false
+		return
+
+	current_periapsis = semi_major_axis * (1.0 - eccentricity)
+	current_apoapsis = semi_major_axis * (1.0 + eccentricity)
+	current_periapsis_altitude = current_periapsis - body_radius
+	current_apoapsis_altitude = current_apoapsis - body_radius
+	current_eccentricity = eccentricity
+	has_bound_orbit = true
+
+
+func format_duration(seconds: float) -> String:
+	if not is_finite(seconds):
+		return "--"
+
+	seconds = maxf(seconds, 0.0)
+	if seconds >= 3600.0:
+		return "%dh%02dm" % [int(seconds / 3600.0), int(fmod(seconds, 3600.0) / 60.0)]
+	if seconds >= 60.0:
+		return "%dm%02ds" % [int(seconds / 60.0), int(fmod(seconds, 60.0))]
+	return "%ds" % int(seconds)
+
+
+func time_to_apsis(orbit: Dictionary, mu: float, at_periapsis: bool) -> float:
+	return OrbitMath.time_to_periapsis(orbit, mu) if at_periapsis else OrbitMath.time_to_apoapsis(orbit, mu)
+
+
+
+==============================================================================
+3. interplanetary_planner.gd (whole file)
+==============================================================================
+
+class_name InterplanetaryPlanner
+extends RefCounted
+
+
+enum Stage {
+	COAST_TO_BURN,
+	ESCAPE_BURN,
+	ESCAPE_COAST,
+	TRANSFER_BURN,
+	TRANSFER_COAST,
+}
+
+enum Stop { AT_TIME, AT_EXIT, AT_CLOSEST }
+
+const SCAN_HALF_WIDTH := 2.0
+const SAMPLES_PER_PERIOD := 16
+const REFINE_ITERATIONS := 8
+const VERIFIED_CANDIDATES := 4
+const TARGET_ITERATIONS := 20
+const TARGET_TOLERANCE := 60.0
+const CORRECTION_TOLERANCE := 160.0
+const MAX_TARGET_STEP := 200.0
+const BURN_DT := 0.5
+const MIN_DT := 0.25
+const MAX_DT := 40.0
+const DT_FACTOR := 0.00075
+const MAX_ESCAPE_TIME := 30000.0
+const RECORD_SPACING := 100.0
+
+
+static func simulate(ctx: Dictionary, st: Dictionary, stop: int, t_stop: float, record: bool) -> Dictionary:
+	var t0: float = ctx.t0
+	var sun_pos: Vector2 = ctx.sun_pos
+	var mu_sun: float = ctx.mu_sun
+	var rel: PackedVector2Array = ctx.rel
+	var omega: PackedFloat64Array = ctx.omega
+	var mu: PackedFloat64Array = ctx.mu
+	var count: int = rel.size()
+	var dep: int = ctx.dep
+	var target: int = ctx.target
+	var acc: float = ctx.acc
+	var exit_radius: float = ctx.exit_radius
+	var soi: PackedFloat64Array = ctx.soi
+	var target_soi: float = soi[target]
+	var mu_dep: float = mu[dep]
+
+	var p: Vector2 = st.pos
+	var v: Vector2 = st.vel
+	var t: float = st.t
+	var stage: int = st.stage
+	var t_start: float = st.get("t_start", INF)
+	var eps_target: float = st.get("eps_target", 0.0)
+	var dv: Vector2 = st.get("dv", Vector2.ZERO)
+	var delivered: Vector2 = st.get("delivered", Vector2.ZERO)
+
+	var out := {
+		"ok": false,
+		"burn1_pos": Vector2.INF,
+		"burn1_t": INF,
+		"burn2_pos": Vector2.INF,
+		"burn2_t": INF,
+		"closest": INF,
+		"closest_signed": INF,
+		"closest_t": INF,
+		"closest_pos": Vector2.INF,
+		"exit_state": {},
+	}
+	var points := PackedVector2Array()
+	var last_recorded := Vector2.INF
+	var positions := PackedVector2Array()
+	positions.resize(count)
+
+	if record and stage != Stage.COAST_TO_BURN:
+		points.append(p)
+		last_recorded = p
+
+	var steps := 0
+	while t < t_stop and steps < 200000:
+		steps += 1
+
+		for i in range(count):
+			positions[i] = sun_pos + rel[i].rotated(omega[i] * (t - t0))
+
+		if stage == Stage.COAST_TO_BURN and t >= t_start:
+			stage = Stage.ESCAPE_BURN
+			out.burn1_pos = p
+			out.burn1_t = t
+			if record:
+				points.append(p)
+				last_recorded = p
+
+		var dep_pos: Vector2 = positions[dep]
+		var dep_rel: Vector2 = p - dep_pos
+		var dep_distance: float = dep_rel.length()
+		var thrust := Vector2.ZERO
+
+		if stage == Stage.ESCAPE_BURN:
+			var dep_vel: Vector2 = Vector2(-(dep_pos - sun_pos).y, (dep_pos - sun_pos).x) * omega[dep]
+			var rv: Vector2 = v - dep_vel
+			var eps: float = rv.length_squared() * 0.5 - mu_dep / dep_distance
+			if eps >= eps_target:
+				stage = Stage.ESCAPE_COAST
+			else:
+				thrust = rv.normalized() * acc
+
+		if stage == Stage.ESCAPE_COAST and dep_distance > exit_radius:
+			stage = Stage.TRANSFER_BURN
+			out.exit_state = {"pos": p, "vel": v, "t": t}
+			out.burn2_pos = p
+			out.burn2_t = t
+			if stop == Stop.AT_EXIT:
+				out.ok = true
+				break
+
+		var dmin: float = INF
+		for i in range(count):
+			dmin = minf(dmin, p.distance_to(positions[i]))
+		var dt: float = clampf(DT_FACTOR * dmin, MIN_DT, MAX_DT)
+
+		if stage == Stage.COAST_TO_BURN and t_start - t < dt:
+			dt = maxf(t_start - t, 1e-3)
+		elif stage == Stage.ESCAPE_BURN or stage == Stage.TRANSFER_BURN:
+			dt = minf(dt, BURN_DT)
+		dt = minf(dt, t_stop - t)
+
+		if stage == Stage.TRANSFER_BURN:
+			var remaining: Vector2 = dv - delivered
+			var remaining_length: float = remaining.length()
+			if remaining_length < 1e-4:
+				stage = Stage.TRANSFER_COAST
+			else:
+				var magnitude: float = minf(acc, remaining_length / dt)
+				thrust = remaining / remaining_length * magnitude
+				delivered += thrust * dt
+
+		var a0: Vector2 = _acceleration(p, t, t0, sun_pos, mu_sun, rel, omega, mu, soi) + thrust
+		p += v * dt + a0 * (0.5 * dt * dt)
+		var a1: Vector2 = _acceleration(p, t + dt, t0, sun_pos, mu_sun, rel, omega, mu, soi) + thrust
+		v += (a0 + a1) * (0.5 * dt)
+		t += dt
+
+		if record and stage != Stage.COAST_TO_BURN and p.distance_to(last_recorded) >= RECORD_SPACING:
+			points.append(p)
+			last_recorded = p
+
+		if stage == Stage.TRANSFER_COAST and stop == Stop.AT_CLOSEST:
+			var target_pos: Vector2 = sun_pos + rel[target].rotated(omega[target] * (t - t0))
+			var target_rel: Vector2 = p - target_pos
+			var distance: float = target_rel.length()
+
+			if distance < out.closest:
+				var target_vel: Vector2 = Vector2(-(target_pos - sun_pos).y, (target_pos - sun_pos).x) * omega[target]
+				var side: float = 1.0 if target_rel.cross(v - target_vel) >= 0.0 else -1.0
+				out.closest = distance
+				out.closest_signed = side * distance
+				out.closest_t = t
+				out.closest_pos = p
+				out.ok = true
+			elif distance > out.closest * 1.05 and out.closest < target_soi:
+				break
+
+			if distance < ctx.target_radius:
+				break
+
+	if record:
+		points.append(p)
+
+	out.pos = p
+	out.vel = v
+	out.t = t
+	out.stage = stage
+	out.points = points
+	return out
+
+
+static func _acceleration(
+	p: Vector2,
+	t: float,
+	t0: float,
+	sun_pos: Vector2,
+	mu_sun: float,
+	rel: PackedVector2Array,
+	omega: PackedFloat64Array,
+	mu: PackedFloat64Array,
+	soi: PackedFloat64Array
+) -> Vector2:
+	for i in range(rel.size()):
+		var body_pos: Vector2 = sun_pos + rel[i].rotated(omega[i] * (t - t0))
+		if p.distance_squared_to(body_pos) <= soi[i] * soi[i]:
+			var offset: Vector2 = body_pos - p
+			var d2: float = offset.length_squared()
+			var gravity: Vector2 = offset * (mu[i] / (d2 * sqrt(d2)))
+
+			var sun_offset: Vector2 = sun_pos - body_pos
+			var sd2: float = sun_offset.length_squared()
+			var body_own_acceleration: Vector2 = sun_offset * (mu_sun / (sd2 * sqrt(sd2)))
+
+			return gravity + body_own_acceleration
+
+	var offset: Vector2 = sun_pos - p
+	var d2: float = offset.length_squared()
+	return offset * (mu_sun / (d2 * sqrt(d2)))
+
+
+static func plan(ctx: Dictionary, request: Dictionary) -> Dictionary:
+	match int(request.stage):
+		Stage.COAST_TO_BURN:
+			if request.has("t_start"):
+				return _plan_from_escape(ctx, request)
+			return _plan_departure(ctx, request)
+		Stage.ESCAPE_BURN, Stage.ESCAPE_COAST:
+			return _plan_from_escape(ctx, request)
+		Stage.TRANSFER_BURN:
+			return _plan_record(ctx, request)
+		_:
+			return _plan_cruise(ctx, request)
+
+
+static func _plan_departure(ctx: Dictionary, request: Dictionary) -> Dictionary:
+	var dep: int = ctx.dep
+	var target: int = ctx.target
+	var mu_sun: float = ctx.mu_sun
+	var r1: float = ctx.rel[dep].length()
+	var r2: float = ctx.rel[target].length()
+	var omega_dep: float = ctx.omega[dep]
+	var omega_target: float = ctx.omega[target]
+	var now: float = request.t
+
+	var a_transfer: float = 0.5 * (r1 + r2)
+	var t_transfer: float = OrbitMath.half_period(a_transfer, mu_sun)
+	var v_transfer: float = sqrt(mu_sun * (2.0 / r1 - 1.0 / a_transfer))
+	var v_inf: float = absf(v_transfer - absf(omega_dep) * r1)
+	var eps_target: float = 0.5 * v_inf * v_inf
+
+	var gamma_required: float = wrapf(PI - omega_target * t_transfer, -PI, PI)
+	var gamma_now: float = ctx.rel[dep].angle_to(ctx.rel[target])
+	var rate: float = omega_target - omega_dep
+	var synodic: float = TAU / absf(rate)
+	var t_window: float = fposmod((gamma_required - gamma_now) * signf(rate), TAU) / absf(rate)
+
+	var dep_pos: Vector2 = ctx.sun_pos + ctx.rel[dep]
+	var dep_vel: Vector2 = Vector2(-ctx.rel[dep].y, ctx.rel[dep].x) * omega_dep
+	var parking: Dictionary = OrbitMath.elements(request.pos - dep_pos, request.vel - dep_vel, ctx.mu[dep])
+	var parking_period: float = 600.0
+	if parking.e < 1.0 and parking.a > 0.0:
+		parking_period = OrbitMath.orbital_period(parking.a, ctx.mu[dep])
+
+	var half_width: float = SCAN_HALF_WIDTH * parking_period
+	if t_window > synodic - half_width:
+		t_window -= synodic
+
+	var scan_start: float = maxf(now + 1.0, now + t_window - half_width)
+	var scan_end: float = maxf(scan_start + parking_period, now + t_window + half_width)
+	var samples: int = ceili((scan_end - scan_start) / parking_period * SAMPLES_PER_PERIOD) + 1
+
+	var coast: Dictionary = simulate(ctx, {
+		"pos": request.pos,
+		"vel": request.vel,
+		"t": now,
+		"stage": Stage.COAST_TO_BURN,
+	}, Stop.AT_TIME, scan_start, false)
+	var start_state := {"pos": coast.pos, "vel": coast.vel, "t": coast.t}
+
+	var step: float = (scan_end - scan_start) / float(samples - 1)
+	var times := PackedFloat64Array()
+	var scores := PackedFloat64Array()
+
+	for i in range(samples):
+		var candidate: float = scan_start + step * float(i)
+		times.append(candidate)
+		scores.append(_escape_score(ctx, start_state, candidate, eps_target, r2, omega_target))
+
+	var minima: Array = []
+	for i in range(samples):
+		var left: float = scores[i - 1] if i > 0 else INF
+		var right: float = scores[i + 1] if i < samples - 1 else INF
+		if is_finite(scores[i]) and scores[i] <= left and scores[i] <= right:
+			minima.append([scores[i], times[i]])
+	minima.sort_custom(func(x, y): return x[0] < y[0])
+
+	var best: Dictionary = {}
+	var best_cost: float = INF
+
+	for candidate in minima.slice(0, VERIFIED_CANDIDATES):
+		var t_start: float = _refine_start(
+			ctx, start_state, candidate[1], step, scan_start, scan_end, eps_target, r2, omega_target
+		)
+		var escape_state := start_state.duplicate()
+		escape_state.stage = Stage.COAST_TO_BURN
+		escape_state.t_start = t_start
+		escape_state.eps_target = eps_target
+
+		var result: Dictionary = _plan_from_escape(ctx, escape_state)
+		if not result.ok:
+			continue
+
+		var cost: float = result.dv.length() + 0.3 * (result.closest_t - now) / t_transfer
+		if absf(result.target_error) > CORRECTION_TOLERANCE:
+			cost += 1000.0 + absf(result.target_error)
+
+		if cost < best_cost:
+			best_cost = cost
+			best = result
+
+	if best.is_empty():
+		best = {"ok": false, "points": PackedVector2Array(), "dv": Vector2.ZERO}
+
+	best.t_window = now + t_window
+	return best
+
+
+static func _refine_start(
+	ctx: Dictionary,
+	start_state: Dictionary,
+	center: float,
+	step: float,
+	scan_start: float,
+	scan_end: float,
+	eps_target: float,
+	r2: float,
+	omega_target: float
+) -> float:
+	var lo: float = maxf(scan_start, center - step)
+	var hi: float = minf(scan_end, center + step)
+	var golden: float = 0.5 * (sqrt(5.0) - 1.0)
+	var x1: float = hi - golden * (hi - lo)
+	var x2: float = lo + golden * (hi - lo)
+	var f1: float = _escape_score(ctx, start_state, x1, eps_target, r2, omega_target)
+	var f2: float = _escape_score(ctx, start_state, x2, eps_target, r2, omega_target)
+
+	for _i in range(REFINE_ITERATIONS):
+		if f1 < f2:
+			hi = x2
+			x2 = x1
+			f2 = f1
+			x1 = hi - golden * (hi - lo)
+			f1 = _escape_score(ctx, start_state, x1, eps_target, r2, omega_target)
+		else:
+			lo = x1
+			x1 = x2
+			f1 = f2
+			x2 = lo + golden * (hi - lo)
+			f2 = _escape_score(ctx, start_state, x2, eps_target, r2, omega_target)
+
+	var center_score: float = _escape_score(ctx, start_state, center, eps_target, r2, omega_target)
+	var refined: float = x1 if f1 < f2 else x2
+	return refined if minf(f1, f2) < center_score else center
+
+
+static func _escape_score(
+	ctx: Dictionary,
+	start_state: Dictionary,
+	t_start: float,
+	eps_target: float,
+	r2: float,
+	omega_target: float
+) -> float:
+	var st := start_state.duplicate()
+	st.stage = Stage.COAST_TO_BURN
+	st.t_start = t_start
+	st.eps_target = eps_target
+	var sim: Dictionary = simulate(ctx, st, Stop.AT_EXIT, t_start + MAX_ESCAPE_TIME, false)
+
+	if not sim.ok:
+		return INF
+
+	var exit_state: Dictionary = sim.exit_state
+	var helio: Dictionary = OrbitMath.elements(
+		exit_state.pos - ctx.sun_pos, exit_state.vel, ctx.mu_sun
+	)
+
+	if signf(helio.h) != signf(omega_target):
+		return 1e12
+
+	var r1: float = ctx.rel[ctx.dep].length()
+	if helio.e >= 1.0:
+		return 1e9 + helio.energy
+
+	var outward: bool = r2 > r1
+	var far_apsis: float = helio.ra if outward else helio.rp
+	var time_to_far: float = (
+		OrbitMath.time_to_apoapsis(helio, ctx.mu_sun) if outward
+		else OrbitMath.time_to_periapsis(helio, ctx.mu_sun)
+	)
+	var far_direction: Vector2 = -helio.ehat if outward else helio.ehat
+	var target_direction: Vector2 = ctx.rel[ctx.target].rotated(
+		omega_target * (exit_state.t + time_to_far - ctx.t0)
+	)
+	var phase_miss: float = absf(far_direction.angle_to(target_direction))
+	return absf(far_apsis - r2) + r2 * phase_miss
+
+
+static func _plan_from_escape(ctx: Dictionary, st: Dictionary) -> Dictionary:
+	var to_exit: Dictionary = simulate(ctx, st, Stop.AT_EXIT, st.t + MAX_ESCAPE_TIME * 2.0, false)
+
+	if not to_exit.ok:
+		var failed: Dictionary = simulate(ctx, st, Stop.AT_TIME, st.t + MAX_ESCAPE_TIME, true)
+		failed.ok = false
+		failed.dv = Vector2.ZERO
+		failed.target_error = INF
+		return failed
+
+	var exit_state: Dictionary = to_exit.exit_state
+	var targeting: Dictionary = solve_targeting(ctx, exit_state, st.get("dv_guess", Vector2.ZERO))
+	var dv: Vector2 = targeting.dv
+
+	var full := st.duplicate()
+	full.dv = dv
+	full.delivered = Vector2.ZERO
+	var result: Dictionary = simulate(ctx, full, Stop.AT_CLOSEST, exit_state.t + ctx.max_transfer_time, true)
+	result.dv = dv
+	result.target_error = targeting.error
+	result.t_start = st.get("t_start", INF)
+	result.eps_target = st.get("eps_target", 0.0)
+	if targeting.error > CORRECTION_TOLERANCE:
+		result.ok = false
+	return result
+
+
+static func _plan_record(ctx: Dictionary, st: Dictionary) -> Dictionary:
+	var result: Dictionary = simulate(ctx, st, Stop.AT_CLOSEST, st.t + ctx.max_transfer_time, true)
+	result.dv = st.get("dv", Vector2.ZERO)
+	result.correction = false
+	return result
+
+
+static func _plan_cruise(ctx: Dictionary, st: Dictionary) -> Dictionary:
+	var coast := st.duplicate()
+	coast.stage = Stage.TRANSFER_COAST
+	var result: Dictionary = simulate(ctx, coast, Stop.AT_CLOSEST, st.t + ctx.max_transfer_time, true)
+	result.dv = Vector2.ZERO
+	result.correction = false
+
+	if result.ok and absf(result.closest_signed - _desired_signed(ctx)) <= CORRECTION_TOLERANCE:
+		return result
+
+	var targeting: Dictionary = solve_targeting(ctx, st, Vector2.ZERO)
+	var dv: Vector2 = targeting.dv
+	if dv == Vector2.ZERO:
+		return result
+
+	var corrected := st.duplicate()
+	corrected.stage = Stage.TRANSFER_BURN
+	corrected.dv = dv
+	corrected.delivered = Vector2.ZERO
+	var corrected_result: Dictionary = simulate(ctx, corrected, Stop.AT_CLOSEST, st.t + ctx.max_transfer_time, true)
+	corrected_result.dv = dv
+	corrected_result.correction = true
+	return corrected_result
+
+
+static func _desired_signed(ctx: Dictionary) -> float:
+	return signf(ctx.omega[ctx.target]) * ctx.r_target
+
+
+static func solve_targeting(ctx: Dictionary, state: Dictionary, dv_guess: Vector2) -> Dictionary:
+	var desired: float = _desired_signed(ctx)
+	var dv: Vector2 = dv_guess
+	var best_dv: Vector2 = dv_guess
+	var best_error: float = INF
+	var h: float = 1e-3
+
+	for _i in range(TARGET_ITERATIONS):
+		var error: float = _targeting_error(ctx, state, dv, desired)
+
+		if absf(error) < best_error:
+			best_error = absf(error)
+			best_dv = dv
+
+		if absf(error) < TARGET_TOLERANCE:
+			break
+
+		var error_x: float = _targeting_error(ctx, state, dv + Vector2(h, 0.0), desired)
+		var error_y: float = _targeting_error(ctx, state, dv + Vector2(0.0, h), desired)
+		var gradient := Vector2((error_x - error) / h, (error_y - error) / h)
+		var gradient_squared: float = gradient.length_squared()
+
+		if gradient_squared < 1e-12 or not is_finite(gradient_squared):
+			break
+
+		var step: Vector2 = -gradient * (error / gradient_squared)
+		if step.length() > MAX_TARGET_STEP:
+			step = step.normalized() * MAX_TARGET_STEP
+		dv += step
+
+	return {"dv": best_dv, "error": best_error}
+
+
+static func _targeting_error(ctx: Dictionary, state: Dictionary, dv: Vector2, desired: float) -> float:
+	var st := {
+		"pos": state.pos,
+		"vel": state.vel,
+		"t": state.t,
+		"stage": Stage.TRANSFER_BURN,
+		"dv": dv,
+		"delivered": Vector2.ZERO,
+	}
+	var sim: Dictionary = simulate(ctx, st, Stop.AT_CLOSEST, state.t + ctx.max_transfer_time, false)
+
+	if not sim.ok:
+		return 1e9
+
+	return sim.closest_signed - desired
+
+
+==============================================================================
+4. autopilot_panel.gd (whole file)
+==============================================================================
+
+extends Control
+
+
+var data: Dictionary = {}
+
+const COLOR_OFF := HudPanelStyle.COLOR_BORDER_DEFAULT
+const COLOR_ACTIVE := HudPanelStyle.COLOR_EMERALD
+const COLOR_SELECTING := HudPanelStyle.COLOR_AMBER
+const PAD := 12.0
+const LINE_HEIGHT := 17.0
+const SMALL_LINE_HEIGHT := 15.0
+
+
+func set_state(p_data: Dictionary) -> void:
+	data = p_data
+	queue_redraw()
+
+
+func _draw() -> void:
+	var active: bool = data.get("active", false)
+	var selecting: bool = data.get("selecting", false)
+
+	var accent: Color = COLOR_OFF
+	if selecting:
+		accent = COLOR_SELECTING
+	elif active:
+		accent = COLOR_ACTIVE
+
+	HudPanelStyle.draw_chamfered(self, size, accent, 14.0, 0.85, 0.65)
+
+	var font: Font = HudPanelStyle.get_font()
+	var content_width: float = size.x - PAD * 2.0
+	var y: float = 22.0
+
+	draw_string(font, Vector2(PAD, y), "AUTOPILOT", HORIZONTAL_ALIGNMENT_LEFT, content_width, 13, accent)
+	draw_circle(Vector2(size.x - PAD - 4.0, y - 5.0), 4.0, accent if (active or selecting) else Color(accent, 0.4))
+	y += LINE_HEIGHT * 1.4
+
+	if not selecting and not active:
+		draw_string(
+			font, Vector2(PAD, y), "STANDBY",
+			HORIZONTAL_ALIGNMENT_LEFT, content_width, 12, Color(0.55, 0.6, 0.68, 0.7)
+		)
+		return
+
+	var body_name: String = data.get("body_name", "")
+	var body_color: Color = data.get("body_color", Color.WHITE)
+	var label: String = "SELECTING: " if selecting else "TARGET: "
+	draw_string(font, Vector2(PAD, y), label + body_name, HORIZONTAL_ALIGNMENT_LEFT, content_width, 12, body_color)
+	y += LINE_HEIGHT
+
+	if not selecting and data.get("show_apsis_targets", false):
+		y = _line(
+			font, y, content_width, "TARGET PE: %.0f SU" % data.get("target_pe_altitude", 0.0),
+			Color(0.5, 0.85, 0.95)
+		)
+		y = _line(
+			font, y, content_width, "TARGET AP: %.0f SU" % data.get("target_ap_altitude", 0.0),
+			Color(0.95, 0.75, 0.4)
+		)
+	else:
+		y = _line(
+			font, y, content_width, "TARGET ALT: %.0f SU" % data.get("target_altitude", 0.0),
+			Color(0.75, 0.78, 0.85)
+		)
+	y = _line(font, y, content_width, "TOLERANCE: ±%.0f SU" % data.get("tolerance", 0.0), Color(0.75, 0.78, 0.85))
+
+	var eta_text: String = data.get("eta_text", "")
+	if eta_text != "":
+		y += SMALL_LINE_HEIGHT * 0.2
+		y = _line(font, y, content_width, eta_text, data.get("eta_color", Color.WHITE))
+
+	if selecting:
+		y += SMALL_LINE_HEIGHT * 0.5
+		y = _line(font, y, content_width, "Scroll: change orbit", Color(0.6, 0.63, 0.7))
+		y = _line(font, y, content_width, "Tab: change target body", Color(0.6, 0.63, 0.7))
+		y = _line(font, y, content_width, "Release F: engage", Color(0.6, 0.63, 0.7))
+		return
+
+	y = _line(font, y, content_width, "BURN 1 Δv: %+.3f" % data.get("burn1", 0.0), Color(0.75, 0.78, 0.85))
+	y = _line(font, y, content_width, "BURN 2 Δv: %+.3f" % data.get("burn2", 0.0), Color(0.75, 0.78, 0.85))
+	y = _line(
+		font, y, content_width, "REMAINING Δv: %.3f" % data.get("remaining_delta_v", 0.0),
+		data.get("remaining_color", Color.WHITE)
+	)
+
+	y += SMALL_LINE_HEIGHT * 0.3
+	var rcs_lines: PackedStringArray = data.get("rcs_lines", PackedStringArray())
+	for line in rcs_lines:
+		y = _line(font, y, content_width, line, Color(0.55, 0.75, 0.95))
+
+	y += SMALL_LINE_HEIGHT * 0.3
+	var status_color: Color = data.get("status_color", Color.WHITE)
+	var status_lines: PackedStringArray = data.get("status_lines", PackedStringArray())
+	for line in status_lines:
+		y = _line(font, y, content_width, line, status_color)
+
+	y += SMALL_LINE_HEIGHT * 0.3
+	_line(
+		font, y, content_width, "BURN: " + String(data.get("burn_mode_text", "")),
+		data.get("burn_mode_color", Color.WHITE)
+	)
+
+
+func _line(font: Font, y: float, content_width: float, text: String, color: Color) -> float:
+	draw_string(font, Vector2(PAD, y), text, HORIZONTAL_ALIGNMENT_LEFT, content_width, 11, color)
+	return y + SMALL_LINE_HEIGHT
+
+
+

@@ -373,10 +373,12 @@ text = "Placement"
 layout_mode = 2
 theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
 theme_override_font_sizes/font_size = 11
-text = "Hull -> open shipyard, no contact with another hull
+text = "Hull / Cockpit -> open shipyard, no contact with another hull
 Connector -> empty cell between two hulls
-Weapon -> next to a deck, not on the floor
-Engine / Utility / Fuel Tank / Battery / Shield -> on a deck cell"
+Truss -> weapon-mount ring around a hull
+Weapon -> truss next to deck
+Engine -> open space touching a hull's left side
+Everything else (fuel, battery, shield, radar, utility, …) -> inside hull on deck"
 
 [node name="InfoCloseButton" type="Button" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
 unique_name_in_owner = true

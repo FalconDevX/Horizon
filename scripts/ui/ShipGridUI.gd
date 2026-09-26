@@ -24,8 +24,13 @@ const PLAN_TINT_ALPHA := 0.18
 @export var occupied_tint := Color(0.35, 0.55, 0.85, 0.2)
 @export var grid_line := Color(0.45, 0.55, 0.7, 0.35)
 @export var mount_tint := Color(0.3, 0.5, 0.85, 0.16) ## subtle hint for weapon truss cells
-@export var weapon_fov_fill := Color(0.9, 0.25, 0.2, 0.18)
-@export var weapon_fov_outline := Color(0.95, 0.4, 0.3, 0.75)
+@export var weapon_fov_fill := Color(0.75, 0.78, 0.82, 0.16)
+@export var weapon_fov_outline := Color(0.82, 0.85, 0.9, 0.7)
+## A turret's whole reach, fainter than the cone it fires in.
+@export var turret_arc_fill := Color(0.75, 0.78, 0.82, 0.07)
+@export var turret_arc_outline := Color(0.82, 0.85, 0.9, 0.3)
+## How fast a hovered turret sweeps its arc in the preview (radians of phase per second).
+const TURRET_SWEEP_SPEED := 1.3
 @export var radar_fov_fill := Color(0.25, 0.75, 0.85, 0.16)
 @export var radar_fov_outline := Color(0.45, 0.9, 1.0, 0.7)
 
@@ -133,6 +138,17 @@ func _apply_view_rotation() -> void:
 
 
 ## On-screen footprint of the grid — width/height swap on quarter turns.
+## Middle of the built ship in this grid's own (unrotated) pixels, or
+## Vector2.INF with nothing built - where Center View aims.
+func ship_center_local() -> Vector2:
+	if ship_hull == null:
+		return Vector2.INF
+	var bounds: Rect2i = ship_hull.get_occupied_bounds()
+	if bounds.size == Vector2i.ZERO:
+		return Vector2.INF
+	return (Vector2(bounds.position) + Vector2(bounds.size) * 0.5) * cell_size
+
+
 func get_view_size() -> Vector2:
 	var s := custom_minimum_size if custom_minimum_size != Vector2.ZERO else size
 	return Vector2(s.y, s.x) if _view_rotation_steps % 2 == 1 else s
@@ -225,7 +241,12 @@ func hold_module(module: ModuleData, rotation: int = 0, cargo: Array = [], pick_
 	_held_pick_rotation = _held_rotation if pick_rotation < 0 else posmod(pick_rotation, 4)
 	_hover_module = module
 	_hover_rotation = _held_rotation
+	# Seed the ghost under the cursor immediately (don't wait for the next motion).
+	_hover_origin = _centered_origin(get_local_mouse_position(), module, _held_rotation)
+	_refresh_hover_validity()
+	_update_hull_dim_for_hold()
 	hold_changed.emit(_held_module, _held_rotation)
+	queue_redraw()
 	_preview.queue_redraw()
 
 
@@ -236,7 +257,11 @@ func clear_hold() -> void:
 	_held_pick_rotation = 0
 	_inspect_module = null
 	_clear_hover()
+	_update_hull_dim_for_hold()
 	hold_changed.emit(null, 0)
+	queue_redraw()
+	if _preview != null:
+		_preview.queue_redraw()
 
 
 func has_held_module() -> bool:
@@ -417,7 +442,14 @@ func _handle_left_click(cell: Vector2i) -> void:
 		return
 
 	if _held_module != null:
-		var origin := _hover_origin
+		# Place at the click, not a stale hover from before the cursor entered the grid.
+		var origin := _centered_origin(
+			Vector2(cell) * cell_size + cell_size * 0.5,
+			_held_module,
+			_held_rotation
+		)
+		_hover_origin = origin
+		_refresh_hover_validity()
 		if _held_module.category == ModuleData.Category.HULL and not _held_cargo.is_empty():
 			if ship_hull.can_place_hull_with_cargo(
 				_held_module, origin, _held_rotation, _held_cargo, _held_pick_rotation
@@ -430,6 +462,7 @@ func _handle_left_click(cell: Vector2i) -> void:
 					clear_hold()
 			else:
 				placement_failed.emit(_held_module, origin)
+			_preview.queue_redraw()
 			return
 
 		if ship_hull.can_place(_held_module, origin, _held_rotation):
@@ -439,6 +472,9 @@ func _handle_left_click(cell: Vector2i) -> void:
 				clear_hold()
 			else:
 				placement_failed.emit(_held_module, origin)
+		else:
+			placement_failed.emit(_held_module, origin)
+		_preview.queue_redraw()
 		return
 
 
@@ -485,7 +521,12 @@ func _draw() -> void:
 		var fill := empty_tint
 		match ship_hull.get_floor_type(cell):
 			HullData.FloorType.DECK:
-				fill = deck_tint
+				# Stronger wash while placing interior modules so the hull interior reads as a drop target.
+				fill = (
+					Color(0.25, 0.85, 0.55, 0.32)
+					if _held_module != null and _held_module.is_deck_equipment()
+					else deck_tint
+				)
 			HullData.FloorType.CONNECTOR:
 				fill = connector_tint
 			_:
@@ -596,7 +637,22 @@ func _draw_fov_preview() -> void:
 	var muzzle_cell := FovUtil.module_muzzle_cell(origin, data, rotation)
 	var origin_px := muzzle_cell * cell_size
 	var facing := FovUtil.local_facing(rotation)
+	if data.is_turret():
+		# The whole arc it can turn through, from the turret's middle, and
+		# the cone it fires in turned to where the sweep has it now.
+		var pivot_px := FovUtil.module_center_cell(origin, data, rotation) * cell_size
+		var reach := FovUtil.builder_preview_length(data.fov_range, cell_size.x)
+		var arc_blocked: Dictionary = ship_hull.get_structure_blocker_cells() if ship_hull != null else {}
+		FovUtil.draw_cone(
+			_preview, pivot_px, facing, data.turret_arc_deg, reach, turret_arc_fill, turret_arc_outline, 1.0,
+			arc_blocked, ignore_cells, cell_size.x
+		)
+		facing = facing.rotated(_turret_sweep(data))
+		origin_px = pivot_px
 	var length := FovUtil.builder_preview_length(data.fov_range, cell_size.x)
+	if data.is_radar():
+		# Radars reach far past the yard: just a ring round the mount.
+		length = minf(length, cell_size.x * 8.0)
 	var fill := weapon_fov_fill if data.is_weapon() else radar_fov_fill
 	var outline := weapon_fov_outline if data.is_weapon() else radar_fov_outline
 	var blocked: Dictionary = {}
@@ -615,6 +671,32 @@ func _draw_fov_preview() -> void:
 		ignore_cells,
 		cell_size.x
 	)
+
+
+## Turn of a turret in the preview: a slow sweep across its arc while it is
+## held or hovered, so the player sees how far it reaches.
+func _turret_sweep(data: ModuleData) -> float:
+	var half: float = deg_to_rad(data.turret_arc_deg) * 0.5
+	return sin(float(Time.get_ticks_msec()) * 0.001 * TURRET_SWEEP_SPEED) * half
+
+
+func _process(_delta: float) -> void:
+	# A hovered turret turns its sprite with the sweep; the rest sit still.
+	var turning: PlacedModule = null
+	if _inspect_module != null and _inspect_module.data != null and _inspect_module.data.is_turret():
+		turning = _inspect_module
+	for id: int in _module_sprites.keys():
+		var sprite: Control = _module_sprites[id]
+		if not is_instance_valid(sprite):
+			continue
+		if turning != null and id == turning.instance_id:
+			sprite.pivot_offset = sprite.size * 0.5
+			sprite.rotation = _turret_sweep(turning.data)
+		elif sprite.rotation != 0.0:
+			sprite.rotation = 0.0
+	var held_turret: bool = has_held_module() and _held_module != null and _held_module.is_turret()
+	if turning != null or held_turret:
+		_preview.queue_redraw()
 
 
 func _update_inspect_at(local_pos: Vector2) -> void:
@@ -668,6 +750,8 @@ func _spawn_sprite(module: PlacedModule) -> void:
 		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sprite.show_behind_parent = true
+	# Interior gear must sit above the opaque hull interior art.
+	sprite.z_index = 0 if module.data.is_structure() else 2
 
 	var bounds := module.get_bounding_size()
 	sprite.position = Vector2(module.origin) * cell_size
@@ -677,6 +761,24 @@ func _spawn_sprite(module: PlacedModule) -> void:
 	if _preview != null:
 		move_child(_preview, get_child_count() - 1)
 	_module_sprites[module.instance_id] = sprite
+	_update_hull_dim_for_hold()
+
+
+## Dim hull art while holding an interior module so deck cells stay readable.
+func _update_hull_dim_for_hold() -> void:
+	var dim := _held_module != null and _held_module.is_deck_equipment()
+	if ship_hull == null:
+		return
+	for m: PlacedModule in ship_hull.get_all_modules():
+		if not _module_sprites.has(m.instance_id) or m.data == null:
+			continue
+		var sprite: CanvasItem = _module_sprites[m.instance_id] as CanvasItem
+		if sprite == null:
+			continue
+		if m.data.category == ModuleData.Category.HULL:
+			sprite.modulate = Color(1, 1, 1, 0.45) if dim else Color.WHITE
+		else:
+			sprite.modulate = Color.WHITE
 
 
 func _texture_for(data: ModuleData, rotation: int) -> Texture2D:

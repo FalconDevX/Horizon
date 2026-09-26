@@ -1,171 +1,179 @@
 extends Control
+## Bottom-right: a live close-up of the ship - a real second camera on the
+## game world, not a redrawing. A SubViewport shares the main view's 2D and
+## 3D worlds, so it shows exactly what is there: the starfield background,
+## the planets, the ship as built, enemies, shots and beams. Its zoom is its
+## own (mouse wheel over the panel), whatever the main view does. The ship is
+## always shown for real: zoomed out, the main view draws it as a marker on
+## MARKER_VISIBILITY_LAYER, which this view culls, and _ship_layer draws the
+## built ship over the middle instead. Clicking it points the main camera
+## back at the ship.
+## solar_system.gd calls setup() once and set_state() every frame.
 
 signal clicked
 
+## Screen pixels per world unit: the zoom range and where it starts.
+const ZOOM_MIN := 0.05
+const ZOOM_MAX := 20.0
+const ZOOM_START := 3.0
+const ZOOM_STEP := 1.2
 const SHIP_TEXTURE := preload("res://textures/ship_blueprint.png")
-
-const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
-
-const MAIN_OUTER_COLOR := Color(1.0, 0.45, 0.1)
-const MAIN_CORE_COLOR := Color(1.0, 0.85, 0.5)
-const LINE_COLOR := Color(0.6, 0.65, 0.72, 0.9)
+const PAD := 8.0
+const LABEL_HEIGHT := 18.0
 
 var throttle := 0.0
-## The ship built in the yard (ShipRender), nose to the right; null shows the
-## stock ship's blueprint.
-var built_texture: Texture2D = null
+var _game: Node = null
+var _zoom: float = ZOOM_START
+var _container: SubViewportContainer
+var _viewport: SubViewport
+var _camera: Camera2D
+var _camera_3d: Camera3D
+## Draws the real ship over the view's middle while the world has it as a
+## marker (its own canvas layer, so the main view never sees it).
+var _ship_layer: CanvasLayer
+var _ship_overlay: Control
 
 
-func set_built_texture(texture: Texture2D) -> void:
-	built_texture = texture
-	queue_redraw()
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	_container = SubViewportContainer.new()
+	_container.stretch = true
+	_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_container)
+	_viewport = SubViewport.new()
+	_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	_viewport.handle_input_locally = false
+	_viewport.gui_disable_input = true
+	_container.add_child(_viewport)
+	_camera = Camera2D.new()
+	_camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_viewport.add_child(_camera)
+	_camera_3d = Camera3D.new()
+	_camera_3d.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_viewport.add_child(_camera_3d)
+	_ship_layer = CanvasLayer.new()
+	_viewport.add_child(_ship_layer)
+	_ship_overlay = Control.new()
+	_ship_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ship_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ship_overlay.draw.connect(_draw_ship_overlay)
+	_ship_layer.add_child(_ship_overlay)
+	resized.connect(_layout)
+	_layout()
 
 
-func _process(_delta: float) -> void:
-	if throttle > 0.0:
-		queue_redraw()
+## `game` is solar_system.gd: its viewport's worlds are shared, and its
+## background is copied in so the view shows the same sky.
+func setup(game: Node) -> void:
+	_game = game
+	var main_viewport: Viewport = game.get_viewport()
+	_viewport.world_2d = main_viewport.world_2d
+	_viewport.world_3d = main_viewport.world_3d
+	var main_camera_3d: Camera3D = game.get("camera_3d")
+	_camera_3d.projection = main_camera_3d.projection
+	_camera_3d.near = main_camera_3d.near
+	_camera_3d.far = main_camera_3d.far
+	_camera_3d.environment = main_camera_3d.environment
+	_camera_3d.current = true
+	_camera.make_current()
+	_viewport.canvas_cull_mask = 0xFFFFFFFF & ~int(game.get("MARKER_VISIBILITY_LAYER"))
+	var background: Node = game.get_node_or_null("Background")
+	if background != null:
+		_viewport.add_child(background.duplicate())
 
 
 func set_state(p_throttle: float) -> void:
-	if is_equal_approx(throttle, p_throttle):
-		return
 	throttle = p_throttle
+
+
+## Kept for solar_system.gd: the live view shows the ship itself.
+func set_built_texture(_texture: Texture2D) -> void:
+	pass
+
+
+func _layout() -> void:
+	if _container == null:
+		return
+	_container.position = Vector2(PAD, PAD)
+	_container.size = size - Vector2(PAD * 2.0, PAD * 2.0 + LABEL_HEIGHT)
+
+
+func _process(_delta: float) -> void:
+	if _game == null or not is_visible_in_tree():
+		return
+	var ship: Node2D = _game.get("ship")
+	var main_camera: Camera2D = _game.get("camera")
+	if ship == null or main_camera == null:
+		return
+	# On the ship as it is drawn this frame (interpolated), like the main camera.
+	var centre: Vector2 = _game.call("_drawn_position", ship)
+	var zoom: float = _zoom
+	_camera.position = centre
+	_camera.zoom = Vector2(zoom, zoom)
+	# The 3D planets: the main 3D camera's pose, over this view's centre.
+	var main_camera_3d: Camera3D = _game.get("camera_3d")
+	var transform_3d: Transform3D = main_camera_3d.global_transform
+	transform_3d.origin = Vector3(centre.x, transform_3d.origin.y, centre.y)
+	_camera_3d.global_transform = transform_3d
+	_camera_3d.size = float(_viewport.size.y) / zoom
+	_ship_overlay.visible = not bool(ship.get("true_scale"))
+	_ship_overlay.queue_redraw()
 	queue_redraw()
 
 
-# Clicking the ship preview = same as clicking the ship in the game world
-# (camera starts following it) - easier to hit the large model in the corner
-# than the tiny ship marker once the camera has zoomed out.
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		clicked.emit()
+	if event is InputEventMouseButton and event.pressed:
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				_zoom = minf(_zoom * ZOOM_STEP, ZOOM_MAX)
+			MOUSE_BUTTON_WHEEL_DOWN:
+				_zoom = maxf(_zoom / ZOOM_STEP, ZOOM_MIN)
+			MOUSE_BUTTON_LEFT:
+				clicked.emit()
+		accept_event()
 
 
 func _draw() -> void:
 	HudPanelStyle.draw_chamfered(self, size, HudPanelStyle.COLOR_BORDER_DEFAULT, 16.0, 0.85, 0.55)
-	if built_texture != null:
-		_draw_built()
-		return
-
-	var image_rect: Rect2 = _fit_rect()
-	draw_texture_rect(SHIP_TEXTURE, image_rect, false)
-
-	var scale_ref: float = minf(image_rect.size.x, image_rect.size.y)
-
-	_draw_engine_flame(image_rect, scale_ref)
-
-	var engine_label_pos: Vector2 = image_rect.position + ENGINE_EXIT_POS * image_rect.size + Vector2(-15.0, 10.0)
-	draw_string(
-		HudPanelStyle.get_font(), engine_label_pos, "MAIN", HORIZONTAL_ALIGNMENT_CENTER, 30.0, 8,
-		Color(MAIN_OUTER_COLOR, 0.9) if throttle > 0.0 else Color(LINE_COLOR, 0.5)
-	)
-
-
-## The built ship, turned nose up like the blueprint, fitted to the panel.
-func _draw_built() -> void:
-	var picture: Vector2 = built_texture.get_size()
-	var turned := Vector2(picture.y, picture.x)
-	var room := size - Vector2(SIDE_PADDING, TOP_PADDING) * 2.0
-	var fit: float = minf(room.x / turned.x, room.y / turned.y)
-	var drawn: Vector2 = picture * fit
-	draw_set_transform(size * 0.5, -PI * 0.5, Vector2.ONE)
-	draw_texture_rect(built_texture, Rect2(-drawn * 0.5, drawn), false)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	if throttle > 0.0:
+	var font: Font = HudPanelStyle.get_font()
+	var y: float = size.y - PAD - 4.0
+	draw_string(font, Vector2(PAD + 2.0, y), "LOCAL VIEW", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, HudPanelStyle.COLOR_TEXT_MUTED)
+	if _camera != null and _camera.zoom.x > 0.0:
 		draw_string(
-			HudPanelStyle.get_font(), Vector2(0.0, size.y - 10.0), "ENGINES", HORIZONTAL_ALIGNMENT_CENTER, size.x, 8,
-			Color(MAIN_OUTER_COLOR, 0.9)
+			font, Vector2(PAD, y), "%d SU" % roundi(_container.size.x / _camera.zoom.x), HORIZONTAL_ALIGNMENT_RIGHT,
+			size.x - PAD * 2.0 - 2.0, 9, HudPanelStyle.COLOR_TEXT_MUTED
 		)
 
 
-const FLAME_RESERVE_FRACTION := 0.22
-const TOP_PADDING := 16.0
-const SIDE_PADDING := 16.0
-
-func _fit_rect() -> Rect2:
-	var texture_size: Vector2 = SHIP_TEXTURE.get_size()
-	var available_width: float = size.x - SIDE_PADDING * 2.0
-	var available_height: float = (size.y - TOP_PADDING) * (1.0 - FLAME_RESERVE_FRACTION)
-	var fit_scale: float = minf(available_width / texture_size.x, available_height / texture_size.y)
-	var fitted_size: Vector2 = texture_size * fit_scale
-	var origin_x: float = (size.x - fitted_size.x) * 0.5
-	return Rect2(Vector2(origin_x, TOP_PADDING), fitted_size)
-
-
-# A burst with a wavy edge (a few points with a jittering offset instead
-# of a plain triangle) + sparks flying along the stream - more "life"
-# than a flat shape, but still cheap (no particles/shaders).
-func _draw_engine_flame(image_rect: Rect2, scale_ref: float) -> void:
-	# A near-zero flame folds into degenerate polygons Godot cannot triangulate.
-	if throttle <= 0.02:
+## The ship at true scale in the middle of the view: the built picture with
+## its turrets and flames, or the stock blueprint.
+func _draw_ship_overlay() -> void:
+	var ship: Node2D = _game.get("ship") if _game != null else null
+	if ship == null:
 		return
-
-	var tip: Vector2 = image_rect.position + ENGINE_EXIT_POS * image_rect.size
-	var direction: Vector2 = Vector2.DOWN
-	var side: Vector2 = direction.orthogonal()
-
-	var t: float = Time.get_ticks_msec() / 1000.0
-	var flicker: float = 0.85 + 0.15 * sin(t * 24.0) + 0.08 * sin(t * 61.0 + 1.3)
-	var length: float = 0.3 * scale_ref * throttle * flicker
-
-	var outer_half_width: float = 0.11 * image_rect.size.x
-	_draw_wavy_flame(tip, direction, side, outer_half_width, length, t, Color(MAIN_OUTER_COLOR, 0.55 * flicker))
-
-	var mid_half_width: float = outer_half_width * 0.75
-	_draw_wavy_flame(tip, direction, side, mid_half_width, length * 0.8, t + 3.1, Color(1.0, 0.65, 0.2, 0.7 * flicker))
-
-	var inner_half_width: float = outer_half_width * 0.4
-	draw_colored_polygon(
-		PackedVector2Array([
-			tip + side * inner_half_width, tip - side * inner_half_width,
-			tip + direction * (length * 0.6)
-		]),
-		Color(MAIN_CORE_COLOR, 0.95 * flicker)
-	)
-
-	_draw_sparks(tip, direction, side, outer_half_width, length, t, Color(1.0, 0.8, 0.4))
-
-
-# The triangle is replaced by a few segments with sideways drift (sinusoidal
-# over time and along the length) - the edge waves like a real exhaust
-# stream instead of being perfectly straight.
-func _draw_wavy_flame(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, color: Color
-) -> void:
-	var segments := 5
-	var left_points := PackedVector2Array()
-	var right_points := PackedVector2Array()
-
-	for i in range(segments + 1):
-		var f: float = float(i) / float(segments)
-		var pos: Vector2 = tip + direction * (length * f)
-		var taper: float = 1.0 - f
-		var wobble: float = sin(t * 14.0 + f * 6.0) * half_width * 0.18 * f
-		var width: float = half_width * taper + wobble
-		left_points.append(pos + side * width)
-		right_points.append(pos - side * width)
-
-	var points := PackedVector2Array()
-	points.append_array(left_points)
-	right_points.reverse()
-	points.append_array(right_points)
-	draw_colored_polygon(points, color)
-
-
-# A few tiny sparks breaking off the stream, flickering independently
-# of the main flame (different phase/frequency).
-func _draw_sparks(
-	tip: Vector2, direction: Vector2, side: Vector2, half_width: float, length: float, t: float, spark_color: Color
-) -> void:
-	var spark_count := 3
-	for i in range(spark_count):
-		var phase_seed: float = float(i) * 17.3
-		var f: float = fmod(t * 0.7 + phase_seed, 1.0)
-		var pos: Vector2 = tip + direction * (length * (0.35 + f * 0.9))
-		var drift: float = sin(t * 9.0 + phase_seed) * half_width * 0.5 * f
-		pos += side * drift
-		var alpha: float = (1.0 - f) * 0.8
-		var radius: float = maxf(0.6, 1.4 * (1.0 - f * 0.6) * (half_width / 6.0))
-		draw_circle(pos, radius, Color(spark_color, alpha))
-
-
+	var o: Control = _ship_overlay
+	var centre: Vector2 = o.size * 0.5
+	var k: float = _zoom
+	var turn: float = ship.rotation
+	var visual: Dictionary = ship.get("built_visual")
+	if visual.is_empty():
+		var tex_size: Vector2 = SHIP_TEXTURE.get_size()
+		var length: float = 22.0 * k
+		var drawn := Vector2(length * tex_size.x / tex_size.y, length)
+		o.draw_set_transform(centre, turn + PI * 0.5, Vector2.ONE)
+		o.draw_texture_rect(SHIP_TEXTURE, Rect2(-drawn * 0.5, drawn), false)
+		o.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
+	o.draw_set_transform(centre, turn, Vector2(k, k))
+	o.draw_texture_rect(visual["texture"], visual["rect"], false)
+	var aim: Dictionary = ship.get("turret_aim")
+	for turret: Dictionary in visual.get("turrets", []):
+		var size_local: Vector2 = turret["size"]
+		var offset: float = float(aim.get(int(turret["id"]), 0.0))
+		o.draw_set_transform(centre + (turret["center"] as Vector2).rotated(turn) * k, turn + offset, Vector2(k, k))
+		o.draw_texture_rect(turret["texture"], Rect2(-size_local * 0.5, size_local), false)
+	o.draw_set_transform(centre, turn, Vector2(k, k))
+	if throttle > 0.02:
+		for point: Vector2 in visual.get("engines", []):
+			ship.draw_flame(o, point, ship.ENGINE_MAX_LENGTH, throttle, int(point.y * 7.0))
+	o.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

@@ -9,6 +9,7 @@ ship_texture = ExtResource("2_tex")
 title = "Minelayer"
 kind_id = "minelayer"
 visual_length = 40.0
+max_health = 65.0
 move_speed = 120.0
 turn_speed = 2.0
 can_fire = false
