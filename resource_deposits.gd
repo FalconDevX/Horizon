@@ -31,20 +31,21 @@ static var _model_cache: Dictionary = {}
 
 ## What each resource is. `size` is the cluster's footprint in planet radii;
 ## `collectible` false marks scenery the player cannot pick up (default true);
+## `tier` is 1/2/3 from the Miro raw-material map (T3 worlds get elite guards);
 ## `color_param` takes the colour from a terrain param instead (a slime's own
 ## green); the rest are resource_deposit.gdshader's uniforms.
 const TYPES := {
 	&"silver_ore": {
 		"name": "Silver ore", "mesh": &"crystals", "size": Vector2(0.03, 0.045),
-		"color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06,
+		"color": Color(0.78, 0.8, 0.85), "shine": 0.9, "glow": 0.06, "tier": 1,
 	},
 	&"gold_ore": {
 		"name": "Gold ore", "mesh": &"tiles", "size": Vector2(0.05, 0.07),
-		"color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06,
+		"color": Color(1.0, 0.76, 0.28), "shine": 0.9, "glow": 0.06, "tier": 1,
 	},
 	&"scrap": {
 		"name": "Scrap", "mesh": &"scrap", "size": Vector2(0.06, 0.08),
-		"color": Color.WHITE, "shine": 0.25, "glow": 0.04,
+		"color": Color.WHITE, "shine": 0.25, "glow": 0.04, "tier": 1,
 	},
 	# The three plants are one model (MODELS moonbloom), told apart by how
 	# its texture is recoloured: as painted alive (teal leaves, crimson
@@ -52,12 +53,12 @@ const TYPES := {
 	&"beanstalk": {
 		"name": "Moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
 		"color": Color.WHITE, "shine": 0.2, "glow": 0.05, "wiggle": 0.035,
-		"tint": TINT_NONE,
+		"tint": TINT_NONE, "tier": 2,
 	},
 	&"frozen_beanstalk": {
 		"name": "Frozen moonbloom", "mesh": &"moonbloom", "size": Vector2(0.045, 0.065),
 		"color": Color(0.72, 0.87, 1.0), "shine": 0.6, "glow": 0.08, "wiggle": 0.012,
-		"tint": Vector3(0.0, 0.25, 1.45),
+		"tint": Vector3(0.0, 0.25, 1.45), "tier": 2,
 	},
 	&"dried_beanstalk": {
 		"name": "Dried moonbloom", "mesh": &"moonbloom", "size": Vector2(0.04, 0.06),
@@ -66,36 +67,38 @@ const TYPES := {
 	},
 	&"gold_pillar": {
 		"name": "Gold pillar", "mesh": &"pillars", "size": Vector2(0.06, 0.09),
-		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15,
+		"color": Color(1.0, 0.82, 0.3), "shine": 0.85, "glow": 0.15, "tier": 3,
 	},
 	&"egg": {
 		"name": "Egg", "mesh": &"egg", "size": Vector2(0.08, 0.11),
 		"color": Color(0.97, 0.96, 0.93), "shine": 0.35, "glow": 0.08,
 		"spots": 1.0, "spot_color_a": Color(0.12, 0.38, 1.0), "spot_color_b": Color(1.0, 0.3, 0.62),
+		"tier": 3,
 	},
 	&"sky_stone": {
 		"name": "Sky stone", "mesh": &"pebbles", "size": Vector2(0.022, 0.032),
-		"color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12,
+		"color": Color(0.55, 0.88, 1.0), "shine": 1.0, "glow": 0.12, "tier": 2,
 	},
 	&"bone": {
 		"name": "Bone", "mesh": &"bones", "size": Vector2(0.06, 0.08),
-		"color": Color(0.94, 0.91, 0.82), "shine": 0.3, "glow": 0.05,
+		"color": Color(0.94, 0.91, 0.82), "shine": 0.3, "glow": 0.05, "tier": 2,
 	},
 	&"toxic_ore": {
 		"name": "Toxic ore", "mesh": &"slabs", "size": Vector2(0.05, 0.07),
-		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1,
+		"color": Color(0.12, 0.45, 0.14), "shine": 0.5, "glow": 1.1, "tier": 3,
 	},
 	&"pink_crystal": {
 		"name": "Pink crystal", "mesh": &"crystals", "size": Vector2(0.035, 0.05),
-		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18,
+		"color": Color(1.0, 0.58, 0.8), "shine": 0.85, "glow": 0.18, "tier": 1,
 	},
 	&"ice_crystal": {
 		"name": "Ice crystal", "mesh": &"spikes", "size": Vector2(0.04, 0.06),
-		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12,
+		"color": Color(0.72, 0.9, 1.0), "shine": 0.95, "glow": 0.12, "tier": 1,
 	},
 	&"slime_jelly": {
 		"name": "Slime jelly", "mesh": &"jelly", "size": Vector2(0.03, 0.045),
 		"color": Color(0.5, 1.0, 0.5), "color_param": "shallow", "shine": 0.9, "glow": 0.35,
+		"tier": 2,
 	},
 	&"tumbleweed": {
 		"name": "Tumbleweed", "mesh": &"tumbleweed", "size": Vector2(0.035, 0.05),
@@ -564,6 +567,21 @@ static func yields(kind: int, variant: String, flag: String = "") -> Array:
 			continue
 		result.append({"type": rule["type"], "rule": rule})
 	return result
+
+
+## Tech-tree tier of a deposit type (1–3). Scenery / unknown → 0.
+static func tier_of(type_name: StringName) -> int:
+	return int(TYPES.get(type_name, {}).get("tier", 0))
+
+
+## True when any collectible deposit in `deposits` is at least `tier`.
+static func has_tier(deposits: Array, tier: int) -> bool:
+	for deposit: Dictionary in deposits:
+		if not deposit.get("collectible", true):
+			continue
+		if tier_of(deposit.get("type", &"")) >= tier:
+			return true
+	return false
 
 
 ## Whether a spawn entry applies to this world's roll (its `only` / `except`).

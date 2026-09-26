@@ -19,9 +19,13 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
+## Catalog id for the flat map/HUD glyph (shape + colour).
+@export var kind_id: String = "basic"
 @export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
+## Hostile chase: always at least this many times the player's current speed.
+const SPEED_VS_PLAYER := 1.1
 @export var turn_speed: float = 2.6
 @export var fire_cooldown: float = 0.35
 ## Played once per shot; the tank sets its own heavier one.
@@ -62,10 +66,13 @@ const BLACK_HOLE_EXPLOSION_DURATION := 1.1
 @export var ai_forward: bool = false
 @export var ai_seek_ship: bool = false
 
-## Mothership: Space launches Fast fighters instead of shooting.
+## Mothership: auto-launches Fast fighters on an interval; Space also launches
+## when the craft is player-controlled.
 @export var deploy_fighters: bool = false
 @export var fighter_scene: PackedScene
-@export var deploy_cooldown: float = 1.4
+## Seconds between fighter launches (rolled uniformly each time).
+@export var deploy_cooldown: float = 10.0
+@export var deploy_cooldown_max: float = 15.0
 @export var deploy_offset: float = 36.0
 
 ## Minelayer: Space drops a DamageZone at the ship.
@@ -102,6 +109,55 @@ var targeted := false:
 var _explode_age := 0.0
 var _explosion_duration: float = EXPLOSION_DURATION
 var _blast_radius: float = 0.0
+## Seconds the black-hole pull has been active (fuse only counts while armed).
+var _bh_active_time := 0.0
+## When false the craft is drawn as a fixed-size screen marker (solar_system
+## scales the node with 1/zoom, same as the player ship).
+var true_scale: bool = true
+
+## Circular patrol around a planet (PlanetGuards). Null = not orbiting.
+var orbit_anchor: Node2D = null
+var orbit_radius: float = 0.0
+var orbit_angle: float = 0.0
+var orbit_omega: float = 0.0
+## Player distance to the planet that wakes this craft (0 = never).
+var orbit_alert_range: float = 0.0
+## Leave the rail and chase while the player is near the guarded planet.
+var _alerted: bool = false
+var _orbiting: bool = false
+
+
+func _ready() -> void:
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
+
+
+## Park this craft on a circular orbit around `anchor`. Not player-controlled.
+## `alert_range` is how close the player may get to the planet before the
+## craft leaves the rail and attacks.
+func begin_orbit(
+	anchor: Node2D,
+	radius: float,
+	angle: float,
+	omega: float,
+	alert_range: float = 0.0
+) -> void:
+	player_controlled = false
+	ai_forward = false
+	ai_seek_ship = false
+	orbit_anchor = anchor
+	orbit_radius = radius
+	orbit_angle = angle
+	orbit_omega = omega
+	orbit_alert_range = alert_range
+	_alerted = false
+	_orbiting = true
+	_bh_active_time = 0.0
+	if deploy_fighters:
+		_ability_timer = _next_deploy_delay()
+	if anchor != null:
+		global_position = anchor.global_position + Vector2.from_angle(angle) * radius
+		rotation = angle + PI * 0.5 * signf(omega if omega != 0.0 else 1.0)
 
 
 func _process(delta: float) -> void:
@@ -116,16 +172,76 @@ func _process(delta: float) -> void:
 	_fire_timer = maxf(0.0, _fire_timer - delta)
 	_ability_timer = maxf(0.0, _ability_timer - delta)
 
-	if player_controlled:
+	if _orbiting:
+		_handle_orbit(delta)
+	elif player_controlled:
 		_handle_input(delta)
 	elif ai_forward or ai_seek_ship:
 		_handle_ai(delta)
 
 	if explodes_on_hit:
 		_check_ship_contact()
-	if black_hole_mode:
-		_black_hole_tick(delta)
+	if black_hole_mode and not _orbiting:
+		# Sandbox / free-fly: fuse runs from spawn. Orbiting craft arm in
+		# _handle_orbit when the player is close enough.
+		_black_hole_tick(delta, true)
 	queue_redraw()
+
+
+func _handle_orbit(delta: float) -> void:
+	if orbit_anchor == null or not is_instance_valid(orbit_anchor):
+		_orbiting = false
+		return
+
+	var player := _find_player_ship()
+	var planet_pos: Vector2 = orbit_anchor.global_position
+	if player != null and orbit_alert_range > 0.0:
+		var d2: float = planet_pos.distance_squared_to(player.global_position)
+		var alert2: float = orbit_alert_range * orbit_alert_range
+		if d2 <= alert2:
+			_alerted = true
+		elif _alerted and d2 > alert2 * 1.45:
+			# Player left: settle back onto a circular rail from here.
+			_alerted = false
+			var offset: Vector2 = global_position - planet_pos
+			orbit_angle = offset.angle()
+			orbit_radius = maxf(offset.length(), orbit_radius * 0.5)
+
+	if _alerted:
+		_orbit_attack(delta, player)
+		return
+
+	orbit_angle += orbit_omega * delta
+	global_position = planet_pos + Vector2.from_angle(orbit_angle) * orbit_radius
+	rotation = orbit_angle + PI * 0.5 * signf(orbit_omega if orbit_omega != 0.0 else 1.0)
+	_throttle = 0.55
+
+
+## Break orbit: chase the player and use guns / specials.
+func _orbit_attack(delta: float, player: Node2D) -> void:
+	if player == null:
+		_throttle = 0.0
+		return
+
+	var desired: float = (player.global_position - global_position).angle()
+	var diff: float = wrapf(desired - rotation, -PI, PI)
+	rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
+	_throttle = 1.0
+	position += Vector2.RIGHT.rotated(rotation) * _speed_vs_player(player) * _throttle * delta
+
+	if deploy_fighters:
+		_try_deploy_fighter()
+	elif lay_mines:
+		_try_lay_mine()
+	elif can_fire:
+		_try_fire()
+
+	if black_hole_mode:
+		var in_pull: bool = (
+			global_position.distance_squared_to(player.global_position)
+			<= black_hole_radius * black_hole_radius
+		)
+		_black_hole_tick(delta, in_pull)
 
 
 func _handle_input(delta: float) -> void:
@@ -144,26 +260,41 @@ func _handle_input(delta: float) -> void:
 	if not is_zero_approx(_throttle):
 		position += Vector2.RIGHT.rotated(rotation) * move_speed * _throttle * delta
 
-	if Input.is_key_pressed(KEY_SPACE):
-		if deploy_fighters:
-			_try_deploy_fighter()
-		elif lay_mines:
+	if deploy_fighters:
+		_try_deploy_fighter()
+	elif Input.is_key_pressed(KEY_SPACE):
+		if lay_mines:
 			_try_lay_mine()
 		elif can_fire:
 			_try_fire()
 
 
 func _handle_ai(delta: float) -> void:
-	if ai_seek_ship:
-		var target := _find_player_ship()
-		if target != null:
-			var desired: float = (target.global_position - global_position).angle()
-			var diff: float = wrapf(desired - rotation, -PI, PI)
-			rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
+	var target := _find_player_ship() if ai_seek_ship else null
+	if target != null:
+		var desired: float = (target.global_position - global_position).angle()
+		var diff: float = wrapf(desired - rotation, -PI, PI)
+		rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
 	_throttle = 1.0
-	position += Vector2.RIGHT.rotated(rotation) * move_speed * _throttle * delta
-	if can_fire and not deploy_fighters and not lay_mines:
+	var speed: float = _speed_vs_player(target) if target != null else move_speed
+	position += Vector2.RIGHT.rotated(rotation) * speed * _throttle * delta
+	if deploy_fighters:
+		_try_deploy_fighter()
+	elif lay_mines:
+		_try_lay_mine()
+	elif can_fire:
 		_try_fire()
+
+
+## At least `SPEED_VS_PLAYER` × the player's current speed, never below this
+## craft's own move_speed (so a parked ship still gets chased at cruise).
+func _speed_vs_player(player: Node2D) -> float:
+	if player == null:
+		return move_speed
+	var velocity: Variant = player.get("velocity")
+	if typeof(velocity) != TYPE_VECTOR2:
+		return move_speed
+	return maxf((velocity as Vector2).length() * SPEED_VS_PLAYER, move_speed)
 
 
 func _try_fire() -> void:
@@ -202,16 +333,21 @@ func fire_laser() -> void:
 		bolt.velocity = dir * laser_speed
 
 
+func _next_deploy_delay() -> float:
+	return randf_range(deploy_cooldown, maxf(deploy_cooldown, deploy_cooldown_max))
+
+
 func _try_deploy_fighter() -> void:
 	if fighter_scene == null or _ability_timer > 0.0 or get_parent() == null:
 		return
-	_ability_timer = deploy_cooldown
+	_ability_timer = _next_deploy_delay()
 	var fighter := fighter_scene.instantiate() as Enemy
 	if fighter == null:
 		return
 	fighter.player_controlled = false
 	fighter.ai_forward = true
 	fighter.ai_seek_ship = true
+	EnemyCatalog.configure(fighter, "fast")
 	get_parent().add_child(fighter)
 	var aft := -Vector2.RIGHT.rotated(rotation) * deploy_offset
 	fighter.global_position = global_position + aft
@@ -233,9 +369,12 @@ func _try_lay_mine() -> void:
 	_play_laser_sound()
 
 
-func _black_hole_tick(delta: float) -> void:
+func _black_hole_tick(delta: float, armed: bool = true) -> void:
+	if not armed:
+		return
 	_pull_nearby(delta)
-	if _alive_time >= black_hole_fuse:
+	_bh_active_time += delta
+	if _bh_active_time >= black_hole_fuse:
 		_detonate_black_hole()
 
 
@@ -383,8 +522,15 @@ func _draw() -> void:
 		return
 	if targeted:
 		_draw_target_brackets()
-	if black_hole_mode:
+	if black_hole_mode and true_scale:
 		_draw_black_hole_field()
+
+	if not true_scale:
+		_draw_map_marker()
+		if _throttle > 0.05:
+			_draw_engine_flame(Vector2(-8, 0))
+		return
+
 	if ship_texture == null:
 		return
 	var draw_size := _get_draw_size()
@@ -395,6 +541,11 @@ func _draw() -> void:
 	if _throttle > 0.05:
 		for exit in engine_exits:
 			_draw_engine_flame(_image_to_local(exit, draw_size))
+
+
+## Far-zoom glyph: flat shape + colour from EnemyCatalog (not the ship art).
+func _draw_map_marker() -> void:
+	EnemyCatalog.draw_glyph(self, Vector2.ZERO, 11.0, kind_id, true)
 
 
 ## Red corner brackets round a targeted enemy, a fixed size on screen.
@@ -411,22 +562,28 @@ func _draw_target_brackets() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
+func _world_to_local_radius(world_r: float) -> float:
+	# Node scale is 1/zoom when far out; world-sized FX must undo that.
+	return world_r / maxf(scale.x, 0.0001)
+
+
 func _draw_black_hole_field() -> void:
 	var t: float = Time.get_ticks_msec() / 1000.0
-	var fuse_left: float = maxf(0.0, black_hole_fuse - _alive_time)
+	var fuse_left: float = maxf(0.0, black_hole_fuse - _bh_active_time)
 	var urgency: float = 1.0 - clampf(fuse_left / black_hole_fuse, 0.0, 1.0)
 	var pulse: float = 0.7 + 0.3 * sin(t * (4.0 + urgency * 10.0))
 	var rim := Color(0.55, 0.2, 0.95, 0.2 * pulse)
-	draw_circle(Vector2.ZERO, black_hole_radius, Color(0.15, 0.05, 0.28, 0.12 * pulse))
-	draw_arc(Vector2.ZERO, black_hole_radius * pulse, 0.0, TAU, 64, rim, 2.0)
-	draw_arc(Vector2.ZERO, black_hole_radius * 0.55, 0.0, TAU, 48, Color(0.8, 0.4, 1.0, 0.35 * pulse), 1.5)
+	var r: float = black_hole_radius
+	draw_circle(Vector2.ZERO, r, Color(0.15, 0.05, 0.28, 0.12 * pulse))
+	draw_arc(Vector2.ZERO, r * pulse, 0.0, TAU, 64, rim, 2.0)
+	draw_arc(Vector2.ZERO, r * 0.55, 0.0, TAU, 48, Color(0.8, 0.4, 1.0, 0.35 * pulse), 1.5)
 	draw_circle(Vector2.ZERO, lerpf(8.0, visual_length * 0.6, urgency), Color(0.05, 0.0, 0.1, 0.85))
 
 
 func _draw_explosion() -> void:
 	var t: float = clampf(_explode_age / _explosion_duration, 0.0, 1.0)
 	var fade: float = 1.0 - t
-	var max_r: float = visual_length * 2.4 if _blast_radius <= 0.0 else _blast_radius
+	var max_r: float = visual_length * 2.4 if _blast_radius <= 0.0 else _world_to_local_radius(_blast_radius)
 	var radius: float = lerpf(6.0, max_r, t)
 	draw_circle(Vector2.ZERO, radius, Color(1.0, 0.35, 0.1, 0.35 * fade))
 	draw_circle(Vector2.ZERO, radius * 0.65, Color(1.0, 0.55, 0.15, 0.55 * fade))

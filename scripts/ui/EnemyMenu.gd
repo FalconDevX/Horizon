@@ -45,12 +45,46 @@ func refresh() -> void:
 		_empty_label.visible = enemies.is_empty()
 
 	for enemy: Dictionary in enemies:
+		var enemy_id: String = str(enemy.get("id", ""))
 		var btn := Button.new()
-		btn.text = str(enemy.get("title", "Enemy"))
-		btn.add_theme_font_override("font", HudPanelStyle.get_font())
-		btn.pressed.connect(_on_enemy_button_pressed.bind(str(enemy.get("id", ""))))
+		btn.custom_minimum_size = Vector2(0, 36)
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.pressed.connect(_on_enemy_button_pressed.bind(enemy_id))
+
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override("separation", 10)
+		row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		row.offset_left = 8.0
+		row.offset_right = -8.0
+		btn.add_child(row)
+
+		var glyph := _GlyphIcon.new()
+		glyph.kind_id = enemy_id
+		glyph.custom_minimum_size = Vector2(26, 26)
+		glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(glyph)
+
+		var label := Label.new()
+		label.text = str(enemy.get("title", "Enemy"))
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_override("font", HudPanelStyle.get_font())
+		label.add_theme_color_override("font_color", EnemyCatalog.marker_color(enemy_id))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(label)
+
 		_list.add_child(btn)
 
 
 func _on_enemy_button_pressed(enemy_id: String) -> void:
 	enemy_selected.emit(enemy_id)
+
+
+class _GlyphIcon:
+	extends Control
+
+	var kind_id: String = "basic"
+
+	func _draw() -> void:
+		EnemyCatalog.draw_glyph(self, size * 0.5, minf(size.x, size.y) * 0.42, kind_id, false)

@@ -7,13 +7,16 @@
 [node name="EnemyMothership" type="Node2D"]
 script = ExtResource("1_enemy")
 ship_texture = ExtResource("2_tex")
+title = "Mothership"
+kind_id = "mothership"
 visual_length = 58.0
 move_speed = 70.0
 turn_speed = 1.2
 can_fire = false
 deploy_fighters = true
 fighter_scene = ExtResource("3_fast")
-deploy_cooldown = 1.35
+deploy_cooldown = 10.0
+deploy_cooldown_max = 15.0
 deploy_offset = 52.0
 collision_radius = 24.0
 muzzles = PackedVector2Array()
