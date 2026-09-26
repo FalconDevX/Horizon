@@ -11,7 +11,7 @@ const BASE_COUNT := 3
 const COUNT_PER_WAVE := 2
 const COUNT_SOFT_CAP := 20
 ## Distance from the player where the ring of attackers appears.
-const SPAWN_DISTANCE := Vector2(2400.0, 4200.0)
+const SPAWN_DISTANCE := Vector2(9000.0, 14000.0)
 ## How much of the ring ahead of the ship is used (full circle = TAU).
 const SPAWN_ARC := PI * 1.35
 
