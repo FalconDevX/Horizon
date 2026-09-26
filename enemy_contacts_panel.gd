@@ -6,8 +6,10 @@ extends Control
 ## TOO FAR beyond the radar's reach, or seconds since a sweep last saw it).
 ## Click a row to target it (again to let go); Ctrl+click to lock on (only a
 ## scanned contact within the radar's reach) - with a
-## lock, guns switched on in the module rack fire at it on their own. The panel
-## grows with the list. solar_system.gd feeds it each frame with set_state().
+## lock, guns switched on in the module rack fire at it on their own, and the
+## locked row shows them as small module icons (red rim: target in that gun's
+## cone; amber arc: reloading). The panel grows with the list. solar_system.gd
+## feeds it each frame with set_state().
 
 signal target_picked(enemy: Node2D)
 signal lock_requested(enemy: Node2D)
@@ -19,6 +21,10 @@ const ICON_SIZE := 22.0
 const MAX_ROWS := 8
 const COLOR_TARGET := Color(1.0, 0.35, 0.3)
 const COLOR_LOCKED := Color(1.0, 0.2, 0.15)
+## The locked-gun icons on a contact row, px across.
+const WEAPON_ICON := 18.0
+## Module id -> its art (or null).
+var _icons: Dictionary = {}
 
 ## [{enemy, title, kind_id, distance, status}], nearest first.
 var _contacts: Array = []
@@ -136,9 +142,16 @@ func _draw_row(font: Font, rect: Rect2, contact: Dictionary, index: int) -> void
 	var x: float = rect.position.x + PAD + ICON_SIZE + 6.0
 	draw_string(font, Vector2(x, rect.position.y + 19.0), EnemyCatalog.abbreviation(kind_id), HORIZONTAL_ALIGNMENT_LEFT, 24.0, 10, colour)
 	x += 26.0
+	# The guns locked on this contact, as small module icons left of the
+	# distance: bright while the target is in that gun's cone.
+	var guns: Array = contact.get("weapons", [])
+	var guns_width: float = guns.size() * (WEAPON_ICON + 3.0)
+	for g in guns.size():
+		var centre := Vector2(rect.end.x - 122.0 - guns_width + g * (WEAPON_ICON + 3.0) + WEAPON_ICON * 0.5, rect.position.y + rect.size.y * 0.5)
+		_draw_weapon_icon(centre, guns[g])
 	draw_string(
 		font, Vector2(x, rect.position.y + 19.0), String(contact["title"]).to_upper(), HORIZONTAL_ALIGNMENT_LEFT,
-		rect.size.x - (x - rect.position.x) - 118.0, 11, colour if picked else HudPanelStyle.COLOR_TEXT_PRIMARY
+		rect.size.x - (x - rect.position.x) - 118.0 - guns_width, 11, colour if picked else HudPanelStyle.COLOR_TEXT_PRIMARY
 	)
 	draw_string(
 		font, Vector2(rect.end.x - 118.0, rect.position.y + 19.0), _distance(float(contact["distance"])),
@@ -154,6 +167,30 @@ func _draw_row(font: Font, rect: Rect2, contact: Dictionary, index: int) -> void
 		font, Vector2(rect.end.x - 58.0, rect.position.y + 19.0), status, HORIZONTAL_ALIGNMENT_RIGHT, 50.0, 9,
 		status_colour
 	)
+
+
+## One locked gun: its module art in a small circle, the rim red while the
+## target is in its cone (grey out of it), an amber arc while it reloads.
+func _draw_weapon_icon(c: Vector2, gun: Dictionary) -> void:
+	var r: float = WEAPON_ICON * 0.5
+	draw_circle(c, r, Color(0.03, 0.05, 0.08, 0.95))
+	var id := StringName(gun.get("module_id", ""))
+	if not _icons.has(id):
+		var path := "res://textures/modules/%s.png" % String(id)
+		_icons[id] = load(path) if ResourceLoader.exists(path) else null
+	var icon: Texture2D = _icons[id]
+	var in_cone: bool = gun.get("in_cone", false)
+	if icon != null:
+		var fit: float = (r * 1.5) / maxf(icon.get_size().x, icon.get_size().y)
+		var drawn: Vector2 = icon.get_size() * fit
+		draw_texture_rect(icon, Rect2(c - drawn * 0.5, drawn), false, Color(1, 1, 1, 1.0 if in_cone else 0.5))
+	draw_arc(c, r - 0.5, 0.0, TAU, 24, COLOR_LOCKED if in_cone else HudPanelStyle.COLOR_TEXT_MUTED, 1.4, true)
+	var reload: float = clampf(float(gun.get("reload", 0.0)), 0.0, 1.0)
+	if reload > 0.0:
+		draw_arc(c, r - 0.5, -PI * 0.5, -PI * 0.5 + TAU * (1.0 - reload), 16, HudPanelStyle.COLOR_AMBER, 1.8, true)
+	# A missile launcher shows its missile's colour as a dot.
+	if gun.get("color", Color.WHITE) != Color.WHITE:
+		draw_circle(c + Vector2(r * 0.7, r * 0.7), 2.2, gun["color"])
 
 
 static func _distance(value: float) -> String:

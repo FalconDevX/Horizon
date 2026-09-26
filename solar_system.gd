@@ -3425,7 +3425,6 @@ func _update_combat_panels() -> void:
 		status = "Sensors reach %s. Fit a radar to see further" % _short_distance(combat.passive_range())
 	else:
 		status = "No contacts. R scans with the radar"
-	enemy_contacts_panel.set_state(contacts, status, targeted_enemy, combat.is_locked())
 	# "LOCK" per gun: the target, or else the nearest contact, in its cone.
 	var aim: Enemy = targeted_enemy
 	if aim == null and not contacts.is_empty():
@@ -3457,6 +3456,22 @@ func _update_combat_panels() -> void:
 	weapons.append_array(combat.radar_rows())
 	for row: Dictionary in weapons:
 		row["cell"] = ship.rack_cells.get(int(row["id"]), Vector2i.ZERO)
+	# The locked contact lists the guns on it: every one switched on in the
+	# rack (they fire at the lock), and whether the target is in its cone.
+	if combat.is_locked():
+		for contact: Dictionary in contacts:
+			if contact["enemy"] != combat.target:
+				continue
+			var on_it: Array = []
+			for row: Dictionary in weapons:
+				if row.get("auto", false):
+					on_it.append({
+						"module_id": row["module_id"], "title": row["title"],
+						"in_cone": row.get("on_target", false), "reload": row.get("reload", 0.0),
+						"color": (row["missile"] as Dictionary)["color"] if row.has("missile") else Color.WHITE,
+					})
+			contact["weapons"] = on_it
+	enemy_contacts_panel.set_state(contacts, status, targeted_enemy, combat.is_locked())
 	ship.active_weapons = combat.auto_fire
 	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon, combat.is_locked())
 
