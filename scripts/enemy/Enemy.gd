@@ -15,8 +15,8 @@ const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
 ## Ignore the parked player ship for this long after spawn (kamikaze starts on
 ## top of it when picked from the E menu).
 const CONTACT_GRACE := 0.75
-const EXPLOSION_DURATION := 0.45
-const BLACK_HOLE_EXPLOSION_DURATION := 1.1
+const EXPLOSION_DURATION := 1.1
+const BLACK_HOLE_EXPLOSION_DURATION := 1.6
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
@@ -662,18 +662,18 @@ func _draw_black_hole_field() -> void:
 	draw_circle(Vector2.ZERO, lerpf(8.0, visual_length * 0.6, urgency), Color(0.05, 0.0, 0.1, 0.85))
 
 
+## The ship going up (ExplosionFX): fire and debris, or a violet implosion
+## blast for a black hole bomb.
 func _draw_explosion() -> void:
 	var t: float = clampf(_explode_age / _explosion_duration, 0.0, 1.0)
-	var fade: float = 1.0 - t
-	var max_r: float = visual_length * 2.4 if _blast_radius <= 0.0 else _world_to_local_radius(_blast_radius)
-	var radius: float = lerpf(6.0, max_r, t)
-	draw_circle(Vector2.ZERO, radius, Color(1.0, 0.35, 0.1, 0.35 * fade))
-	draw_circle(Vector2.ZERO, radius * 0.65, Color(1.0, 0.55, 0.15, 0.55 * fade))
-	draw_circle(Vector2.ZERO, radius * 0.3, Color(1.0, 0.9, 0.5, 0.9 * fade))
-	var ring_r: float = radius * (0.85 + 0.15 * sin(t * TAU * 3.0))
-	draw_arc(Vector2.ZERO, ring_r, 0.0, TAU, 32, Color(1.0, 0.7, 0.3, 0.7 * fade), 2.0)
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	# Never smaller on screen than a few pixels, so it reads zoomed out.
+	var radius: float = maxf(visual_length * 1.3, 18.0 * px)
+	var tint := Color(1.0, 0.45, 0.12)
 	if _blast_radius > 0.0:
-		draw_arc(Vector2.ZERO, radius, 0.0, TAU, 64, Color(0.7, 0.35, 1.0, 0.5 * fade), 3.0)
+		radius = _world_to_local_radius(_blast_radius) * 0.6
+		tint = Color(0.7, 0.35, 1.0)
+	ExplosionFX.draw(self, Vector2.ZERO, t, radius, get_instance_id(), px, tint)
 
 
 func _image_to_local(frac: Vector2, draw_size: Vector2) -> Vector2:

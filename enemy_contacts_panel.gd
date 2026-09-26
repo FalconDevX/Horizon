@@ -2,8 +2,10 @@ extends Control
 ## Enemy contacts, top right: every enemy the combat control holds
 ## (scripts/ship/CombatControl.gd - passive sensors and radar scans), nearest
 ## first. Each row: the type's glyph and code, its name, distance and status
-## (LOCK 40% / LOCKED / TARGET, or seconds since a radar sweep last saw it).
-## Click a row to target it (again to let go); Ctrl+click to lock on - with a
+## (LOCK 40% / LOCKED / TARGET, NO SCAN when no radar sweep has found it yet,
+## TOO FAR beyond the radar's reach, or seconds since a sweep last saw it).
+## Click a row to target it (again to let go); Ctrl+click to lock on (only a
+## scanned contact within the radar's reach) - with a
 ## lock, guns switched on in the module rack fire at it on their own. The panel
 ## grows with the list. solar_system.gd feeds it each frame with set_state().
 
@@ -33,7 +35,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_help = HelpPopup.new(PackedStringArray([
 		"Click a contact: target it (again: let go)",
-		"Ctrl+click a contact: lock on",
+		"Ctrl+click a contact: lock on (scanned, in radar reach)",
 		"Click a gun in the module rack: on, it fires at the lock",
 		"R: radar scan (radars reach far, planets hide enemies)",
 		"G: fire every gun at the target",

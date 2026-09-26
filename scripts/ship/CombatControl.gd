@@ -13,8 +13,10 @@ extends Node2D
 ## then the radar recharges for its reload_time. A contact seen once is kept
 ## (and tracked) for CONTACT_HOLD seconds.
 ##
-## Lock. Ctrl+click a contact: the lock builds over LOCK_TIME while the
-## contact is held, then holds until the contact is lost or let go.
+## Lock. Ctrl+click a contact a radar sweep has found, within the radar's
+## reach: the lock builds over LOCK_TIME while the contact is held, then holds
+## until the contact is lost, leaves the radar's reach, or is let go. Enemies
+## only the passive sensors see cannot be locked.
 ##
 ## Active modules. With a lock every turret turns onto the target. Clicking a
 ## gun in the module rack switches it on or off (EVE-style): an active gun
@@ -34,6 +36,8 @@ var ship: Node2D = null
 
 ## Enemy -> seconds of game time when last seen.
 var _seen: Dictionary = {}
+## Enemies a radar sweep has found (and not forgotten since) -> true.
+var _scanned: Dictionary = {}
 var _time: float = 0.0
 var target: Enemy = null
 ## 0..1 while locking on `target`; 1 = locked; 0 with no lock under way.
@@ -65,6 +69,22 @@ func passive_range() -> float:
 		if str(device.get("kind", "")) == "weapon":
 			reach = maxf(reach, float(device.get("range", 0.0)))
 	return reach
+
+
+## How far a lock reaches: the longest radar's range (0 with no radar).
+func lock_range() -> float:
+	var reach := 0.0
+	for device: Dictionary in radar_devices():
+		reach = maxf(reach, float(device.get("range", 0.0)))
+	return reach
+
+
+## Whether `enemy` can be locked: found by a radar sweep and within its reach.
+func can_lock(enemy: Enemy) -> bool:
+	return (
+		_alive(enemy) and _scanned.has(enemy)
+		and ship.global_position.distance_to(enemy.global_position) <= lock_range()
+	)
 
 
 func radar_devices() -> Array[Dictionary]:
@@ -138,10 +158,16 @@ func update(delta: float) -> void:
 	for enemy in _seen.keys():
 		if not _alive(enemy) or _time - float(_seen[enemy]) > CONTACT_HOLD:
 			_seen.erase(enemy)
+			_scanned.erase(enemy)
 
 	# The lock builds while the target is held, and goes with it.
 	if target != null and (not _alive(target) or not _seen.has(target)):
 		set_target(null)
+	# Out of the radar's reach (or never scanned): the lock drops, the
+	# target stays picked.
+	if locking and target != null and not can_lock(target):
+		locking = false
+		lock_progress = 0.0
 	if locking and target != null:
 		lock_progress = minf(lock_progress + delta / LOCK_TIME, 1.0)
 	_run_auto_fire(delta)
@@ -159,6 +185,7 @@ func _sweep(before: float, after: float, reach: float, enemies: Array[Enemy]) ->
 		var bearing: float = fposmod(offset.angle() - before, TAU)
 		if bearing <= after - before and not is_occluded(here, enemy.global_position):
 			_seen[enemy] = _time
+			_scanned[enemy] = true
 
 
 func start_scan(id: int) -> bool:
@@ -198,6 +225,8 @@ func set_target(enemy: Enemy) -> void:
 func toggle_lock(enemy: Enemy) -> void:
 	if enemy == target and locking:
 		set_target(null)
+		return
+	if enemy != null and not can_lock(enemy):
 		return
 	set_target(enemy)
 	locking = enemy != null
@@ -245,6 +274,10 @@ func contacts() -> Array:
 				status = "LOCK %d%%" % roundi(lock_progress * 100.0)
 			else:
 				status = "TARGET"
+		elif not _scanned.has(enemy):
+			status = "NO SCAN"
+		elif here.distance_to(enemy.global_position) > lock_range():
+			status = "TOO FAR"
 		elif _time - float(_seen[enemy]) > 0.5:
 			# Not seen right now: where it was last swept.
 			status = "%ds" % roundi(_time - float(_seen[enemy]))

@@ -136,9 +136,18 @@ const WARP_PATH_COLOR := Color(0.62, 0.55, 1.0, 0.55)
 const SOUND_TARGET_OBSTRUCTED := preload("res://sounds/target--obstructed.wav")
 const SOUND_WARP_INITIATED := preload("res://sounds/warp-initiated.wav")
 const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
+const SOUND_WARP_DRIVE := preload("res://sounds/warp_drive.wav")
+const SOUND_FLIGHT_ASSIST_ENABLED := preload("res://sounds/flight-assistance--enabled.wav")
+const SOUND_FLIGHT_ASSIST_DISABLED := preload("res://sounds/flight-assistance--disabled.wav")
+const SOUND_THRUST_LOCKED := preload("res://sounds/thrust--locked.wav")
+const SOUND_THRUST_UNLOCKED := preload("res://sounds/thrust--unlocked.wav")
 var _obstructed_player: AudioStreamPlayer
 var _warp_initiated_player: AudioStreamPlayer
 var _target_destroyed_player: AudioStreamPlayer
+var _warp_drive_player: AudioStreamPlayer
+var _flight_assist_player: AudioStreamPlayer
+var _thrust_lock_player: AudioStreamPlayer
+var _warp_drive_tween: Tween
 var _last_destroyed_sound_time: float = -10.0
 
 var planets: Array[Node2D] = []
@@ -525,8 +534,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V and _test_enemy == null:
 		ship.toggle_flight_assist()
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_X and _test_enemy == null:
+		ship.toggle_throttle_lock()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -545,7 +559,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_SPACE and _test_enemy == null:
 			toggle_pause()
 		elif event.keycode >= KEY_1 and event.keycode <= KEY_9:
-			# 1-9 pick a weapon, in the weapons panel's order (again to put it away).
+			# 1-9 switch a gun on or off, in the rack's order - as a click on it.
 			_select_weapon_slot(event.keycode - KEY_1)
 		elif event.keycode == KEY_PERIOD:
 			if camera_follow_body != null:
@@ -737,6 +751,57 @@ func play_target_destroyed_sound(enemy: Enemy = null) -> void:
 	_target_destroyed_player.play()
 
 
+func _play_warp_drive_sound() -> void:
+	if _warp_drive_player == null:
+		_warp_drive_player = AudioStreamPlayer.new()
+		_warp_drive_player.name = "WarpDrivePlayer"
+		_warp_drive_player.stream = SOUND_WARP_DRIVE
+		_warp_drive_player.bus = &"SFX"
+		add_child(_warp_drive_player)
+	if _warp_drive_tween != null and _warp_drive_tween.is_valid():
+		_warp_drive_tween.kill()
+	_warp_drive_player.volume_db = -4.0
+	if not _warp_drive_player.playing:
+		_warp_drive_player.play()
+
+
+func _stop_warp_drive_sound(immediate: bool = false) -> void:
+	if _warp_drive_player == null or not _warp_drive_player.playing:
+		return
+	if _warp_drive_tween != null and _warp_drive_tween.is_valid():
+		_warp_drive_tween.kill()
+	if immediate:
+		_warp_drive_player.stop()
+		return
+	_warp_drive_tween = create_tween()
+	_warp_drive_tween.tween_property(_warp_drive_player, "volume_db", -40.0, 0.8)
+	_warp_drive_tween.tween_callback(_warp_drive_player.stop)
+
+
+func _play_flight_assist_sound(enabled: bool) -> void:
+	if _flight_assist_player == null:
+		_flight_assist_player = AudioStreamPlayer.new()
+		_flight_assist_player.name = "FlightAssistPlayer"
+		_flight_assist_player.bus = &"SFX"
+		add_child(_flight_assist_player)
+	if _thrust_lock_player != null and _thrust_lock_player.playing:
+		_thrust_lock_player.stop()
+	_flight_assist_player.stream = SOUND_FLIGHT_ASSIST_ENABLED if enabled else SOUND_FLIGHT_ASSIST_DISABLED
+	_flight_assist_player.play()
+
+
+func _play_thrust_lock_sound(locked: bool) -> void:
+	if _thrust_lock_player == null:
+		_thrust_lock_player = AudioStreamPlayer.new()
+		_thrust_lock_player.name = "ThrustLockPlayer"
+		_thrust_lock_player.bus = &"SFX"
+		add_child(_thrust_lock_player)
+	if _flight_assist_player != null and _flight_assist_player.playing:
+		_flight_assist_player.stop()
+	_thrust_lock_player.stream = SOUND_THRUST_LOCKED if locked else SOUND_THRUST_UNLOCKED
+	_thrust_lock_player.play()
+
+
 ## "" when a jump to `body` can go now, else why not.
 func _warp_problem(body: Node2D) -> String:
 	if landed_body != null:
@@ -830,6 +895,7 @@ func _begin_warp_spool() -> void:
 	_warp_time = 0.0
 	trajectory_prediction.visible = false
 	warp_fx.play()
+	_play_warp_drive_sound()
 
 
 ## One sim step of aligning: the nose turns onto the target at the ship's
@@ -858,6 +924,7 @@ func cancel_warp() -> void:
 	warp_phase = WarpPhase.NONE
 	warp_active = false
 	warp_fx.stop()
+	_stop_warp_drive_sound(true)
 	if was_on_rails:
 		set_ship_state(Vector2(physics_ship.x, physics_ship.y), _warp_frame_velocity())
 	trajectory_prediction.visible = settings_mgr == null or settings_mgr.show_trajectory
@@ -936,6 +1003,7 @@ func _arrive_from_warp(index: int) -> void:
 	warp_phase = WarpPhase.EXIT
 	_warp_time = 0.0
 	warp_fx.arrive()
+	_stop_warp_drive_sound()
 	music_toast.show_message("ARRIVED: %s" % String(warp_target.get("body_name")).to_upper())
 	warp_target = null
 	trajectory_prediction.visible = settings_mgr == null or settings_mgr.show_trajectory
@@ -1064,7 +1132,9 @@ func start_hyperspace_jump() -> void:
 	hyperspace_jump.destination_name = GalaxyMap.system_name(target)
 	hyperspace_jump.ready_check = _all_surfaces_ready
 	hyperspace_jump.midpoint.connect(_arrive_in_system.bind(target))
+	_play_warp_drive_sound()
 	hyperspace_jump.finished.connect(func() -> void:
+		_stop_warp_drive_sound()
 		hyperspace_jump = null
 		music_toast.show_message("ARRIVED: %s" % GalaxyMap.system_name(world_seed).to_upper())
 	)
@@ -1263,6 +1333,8 @@ func _ready() -> void:
 	galaxy_map_window.name = "GalaxyMapWindow"
 	galaxy_map_window.course_set.connect(_on_course_set)
 	planet_info_panel.get_parent().add_child(galaxy_map_window)
+	ship.flight_assist_changed.connect(_play_flight_assist_sound)
+	ship.throttle_lock_changed.connect(_play_thrust_lock_sound)
 	enemy_contacts_panel = preload("res://enemy_contacts_panel.gd").new()
 	enemy_contacts_panel.name = "EnemyContactsPanel"
 	enemy_contacts_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -1290,8 +1362,8 @@ func _ready() -> void:
 	weapons_panel.offset_right = 510.0
 	weapons_panel.offset_top = -152.0
 	weapons_panel.offset_bottom = -28.0
-	# A click switches a gun on or off (1-9 still pick it for manual fire).
-	weapons_panel.weapon_picked.connect(func(id: int) -> void: combat.toggle_auto_fire(id))
+	# A click switches a gun on or off, the same as its key 1-9.
+	weapons_panel.weapon_picked.connect(_select_weapon)
 	weapons_panel.radar_scan_requested.connect(func(id: int) -> void: combat.start_scan(id))
 	weapons_panel.order_changed.connect(func(ids: Array) -> void:
 		ship.weapon_order.clear()
@@ -3150,8 +3222,7 @@ func _drive_on_ground(dt: float) -> void:
 	ship.throttle = clampf(speed / maxf(top_speed, 1e-6), 0.0, 1.0)
 
 
-## Picks the weapon in panel slot `slot` (0-based), or puts it away if it
-## is already picked.
+## Switches the gun in rack slot `slot` (0-based) on or off.
 func _select_weapon_slot(slot: int) -> void:
 	var weapons: Array[Dictionary] = ship.ordered_weapons()
 	if slot < 0 or slot >= weapons.size():
@@ -3159,8 +3230,14 @@ func _select_weapon_slot(slot: int) -> void:
 	_select_weapon(int(weapons[slot].get("instance_id", -1)))
 
 
+## Switches a gun on (picked for LMB / RMB too, and firing on its own at the
+## locked target - or blinking, waiting for a lock) or off.
 func _select_weapon(instance_id: int) -> void:
-	ship.selected_weapon = -1 if ship.selected_weapon == instance_id else instance_id
+	combat.toggle_auto_fire(instance_id)
+	if combat.auto_fire.has(instance_id):
+		ship.selected_weapon = instance_id
+	elif ship.selected_weapon == instance_id:
+		ship.selected_weapon = -1
 	_firing_held = false
 	ship.queue_redraw()
 
@@ -3347,6 +3424,7 @@ func _update_combat_panels() -> void:
 			"auto": combat.auto_fire.has(int(device.get("instance_id", -1))),
 		})
 	weapons.append_array(combat.radar_rows())
+	ship.active_weapons = combat.auto_fire
 	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon, combat.is_locked())
 
 
@@ -3615,8 +3693,6 @@ func _physics_process(delta: float) -> void:
 
 
 func simulation_step(dt: float) -> void:
-	ship.poll_lock_toggle(true)
-
 	# While test-flying a sandbox enemy (E menu), the player ship stops reading
 	# WASD/mouse-aim so both craft don't respond to the same keys at once.
 	if _test_enemy == null and not warp_active:

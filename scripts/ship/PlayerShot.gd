@@ -36,7 +36,10 @@ var ignore: Node = null
 var _travelled: float = 0.0
 ## A ball after it went off: seconds into its blast, or -1 while flying.
 var _blast_age: float = -1.0
-const BLAST_TIME := 0.35
+## A bolt's hit: a small burst of sparks where it struck.
+var _impact := false
+const BLAST_TIME := 0.7
+const IMPACT_TIME := 0.3
 const FADE_FROM := 0.6
 
 
@@ -56,7 +59,7 @@ func _process(delta: float) -> void:
 	var dt: float = delta * minf(scale, 1.0)
 	if _blast_age >= 0.0:
 		_blast_age += delta
-		if _blast_age >= BLAST_TIME:
+		if _blast_age >= (IMPACT_TIME if _impact else BLAST_TIME):
 			queue_free()
 		queue_redraw()
 		return
@@ -72,7 +75,10 @@ func _process(delta: float) -> void:
 			_explode()
 		else:
 			hit.take_hit(damage)
-			queue_free()
+			position = _closest_on(previous, position, hit.position)
+			_impact = true
+			_blast_age = 0.0
+			queue_redraw()
 		return
 	if _travelled >= max_distance:
 		if fx["kind"] == "ball":
@@ -99,6 +105,11 @@ func _first_enemy_on(from: Vector2, to: Vector2) -> Enemy:
 	return best
 
 
+## The point of the segment `from`-`to` nearest `point`: where a bolt struck.
+static func _closest_on(from: Vector2, to: Vector2, point: Vector2) -> Vector2:
+	return Geometry2D.get_closest_point_to_segment(point, from, to)
+
+
 func _explode() -> void:
 	var blast: float = float(fx.get("blast", 60.0))
 	for child in get_parent().get_children():
@@ -119,10 +130,11 @@ func _draw() -> void:
 	var px: float = _px()
 	var color: Color = fx["color"]
 	if _blast_age >= 0.0:
-		var t: float = _blast_age / BLAST_TIME
-		var blast: float = float(fx.get("blast", 60.0))
-		draw_circle(Vector2.ZERO, blast * (0.4 + 0.6 * t), Color(color, 0.35 * (1.0 - t)))
-		draw_arc(Vector2.ZERO, blast * (0.4 + 0.6 * t), 0.0, TAU, 40, Color(1.0, 1.0, 1.0, 0.8 * (1.0 - t)), 2.0 * px)
+		if _impact:
+			ExplosionFX.draw(self, Vector2.ZERO, _blast_age / IMPACT_TIME, 14.0 * px, get_instance_id(), px, color, 0.4, false)
+		else:
+			var blast: float = float(fx.get("blast", 60.0))
+			ExplosionFX.draw(self, Vector2.ZERO, _blast_age / BLAST_TIME, maxf(blast * 0.7, 14.0 * px), get_instance_id(), px, color, 0.8, false)
 		return
 	if fx["kind"] == "ball":
 		var r: float = float(fx.get("radius", 5.0)) * px

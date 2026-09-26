@@ -3,16 +3,15 @@ extends Control
 ## 1-9 pick them, in this order), the radars in the row below, offset half a
 ## slot. Each slot shows the module's art in a circle; its rim tells the state
 ## - green ready, amber reloading (a dark clock-hand sweep covers what is
-## left of the reload), cyan picked (1-9), red when switched on - pulsing
-## while it fires at a locked target - and grey without power -
+## left of the reload), cyan switched on (click or 1-9) - blinking while
+## there is no lock to fire at - grey without power -
 ## a red dot when the target is in its cone, amber when its own ship is in
 ## the line of fire. A radar's rim is green; scanning, a green beam turns in
 ## it. The hovered slot's name and state are written above the rack.
 ##
-## Click a gun to switch it on or off, EVE-style: on, it fires by itself at
-## the target locked in the contacts panel (waiting while there is none).
-## Keys 1-9 pick a gun for manual fire instead (LMB fires, RMB turns a
-## turret). Click a radar (or press R) to scan. Drag a gun along
+## Click a gun (or press its key 1-9) to switch it on or off, EVE-style: on,
+## it fires by itself at the locked target, or waits for a lock; it is also
+## picked for manual fire (LMB fires, RMB turns a turret). Click a radar (or press R) to scan. Drag a gun along
 ## the row to reorder. No panel is drawn behind the slots. Fed each frame
 ## by solar_system.gd with set_state().
 
@@ -30,7 +29,6 @@ const COLOR_READY := HudPanelStyle.COLOR_EMERALD
 const COLOR_RELOAD := HudPanelStyle.COLOR_AMBER
 const COLOR_ON_TARGET := Color(1.0, 0.35, 0.3)
 const COLOR_PICKED := HudPanelStyle.COLOR_CYAN
-const COLOR_AUTO := Color(1.0, 0.2, 0.15)
 const COLOR_RADAR := Color(0.3, 1.0, 0.45)
 const COLOR_OFF := Color(0.45, 0.5, 0.58)
 const SLOT_BG := Color(0.03, 0.05, 0.08, 0.92)
@@ -205,11 +203,10 @@ func _draw_gun_slot(font: Font, c: Vector2, w: Dictionary, index: int, show_key:
 	var rim: Color = COLOR_READY
 	if not _powered:
 		rim = COLOR_OFF
-	elif w.get("auto", false):
-		# On: pulsing while it has a locked target to fire at, steady waiting.
-		var pulse: float = 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.012) if _locked else 0.75
-		rim = Color(COLOR_AUTO, pulse)
-	elif picked:
+	elif w.get("auto", false) and not _locked:
+		# On with nothing locked: blinks, waiting for a lock to fire at.
+		rim = Color(COLOR_PICKED, 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.008))
+	elif picked or w.get("auto", false):
 		rim = COLOR_PICKED
 	elif reload > 0.0:
 		rim = COLOR_RELOAD

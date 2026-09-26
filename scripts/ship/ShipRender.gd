@@ -12,7 +12,8 @@ const CELL_PX := 32
 
 ## {texture, rect, engines, turrets, modules} for `hull`, or {} with nothing
 ## built. `modules` lists every module's footprint for the damage schematic:
-## {id, title, rect (ship-local units), max_hp, structure}.
+## {id, title, rect (ship-local units), max_hp, structure, texture (its art
+## as placed, nose right; null without art)}.
 ## Turret guns are left out of the picture and listed in `turrets` -
 ## {id, texture, center, size} in ship-local units - so ship.gd can turn them. `rect` is
 ## where the picture goes in ship-local units, centred on the structure the
@@ -44,24 +45,28 @@ static func compose(hull: ShipHull) -> Dictionary:
 	for m: PlacedModule in ordered:
 		var corner: Vector2i = _top_left(m)
 		var bounds: Vector2i = m.get_bounding_size()
+		var art: Image = _module_image(m)
+		var art_texture: ImageTexture = null
+		if art != null:
+			art.resize(bounds.x * CELL_PX, bounds.y * CELL_PX, Image.INTERPOLATE_BILINEAR)
+			art_texture = ImageTexture.create_from_image(art)
 		footprints.append({
 			"id": m.instance_id,
 			"title": m.data.title,
 			"rect": Rect2((Vector2(corner) - centroid) * unit, Vector2(bounds) * unit),
 			"max_hp": maxf(m.data.health, 1.0),
 			"structure": m.data.is_structure(),
+			"texture": art_texture,
 		})
 		if m.data.is_main_engine():
 			# Aft = the grid's left: the middle of the engine's left edge.
 			engines.append((Vector2(corner.x, corner.y + bounds.y * 0.5) - centroid) * unit)
-		var art: Image = _module_image(m)
 		if art == null:
 			continue
-		art.resize(bounds.x * CELL_PX, bounds.y * CELL_PX, Image.INTERPOLATE_BILINEAR)
 		if m.data.is_turret():
 			turrets.append({
 				"id": m.instance_id,
-				"texture": ImageTexture.create_from_image(art),
+				"texture": art_texture,
 				"center": (Vector2(corner) + Vector2(bounds) * 0.5 - centroid) * unit,
 				"size": Vector2(bounds) * unit,
 			})

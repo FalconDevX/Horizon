@@ -554,7 +554,7 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "X", "Throttle Lock Toggle")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "A / D", "Rotate ship (also arrows)")
 	y = _draw_clean_shortcut(col1_x + 14.0, y, "RMB (Hold)", "Aim the selected turret")
-	y = _draw_clean_shortcut(col1_x + 14.0, y, "Shift (Hold)", "Precision: 20% thrust and turning")
+	y = _draw_clean_shortcut(col1_x + 14.0, y, "Shift (Hold)", "Boost: 4x thrust, burns warp fuel")
 
 	var y_time: float = top_y + 192.0
 	_draw_section_header(Vector2(col1_x, y_time), "Warp Drive & Simulation", col_w)

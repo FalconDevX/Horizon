@@ -1,6 +1,8 @@
 extends Node2D
 
 signal ship_clicked
+signal flight_assist_changed(enabled: bool)
+signal throttle_lock_changed(locked: bool)
 
 @export var ship_mass: float = 10.0
 @export var thrust_force: float = 3000.0
@@ -48,6 +50,9 @@ var _weapon_cooldowns: Dictionary = {}
 ## The weapon picked in the weapons panel (instance id, -1 for none): LMB
 ## fires it, and RMB turns it toward the cursor if it sits on a turret.
 var selected_weapon: int = -1
+## Weapons switched on in the module rack (instance id -> true), shared with
+## CombatControl.auto_fire. Only these and the picked one show their cone.
+var active_weapons: Dictionary = {}
 ## Weapon instance ids in the order the weapons panel lists them (the player
 ## drags rows to reorder); keys 1-9 pick by this order.
 var weapon_order: Array[int] = []
@@ -91,9 +96,14 @@ const TURN_RATE_SCALE := 1.1
 ## (solar_system.gd) is the way to go further, faster.
 const CRUISE_SPEED_LIMIT := 2000.0
 
-## Holding Shift scales manual thrust and turning down to this, for fine
-## orbit corrections.
+## Holding Shift on the ground slows the drive down to this.
 const PRECISION_SCALE := 0.2
+## Shift in space is the boost: the main engine pushes BOOST_THRUST times as
+## hard, up to BOOST_SPEED times CRUISE_SPEED_LIMIT, burning warp fuel
+## (BOOST_WARP_FUEL a second - a full tank lasts 20 s). Empty, no boost.
+const BOOST_THRUST := 4.0
+const BOOST_SPEED := 3.0
+const BOOST_WARP_FUEL := 5.0
 
 ## Flight assist (V): arcade "space fighter" handling, done with thrust.
 ## Vectored thrust always cancels sideways drift (relative to the SOI body),
@@ -132,6 +142,9 @@ var landed := false
 ## and when each was last hit (msec).
 var module_hp: Dictionary = {}
 var module_hit_msec: Dictionary = {}
+## Weapon instance id -> Time.get_ticks_msec() of its last shot (the ship
+## status panel lights it orange).
+var weapon_fire_msec: Dictionary = {}
 const HIT_SOUND := preload("res://sounds/ship_hit.wav")
 ## Hits closer together than this share one hit sound.
 const HIT_SOUND_GAP_MSEC := 90
@@ -307,6 +320,8 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 			_weapon_cooldowns.erase(id)
 	if landed:
 		warp_fuel = minf(warp_fuel + WARP_FUEL_CAPACITY * GROUND_REFILL_FRACTION * dt, WARP_FUEL_CAPACITY)
+	if is_boosting() and not PlayerProgress.god_mode:
+		warp_fuel = maxf(warp_fuel - BOOST_WARP_FUEL * dt, 0.0)
 	if not resources_enabled:
 		powered = true
 		return
@@ -563,6 +578,7 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 				continue
 			energy -= cost
 		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
+		weapon_fire_msec[id] = Time.get_ticks_msec()
 		shots.append(device)
 		if device.get("id", &"") == SNIPER_ID:
 			# Its long beam is spawned by solar_system.gd (SniperBeam).
@@ -591,7 +607,7 @@ func _on_click_area_input_event(
 ## hold. (RMB aims the selected turret instead - solar_system.gd.) With neither, an
 ## active hold (Z prograde / C retrograde) steers the nose along the flight path.
 func update_rotation(delta: float) -> void:
-	var turn_rate: float = get_turn_rate() * precision_scale()
+	var turn_rate: float = get_turn_rate()
 	var flying: bool = (
 		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_D)
 		or Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_RIGHT)
@@ -625,9 +641,17 @@ func get_turn_rate() -> float:
 	return rotation_speed * TURN_RATE_SCALE
 
 
-## 1, or PRECISION_SCALE while Shift is held.
+## 1, or PRECISION_SCALE while Shift is held (the ground drive).
 func precision_scale() -> float:
 	return PRECISION_SCALE if Input.is_key_pressed(KEY_SHIFT) else 1.0
+
+
+## Shift with the engine burning, in space, with warp fuel left.
+func is_boosting() -> bool:
+	return (
+		Input.is_key_pressed(KEY_SHIFT) and throttle > 0.0 and not landed and has_fuel()
+		and (warp_fuel > 0.0 or PlayerProgress.god_mode)
+	)
 
 
 func disengage_manual_main_engine() -> void:
@@ -635,17 +659,13 @@ func disengage_manual_main_engine() -> void:
 	throttle_locked = false
 
 
-func poll_lock_toggle(is_realtime: bool) -> bool:
-	if not is_realtime:
-		return false
+func toggle_throttle_lock() -> void:
+	throttle_locked = not throttle_locked
+	throttle_lock_changed.emit(throttle_locked)
 
-	var lock_key_pressed := Input.is_key_pressed(KEY_X)
-	var just_locked := false
-	if lock_key_pressed and not _lock_key_was_pressed:
-		throttle_locked = not throttle_locked
-		just_locked = throttle_locked
-	_lock_key_was_pressed = lock_key_pressed
-	return just_locked
+
+func poll_lock_toggle(_is_realtime: bool = true) -> bool:
+	return false
 
 
 func update_throttle(delta: float, is_realtime: bool = true) -> void:
@@ -675,11 +695,12 @@ func get_manual_acceleration() -> Vector2:
 		return get_thrust_acceleration()
 
 	var velocity_rel: Vector2 = hold_reference_velocity
-	var assist_cap: float = ASSIST_MAX_ACCEL * precision_scale()
+	# Boosting, the sideways push grows with the thrust so turns still hold.
+	var assist_cap: float = ASSIST_MAX_ACCEL * (BOOST_THRUST if is_boosting() else 1.0)
 
 	# S: brake to a stop relative to the body we orbit.
 	if Input.is_key_pressed(KEY_S):
-		var brake_cap: float = ASSIST_BRAKE_ACCEL * precision_scale()
+		var brake_cap: float = ASSIST_BRAKE_ACCEL
 		var brake: Vector2 = (-velocity_rel * ASSIST_RESPONSE).limit_length(brake_cap)
 		assist_brake_output = brake.length() / brake_cap
 		return brake
@@ -702,6 +723,7 @@ func get_manual_acceleration() -> Vector2:
 
 func toggle_flight_assist() -> void:
 	flight_assist = not flight_assist
+	flight_assist_changed.emit(flight_assist)
 
 
 func get_thrust_acceleration() -> Vector2:
@@ -709,11 +731,13 @@ func get_thrust_acceleration() -> Vector2:
 		return Vector2.ZERO
 
 	var direction := Vector2.RIGHT.rotated(rotation)
-	var acceleration: float = thrust_force * throttle * precision_scale() / ship_mass
+	var boosting: bool = is_boosting()
+	var acceleration: float = thrust_force * throttle * (BOOST_THRUST if boosting else 1.0) / ship_mass
 	# Fades out over the last 5% below the speed limit, so the ship settles on
 	# it instead of stuttering across it.
+	var limit: float = CRUISE_SPEED_LIMIT * (BOOST_SPEED if boosting else 1.0)
 	var forward_speed: float = hold_reference_velocity.dot(direction)
-	acceleration *= clampf((CRUISE_SPEED_LIMIT - forward_speed) / (CRUISE_SPEED_LIMIT * 0.05), 0.0, 1.0)
+	acceleration *= clampf((limit - forward_speed) / (limit * 0.05), 0.0, 1.0)
 
 	return direction * acceleration
 
@@ -892,8 +916,11 @@ func _draw_fov_cones() -> void:
 		var angle_deg := float(device.get("angle_deg", 0.0))
 		var range_su := float(device.get("range", 0.0)) * inv_scale
 		var is_weapon := str(device.get("kind", "")) == "weapon"
-		# Weapons grey (the selected one brighter), radars cyan.
 		var picked: bool = is_weapon and int(device.get("instance_id", -1)) == selected_weapon
+		# A weapon shows where it points only while picked or switched on.
+		if is_weapon and not picked and not active_weapons.has(int(device.get("instance_id", -1))):
+			continue
+		# Weapons grey (the selected one brighter), radars cyan.
 		var fill := (
 			Color(0.8, 0.83, 0.88, 0.1 if picked else 0.05) if is_weapon
 			else Color(0.25, 0.75, 0.85, 0.07)

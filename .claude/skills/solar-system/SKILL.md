@@ -611,7 +611,8 @@ can be reached.
   also freezes enemies and shots (`process_mode`) while held. Long trips use the warp.
 - **G is 16x the 4x-scale value** (`G = 3 072 000`): orbital speeds 4x, periods a quarter.
 - **No RCS.** Main engine only: A/D (or arrows) turn, RMB aims the picked turret, W burns,
-  S cuts, X locks the throttle (silent), Z/C hold prograde/retrograde, Shift = 20% precision.
+  S cuts, X locks the throttle (silent), Z/C hold prograde/retrograde, Shift = boost (`BOOST_THRUST` 4x thrust up to
+  `BOOST_SPEED` 3x the speed limit, burning `BOOST_WARP_FUEL` warp fuel/s; on the ground Shift is slow).
   `MAIN_ENGINE_BOOST` 450 gives the starter ship ~300 SU/s^2; the engines stop pushing past
   `CRUISE_SPEED_LIMIT` (2000 SU/s, relative to the SOI body).
 - **Flight assist** (V, on by default, ASSIST chip in the HUD): vectored thrust bleeds off
