@@ -3,14 +3,16 @@ extends Control
 ## 1-9 pick them, in this order), the radars in the row below, offset half a
 ## slot. Each slot shows the module's art in a circle; its rim tells the state
 ## - green ready, amber reloading (a dark clock-hand sweep covers what is
-## left of the reload), cyan picked, pulsing red AUTO, grey without power -
+## left of the reload), cyan picked (1-9), red when switched on - pulsing
+## while it fires at a locked target - and grey without power -
 ## a red dot when the target is in its cone, amber when its own ship is in
 ## the line of fire. A radar's rim is green; scanning, a green beam turns in
 ## it. The hovered slot's name and state are written above the rack.
 ##
-## Click a gun to pick it (LMB then fires it, RMB turns a turret) - or, with a
-## target locked in the contacts panel, to set it firing on its own (AUTO)
-## until clicked again. Click a radar (or press R) to scan. Drag a gun along
+## Click a gun to switch it on or off, EVE-style: on, it fires by itself at
+## the target locked in the contacts panel (waiting while there is none).
+## Keys 1-9 pick a gun for manual fire instead (LMB fires, RMB turns a
+## turret). Click a radar (or press R) to scan. Drag a gun along
 ## the row to reorder. No panel is drawn behind the slots. Fed each frame
 ## by solar_system.gd with set_state().
 
@@ -188,7 +190,7 @@ func _describe(w: Dictionary) -> String:
 			return title + "  SCANNING"
 		return title + ("  RECHARGING" if float(w.get("reload", 0.0)) > 0.0 else "  READY")
 	if w.get("auto", false):
-		return title + "  AUTO"
+		return title + ("  ACTIVE" if _locked else "  ON, NO LOCK")
 	if w.get("blocked", false):
 		return title + "  BLOCKED"
 	if float(w.get("reload", 0.0)) > 0.0:
@@ -204,7 +206,9 @@ func _draw_gun_slot(font: Font, c: Vector2, w: Dictionary, index: int, show_key:
 	if not _powered:
 		rim = COLOR_OFF
 	elif w.get("auto", false):
-		rim = Color(COLOR_AUTO, 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.012))
+		# On: pulsing while it has a locked target to fire at, steady waiting.
+		var pulse: float = 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.012) if _locked else 0.75
+		rim = Color(COLOR_AUTO, pulse)
 	elif picked:
 		rim = COLOR_PICKED
 	elif reload > 0.0:

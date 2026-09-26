@@ -1290,12 +1290,8 @@ func _ready() -> void:
 	weapons_panel.offset_right = 510.0
 	weapons_panel.offset_top = -152.0
 	weapons_panel.offset_bottom = -28.0
-	weapons_panel.weapon_picked.connect(func(id: int) -> void:
-		if combat.is_locked():
-			combat.toggle_auto_fire(id)
-		else:
-			_select_weapon(id)
-	)
+	# A click switches a gun on or off (1-9 still pick it for manual fire).
+	weapons_panel.weapon_picked.connect(func(id: int) -> void: combat.toggle_auto_fire(id))
 	weapons_panel.radar_scan_requested.connect(func(id: int) -> void: combat.start_scan(id))
 	weapons_panel.order_changed.connect(func(ids: Array) -> void:
 		ship.weapon_order.clear()

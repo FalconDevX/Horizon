@@ -4,7 +4,7 @@ extends Control
 ## first. Each row: the type's glyph and code, its name, distance and status
 ## (LOCK 40% / LOCKED / TARGET, or seconds since a radar sweep last saw it).
 ## Click a row to target it (again to let go); Ctrl+click to lock on - with a
-## lock, guns clicked in the weapons panel fire at it on their own. The panel
+## lock, guns switched on in the module rack fire at it on their own. The panel
 ## grows with the list. solar_system.gd feeds it each frame with set_state().
 
 signal target_picked(enemy: Node2D)
@@ -34,7 +34,7 @@ func _ready() -> void:
 	_help = HelpPopup.new(PackedStringArray([
 		"Click a contact: target it (again: let go)",
 		"Ctrl+click a contact: lock on",
-		"With a lock, click a gun in WEAPONS: it fires on its own",
+		"Click a gun in the module rack: on, it fires at the lock",
 		"R: radar scan (radars reach far, planets hide enemies)",
 		"G: fire every gun at the target",
 	]))

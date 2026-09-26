@@ -16,10 +16,10 @@ extends Node2D
 ## Lock. Ctrl+click a contact: the lock builds over LOCK_TIME while the
 ## contact is held, then holds until the contact is lost or let go.
 ##
-## Auto-fire. With a lock every turret turns onto the target; clicking a gun
-## in the weapons panel sets it firing on its own: it fires every time it has
-## reloaded and the target is in its cone - until clicked again or the lock
-## goes.
+## Active modules. With a lock every turret turns onto the target. Clicking a
+## gun in the module rack switches it on or off (EVE-style): an active gun
+## fires every time it has reloaded and the locked target is in its cone. It
+## stays on with no lock, waiting for one.
 
 const PASSIVE_RANGE_MIN := 8000.0
 const CONTACT_HOLD := 30.0
@@ -144,8 +144,6 @@ func update(delta: float) -> void:
 		set_target(null)
 	if locking and target != null:
 		lock_progress = minf(lock_progress + delta / LOCK_TIME, 1.0)
-	if not is_locked():
-		auto_fire.clear()
 	_run_auto_fire(delta)
 	queue_redraw()
 
@@ -192,7 +190,6 @@ func set_target(enemy: Enemy) -> void:
 	target = enemy
 	locking = false
 	lock_progress = 0.0
-	auto_fire.clear()
 	if target != null:
 		target.targeted = true
 
@@ -206,11 +203,12 @@ func toggle_lock(enemy: Enemy) -> void:
 	locking = enemy != null
 
 
-## Click on a gun with a lock: it fires on its own, or stops.
+## Click on a gun in the rack: switch it on (it fires at the locked target
+## on its own) or off.
 func toggle_auto_fire(id: int) -> void:
 	if auto_fire.has(id):
 		auto_fire.erase(id)
-	elif is_locked():
+	else:
 		auto_fire[id] = true
 
 

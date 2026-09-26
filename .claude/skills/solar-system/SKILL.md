@@ -669,9 +669,10 @@ running frame:
   beam turns round the ship, then the radar recharges.
 - Contacts panel (`enemy_contacts_panel.gd`): type glyph + code (`EnemyCatalog.MARKERS`
   `abbr`), name, distance, status; click targets, Ctrl+click locks (`LOCK_TIME`).
-- Weapons panel: with a lock, clicking a gun toggles AUTO - it turns (`ship.aim_device`)
-  and fires on every reload while the target is in its cone. Radars are listed below
-  the guns.
+- Module rack (`weapons_panel.gd`, EVE-style round slots): clicking a gun switches it
+  on/off (`combat.auto_fire`); an active gun fires on every reload at the locked target
+  when it is in its cone. With a lock every turret turns onto it (`ship.aim_device`).
+  Keys 1-9 still pick a gun for manual LMB fire. Radars sit in the row below.
 - Weapon reaches are 3x (`ModuleCatalog.WEAPON_RANGE_SCALE`; the builder preview scale
   `FovUtil.BUILDER_SU_PER_CELL` went up with it), shots 2x faster
   (`PlayerShot.SPEED_SCALE`); the player sniper fires a full-length `SniperBeam`.
