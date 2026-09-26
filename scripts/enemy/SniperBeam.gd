@@ -66,7 +66,7 @@ func _hit_along_beam() -> void:
 			if LaserBolt._segment_hits_circle(
 				global_position, tip, ship.global_position, float(ship.get("collision_radius"))
 			):
-				ship.call("take_damage", damage)
+				ship.call("take_damage", damage, global_position)
 
 
 func _draw() -> void:

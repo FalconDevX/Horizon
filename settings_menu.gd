@@ -589,6 +589,7 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = card_cam.position.y + 14.0
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Scroll Wheel", "Zoom camera view in / out")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "MMB (Drag)", "Pan camera freely")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "Alt", "Show / hide prediction and orbits")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "LMB on Ship", "Focus and track ship")
 
 

@@ -11,6 +11,7 @@ extends Node2D
 
 const LASER_BOLT_SCENE := preload("res://scenes/enemies/LaserBolt.tscn")
 const DAMAGE_ZONE_SCRIPT := preload("res://scripts/enemy/DamageZone.gd")
+const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
 ## Ignore the parked player ship for this long after spawn (kamikaze starts on
 ## top of it when picked from the E menu).
 const CONTACT_GRACE := 0.75
@@ -199,8 +200,14 @@ func _handle_orbit(delta: float) -> void:
 		_orbiting = false
 		return
 
-	var player := _find_player_ship()
+	var player := _chase_target()
 	var planet_pos: Vector2 = orbit_anchor.global_position
+	if player == null and _alerted:
+		# The player landed (or is gone): back onto a rail from here.
+		_alerted = false
+		var back: Vector2 = global_position - planet_pos
+		orbit_angle = back.angle()
+		orbit_radius = maxf(back.length(), orbit_radius * 0.5)
 	if player != null and orbit_alert_range > 0.0:
 		var d2: float = planet_pos.distance_squared_to(player.global_position)
 		var alert2: float = orbit_alert_range * orbit_alert_range
@@ -276,7 +283,7 @@ func _handle_input(delta: float) -> void:
 
 
 func _handle_ai(delta: float) -> void:
-	var target := _find_player_ship() if ai_seek_ship else null
+	var target := _chase_target() if ai_seek_ship else null
 	if target != null:
 		var desired: float = (target.global_position - global_position).angle()
 		var diff: float = wrapf(desired - rotation, -PI, PI)
@@ -445,7 +452,7 @@ func _apply_blast_damage(radius: float, amount: float) -> void:
 			var ship := child as Node2D
 			if ship.global_position.distance_squared_to(global_position) <= radius * radius:
 				if ship.has_method("take_damage"):
-					ship.call("take_damage", amount)
+					ship.call("take_damage", amount, global_position)
 
 
 ## One shot, one sound, however many muzzles fire. Quick shots overlap.
@@ -515,8 +522,17 @@ func _check_ship_contact() -> void:
 	var reach: float = collision_radius + ship_radius
 	if global_position.distance_squared_to(player_ship.global_position) <= reach * reach:
 		if player_ship.has_method("take_damage"):
-			player_ship.call("take_damage", contact_damage)
+			player_ship.call("take_damage", contact_damage, global_position)
 		explode()
+
+
+## The player's ship to chase, or null while it is down on a planet - no
+## enemy follows it there.
+func _chase_target() -> Node2D:
+	var player := _find_player_ship()
+	if player != null and bool(player.get("landed")):
+		return null
+	return player
 
 
 func _find_player_ship() -> Node2D:

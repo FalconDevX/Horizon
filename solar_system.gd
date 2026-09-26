@@ -134,8 +134,11 @@ const WARP_CLEARANCE_RADII := 1.6
 const WARP_PATH_COLOR := Color(0.62, 0.55, 1.0, 0.55)
 const SOUND_TARGET_OBSTRUCTED := preload("res://sounds/target--obstructed.wav")
 const SOUND_WARP_INITIATED := preload("res://sounds/warp-initiated.wav")
+const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
 var _obstructed_player: AudioStreamPlayer
 var _warp_initiated_player: AudioStreamPlayer
+var _target_destroyed_player: AudioStreamPlayer
+var _last_destroyed_sound_time: float = -10.0
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -195,6 +198,8 @@ var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
 var _user_paused := false
+## Alt shows / hides the flight prediction, orbits and orbit gauges.
+var orbit_overlays_on := true
 ## Node2D -> [position at the previous physics tick, at the last one].
 var _tick_positions: Dictionary = {}
 
@@ -323,9 +328,6 @@ const SOI_LINE_SCREEN_WIDTH := 1.0
 ## A warp drops the ship in no further out than this share of the target SOI.
 const WARP_MAX_SOI_FACTOR := 0.8
 const SHIP_TRUE_SCALE_ZOOM_THRESHOLD := 4.0
-## Canvas visibility layer (bit value) of screen-sized map markers that the
-## local view (ship_blueprint_panel.gd) does not show.
-const MARKER_VISIBILITY_LAYER := 2
 class PhysicsBody:
 	var node: Node2D
 	var x := 0.0
@@ -527,6 +529,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_Q:
 			start_warp_jump()
+		elif event.keycode == KEY_ALT:
+			toggle_orbit_overlays()
 		elif event.keycode == KEY_R and landed_body == null:
 			combat.scan_all()
 		elif event.keycode == KEY_P or event.keycode == KEY_0:
@@ -707,6 +711,22 @@ func _play_warp_initiated_sound() -> void:
 		_warp_initiated_player.bus = &"SFX"
 		add_child(_warp_initiated_player)
 	_warp_initiated_player.play()
+
+
+func play_target_destroyed_sound(enemy: Enemy = null) -> void:
+	if enemy != null and enemy == _test_enemy:
+		return
+	var now: float = float(Time.get_ticks_msec()) * 0.001
+	if now - _last_destroyed_sound_time < 1.2:
+		return
+	_last_destroyed_sound_time = now
+	if _target_destroyed_player == null:
+		_target_destroyed_player = AudioStreamPlayer.new()
+		_target_destroyed_player.name = "TargetDestroyedPlayer"
+		_target_destroyed_player.stream = SOUND_TARGET_DESTROYED
+		_target_destroyed_player.bus = &"SFX"
+		add_child(_target_destroyed_player)
+	_target_destroyed_player.play()
 
 
 ## "" when a jump to `body` can go now, else why not.
@@ -1204,13 +1224,17 @@ func _ready() -> void:
 	physics_ship = PhysicsBody.new(ship)
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
-	# The live local view, bottom right, with the resource bars and weapons
-	# panel moved left to make room for it.
+	# The ship status schematic bottom right, the weapons left of it; the
+	# resource bars sit left of the centre gauges.
 	ship_blueprint_panel.setup(self)
 	ship_blueprint_panel.offset_left = -278.0
 	ship_blueprint_panel.offset_top = -448.0
-	resource_bars_panel.offset_left = -538.0
-	resource_bars_panel.offset_right = -298.0
+	resource_bars_panel.anchor_left = 0.5
+	resource_bars_panel.anchor_right = 0.5
+	resource_bars_panel.offset_left = -470.0
+	resource_bars_panel.offset_right = -230.0
+	resource_bars_panel.offset_top = -324.0
+	resource_bars_panel.offset_bottom = -28.0
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
 	_build_clock()
 	planet_info_panel.setup(self)
@@ -1250,8 +1274,8 @@ func _ready() -> void:
 	weapons_panel = preload("res://weapons_panel.gd").new()
 	weapons_panel.name = "WeaponsPanel"
 	weapons_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	weapons_panel.offset_left = -750.0
-	weapons_panel.offset_right = -548.0
+	weapons_panel.offset_left = -492.0
+	weapons_panel.offset_right = -290.0
 	weapons_panel.offset_top = -324.0
 	weapons_panel.offset_bottom = -28.0
 	weapons_panel.weapon_picked.connect(func(id: int) -> void:
@@ -1291,7 +1315,7 @@ func _ready() -> void:
 	warp_path_line.name = "WarpPath"
 	warp_path_line.default_color = WARP_PATH_COLOR
 	warp_path_line.visible = false
-	$BehindWorld.add_child(warp_path_line)
+	add_child(warp_path_line)
 
 	settings_mgr = SettingsManager.new()
 	# In-flight music defaults to off regardless of the saved preference (the
@@ -1639,10 +1663,6 @@ func update_screen_space_visuals() -> void:
 	var ship_true_scale: bool = camera_zoom >= SHIP_TRUE_SCALE_ZOOM_THRESHOLD
 	ship.scale = Vector2.ONE if ship_true_scale else screen_scale
 	ship.true_scale = ship_true_scale
-	# Zoomed out, the ship is a screen-sized marker: kept off the local view
-	# (ship_blueprint_panel.gd culls MARKER_VISIBILITY_LAYER), which draws the
-	# real ship there instead.
-	ship.visibility_layer = 1 if ship_true_scale else MARKER_VISIBILITY_LAYER
 
 	# Same screen-space marker treatment as the player ship, so hostiles stay
 	# readable when the camera is pulled back.
@@ -2937,6 +2957,7 @@ func land_on(body: Node2D) -> void:
 	}
 
 	landed_body = body
+	ship.landed = true
 	ground_velocity = Vector2.ZERO
 	ship.disengage_manual_main_engine()
 	body.set("surface_driven", true)
@@ -2965,6 +2986,7 @@ func take_off() -> void:
 
 	body.set("surface_driven", false)
 	landed_body = null
+	ship.landed = false
 	ground_velocity = Vector2.ZERO
 	ship.disengage_manual_main_engine()
 	var body_xy: PackedFloat64Array = get_precise_xy(body)
@@ -3280,12 +3302,19 @@ func _pin_ship_to(body: Node2D) -> void:
 	physics_ship.push_to_node()
 
 
-## Orbit lines, trajectory, markers and the orbit gauges - none of which
-## mean anything on a planet surface.
+## Orbit lines, trajectory, markers and the orbit gauges: off on a planet
+## surface (where they mean nothing) and while the player has them hidden
+## (Alt, `orbit_overlays_on`).
 func _set_space_overlays_visible(shown: bool) -> void:
+	shown = shown and orbit_overlays_on
 	($BehindWorld as CanvasLayer).visible = shown
 	pe_gauge.visible = shown
 	ap_gauge.visible = shown
+
+
+func toggle_orbit_overlays() -> void:
+	orbit_overlays_on = not orbit_overlays_on
+	_set_space_overlays_visible(landed_body == null)
 
 
 ## Whether the ship has surveyed `body` (see charted_bodies). God mode

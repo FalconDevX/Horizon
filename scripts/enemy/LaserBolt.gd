@@ -53,7 +53,7 @@ func _try_hit_segment(from: Vector2, to: Vector2) -> bool:
 		elif child.name == "Ship" and child is Node2D and child.has_method("take_damage"):
 			var ship := child as Node2D
 			if _segment_hits_circle(from, to, ship.position, float(ship.get("collision_radius"))):
-				ship.call("take_damage", damage)
+				ship.call("take_damage", damage, global_position)
 				queue_free()
 				return true
 	return false

@@ -50,7 +50,7 @@ func _in_radius(world_pos: Vector2) -> bool:
 
 func _damage_ship(ship: Node2D, amount: float) -> void:
 	if ship.has_method("take_damage"):
-		ship.call("take_damage", amount)
+		ship.call("take_damage", amount, global_position)
 
 
 func _draw() -> void:

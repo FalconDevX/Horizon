@@ -125,6 +125,18 @@ var fov_devices: Array[Dictionary] = []
 var show_fov_cones := true
 
 var velocity := Vector2.ZERO
+## On a planet's surface (solar_system.gd): enemies leave it alone and
+## nothing hurts it.
+var landed := false
+## Per-module damage, shown on the local view: instance id -> hit points left,
+## and when each was last hit (msec).
+var module_hp: Dictionary = {}
+var module_hit_msec: Dictionary = {}
+const HIT_SOUND := preload("res://sounds/ship_hit.wav")
+## Hits closer together than this share one hit sound.
+const HIT_SOUND_GAP_MSEC := 90
+var _hit_player: AudioStreamPlayer
+var _last_hit_sound_msec: int = -100000
 var throttle := 0.0
 var throttle_locked := false
 var attitude_hold: AttitudeHold = AttitudeHold.NONE
@@ -186,6 +198,13 @@ func _ready() -> void:
 	add_child(_laser_player)
 
 	# Same sample, pitched down: a heavier crack for the sniper.
+	_hit_player = AudioStreamPlayer.new()
+	_hit_player.name = "HitSound"
+	_hit_player.stream = HIT_SOUND
+	_hit_player.bus = &"SFX"
+	_hit_player.max_polyphony = 3
+	add_child(_hit_player)
+
 	_sniper_player = AudioStreamPlayer.new()
 	_sniper_player.name = "SniperSound"
 	_sniper_player.stream = LASER_SOUND
@@ -257,6 +276,8 @@ func refill() -> void:
 	energy = energy_capacity
 	shield = shield_strength
 	hull_hp = max_hull_hp
+	for module: Dictionary in built_visual.get("modules", []):
+		module_hp[int(module["id"])] = float(module["max_hp"])
 	_since_hit = 999.0
 	_weapon_cooldowns.clear()
 
@@ -320,8 +341,12 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 
 ## A hit: shields soak it up first, the hull takes the rest. Returns true if
 ## that destroyed the ship (solar_system.gd respawns it).
-func take_damage(amount: float) -> bool:
-	if not resources_enabled or amount <= 0.0 or PlayerProgress.god_mode:
+func take_damage(amount: float, from: Vector2 = Vector2.INF) -> bool:
+	# Nothing reaches the ship on a planet's surface.
+	if amount <= 0.0 or landed:
+		return false
+	_register_hit(amount, from)
+	if not resources_enabled or PlayerProgress.god_mode:
 		return false
 	_since_hit = 0.0
 	var soaked: float = minf(shield, amount)
@@ -729,7 +754,43 @@ var built_visual: Dictionary = {}
 
 func set_built_visual(visual: Dictionary) -> void:
 	built_visual = visual
+	# Modules kept across a rebuild keep their damage; new ones start whole.
+	var hp: Dictionary = {}
+	for module: Dictionary in visual.get("modules", []):
+		var id: int = int(module["id"])
+		hp[id] = minf(float(module_hp.get(id, module["max_hp"])), float(module["max_hp"]))
+	module_hp = hp
 	queue_redraw()
+
+
+## A hit from `from` (world position; INF when unknown): the hit sound, and
+## the module nearest the hit takes it and flashes on the local view.
+func _register_hit(amount: float, from: Vector2) -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _last_hit_sound_msec > HIT_SOUND_GAP_MSEC:
+		_last_hit_sound_msec = now
+		_hit_player.play()
+	var modules: Array = built_visual.get("modules", [])
+	if modules.is_empty():
+		return
+	var module: Dictionary = modules[randi() % modules.size()]
+	if from.is_finite():
+		# In the ship's own frame, unscaled (the node is scaled when zoomed out).
+		var local: Vector2 = (from - global_position).rotated(-rotation)
+		var best := INF
+		for candidate: Dictionary in modules:
+			var rect: Rect2 = candidate["rect"]
+			var d: float = local.distance_to(rect.get_center()) - rect.size.length() * 0.5
+			# Equipment sits over the hull: prefer it when both are as close.
+			if candidate["structure"]:
+				d += 0.5
+			if d < best:
+				best = d
+				module = candidate
+	var id: int = int(module["id"])
+	module_hit_msec[id] = now
+	if resources_enabled and not PlayerProgress.god_mode:
+		module_hp[id] = maxf(float(module_hp.get(id, module["max_hp"])) - amount, 0.0)
 
 const ENGINE_EXIT_POS := Vector2(0.58, 0.97)
 

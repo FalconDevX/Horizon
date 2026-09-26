@@ -10,7 +10,9 @@ extends RefCounted
 const CELL_PX := 32
 
 
-## {texture, rect, engines, turrets} for `hull`, or {} with nothing built.
+## {texture, rect, engines, turrets, modules} for `hull`, or {} with nothing
+## built. `modules` lists every module's footprint for the damage schematic:
+## {id, title, rect (ship-local units), max_hp, structure}.
 ## Turret guns are left out of the picture and listed in `turrets` -
 ## {id, texture, center, size} in ship-local units - so ship.gd can turn them. `rect` is
 ## where the picture goes in ship-local units, centred on the structure the
@@ -38,9 +40,17 @@ static func compose(hull: ShipHull) -> Dictionary:
 	var unit: float = FovUtil.WORLD_UNITS_PER_CELL
 	var engines: Array[Vector2] = []
 	var turrets: Array[Dictionary] = []
+	var footprints: Array[Dictionary] = []
 	for m: PlacedModule in ordered:
 		var corner: Vector2i = _top_left(m)
 		var bounds: Vector2i = m.get_bounding_size()
+		footprints.append({
+			"id": m.instance_id,
+			"title": m.data.title,
+			"rect": Rect2((Vector2(corner) - centroid) * unit, Vector2(bounds) * unit),
+			"max_hp": maxf(m.data.health, 1.0),
+			"structure": m.data.is_structure(),
+		})
 		if m.data.is_main_engine():
 			# Aft = the grid's left: the middle of the engine's left edge.
 			engines.append((Vector2(corner.x, corner.y + bounds.y * 0.5) - centroid) * unit)
@@ -64,6 +74,7 @@ static func compose(hull: ShipHull) -> Dictionary:
 		"rect": Rect2((Vector2(lo) - centroid) * unit, Vector2(size_cells) * unit),
 		"engines": engines,
 		"turrets": turrets,
+		"modules": footprints,
 	}
 
 
