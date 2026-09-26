@@ -5,8 +5,9 @@ extends RefCounted
 ## scene fills and shows) and unlocked tech-tree nodes (TechTree). Static, so
 ## the shipyard and the flight scene share it and it survives scene reloads
 ## (galaxy-map travel). There is no save system yet, so it resets when the
-## game restarts. The hold starts empty: nodes with no cost are free, the
-## rest (TechTree costs) are paid for with what the player collects.
+## game restarts. The hold starts with only a few standard missiles
+## (MissileCatalog.STARTER_STOCK): nodes with no cost are free, the rest
+## (TechTree costs) are paid for with what the player collects.
 
 ## Debug "god mode" (Settings > Gameplay, SettingsManager.god_mode): every
 ## tech-tree node and module counts as unlocked while it is on. Nothing is
@@ -22,6 +23,9 @@ static func ensure_initialized() -> void:
 	if _initialized:
 		return
 	_initialized = true
+	# A few standard missiles for the Rocket Launcher to start with (a saved
+	# game's hold replaces this in from_dict).
+	inventory.add(MissileCatalog.DEFAULT, MissileCatalog.STARTER_STOCK)
 	for node: Dictionary in TechTree.NODES:
 		if TechTree.unlock_cost(node).is_empty() and (node["requires"] as Array).is_empty():
 			_unlocked[node["id"]] = true

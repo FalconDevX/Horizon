@@ -126,6 +126,8 @@ var orbit_alert_range: float = 0.0
 ## Leave the rail and chase while the player is near the guarded planet.
 var _alerted: bool = false
 var _orbiting: bool = false
+## Seconds left knocked out by an EMP missile: no moving, no guns.
+var _emp_left: float = 0.0
 
 
 func _init() -> void:
@@ -176,6 +178,12 @@ func _process(delta: float) -> void:
 		return
 
 	_alive_time += delta
+	if _emp_left > 0.0:
+		# Dead in space: engines and guns out until the EMP wears off.
+		_emp_left = maxf(_emp_left - delta, 0.0)
+		_throttle = 0.0
+		queue_redraw()
+		return
 	_fire_timer = maxf(0.0, _fire_timer - delta)
 	_ability_timer = maxf(0.0, _ability_timer - delta)
 
@@ -483,6 +491,19 @@ func take_hit(amount: float) -> void:
 		queue_redraw()
 
 
+## An EMP hit: no moving, no firing, no abilities for `seconds` (a longer
+## one already running is kept).
+func disable_for(seconds: float) -> void:
+	if _exploding:
+		return
+	_emp_left = maxf(_emp_left, seconds)
+	queue_redraw()
+
+
+func is_disabled() -> bool:
+	return _emp_left > 0.0
+
+
 func health_fraction() -> float:
 	return clampf((max_health - _damage_taken) / maxf(max_health, 1.0), 0.0, 1.0)
 
@@ -572,6 +593,8 @@ func _draw() -> void:
 		return
 	if targeted:
 		_draw_target_brackets()
+	if _emp_left > 0.0:
+		_draw_emp_crackle()
 	if black_hole_mode and true_scale:
 		_draw_black_hole_field()
 
@@ -642,6 +665,21 @@ func _draw_target_brackets() -> void:
 		draw_line(c, c - Vector2(corner.x * l, 0.0), color, 1.5 * px)
 		draw_line(c, c - Vector2(0.0, corner.y * l), color, 1.5 * px)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Knocked out by an EMP: blue sparks jumping round the hull.
+func _draw_emp_crackle() -> void:
+	var px: float = 1.0 / maxf(get_global_transform_with_canvas().get_scale().x, 0.0001)
+	var r: float = maxf(visual_length * 0.7, 12.0 * px)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var colour := Color(0.55, 0.65, 1.0, 0.55 + 0.35 * sin(t * 23.0))
+	draw_arc(Vector2.ZERO, r, 0.0, TAU, 32, Color(colour, 0.3), 1.2 * px, true)
+	for k in 5:
+		var a: float = t * 3.0 + k * 1.37 + sin(t * 11.0 + k) * 0.6
+		var from: Vector2 = Vector2.from_angle(a) * r
+		var mid: Vector2 = Vector2.from_angle(a + 0.25) * r * 0.75
+		var to: Vector2 = Vector2.from_angle(a + 0.45) * r * 1.05
+		draw_polyline(PackedVector2Array([from, mid, to]), colour, 1.4 * px, true)
 
 
 func _world_to_local_radius(world_r: float) -> float:

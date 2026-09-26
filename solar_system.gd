@@ -1365,6 +1365,7 @@ func _ready() -> void:
 	# A click switches a gun on or off, the same as its key 1-9.
 	weapons_panel.weapon_picked.connect(_select_weapon)
 	weapons_panel.radar_scan_requested.connect(func(id: int) -> void: combat.start_scan(id))
+	weapons_panel.missile_type_picked.connect(func(id: int, type: StringName) -> void: ship.set_missile_type(id, type))
 	weapons_panel.order_changed.connect(func(ids: Array) -> void:
 		ship.weapon_order.clear()
 		for id: int in ids:
@@ -3250,7 +3251,8 @@ func _update_weapon_control(delta: float) -> void:
 	if ship.selected_weapon < 0 or landed_body != null or hyperspace_jump != null:
 		_firing_held = false
 		return
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+	# RMB on the module rack picks missiles, it does not swing the turret.
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not weapons_panel.holds_mouse():
 		ship.aim_selected(ship.get_global_mouse_position(), delta)
 	if _firing_held and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_firing_held = false
@@ -3292,6 +3294,9 @@ func _spawn_weapon_shots(fired: Array[Dictionary], aim: Vector2, target: Enemy) 
 		if device.get("id", &"") == ship.SNIPER_ID:
 			_spawn_sniper_beam(device, aim)
 			continue
+		if device.has("missile_type"):
+			_spawn_missile(device, aim, target)
+			continue
 		var fx: Dictionary = PlayerShot.fx_for(device.get("id", &""))
 		var burst: int = int(fx.get("burst", 1))
 		var id: int = int(device.get("instance_id", -1))
@@ -3322,6 +3327,27 @@ func _spawn_sniper_beam(device: Dictionary, aim: Vector2) -> void:
 	beam.carrier_offset = (muzzle - ship.global_position).rotated(-ship.rotation)
 	add_child(beam)
 	beam.global_position = muzzle
+
+
+## One missile out of a Rocket Launcher, homing on `target` (the lock or the
+## enemy aimed at; seekers find their own without one).
+func _spawn_missile(device: Dictionary, aim: Vector2, target: Enemy) -> void:
+	var facing: Vector2 = ship.device_world_facing(device)
+	var origin: Vector2 = ship.device_world_origin(device)
+	var muzzle_reach: float = (device.get("local_origin", Vector2.ZERO) as Vector2).distance_to(device.get("center", device.get("local_origin", Vector2.ZERO)))
+	var muzzle: Vector2 = origin + facing * muzzle_reach
+	var direction: Vector2 = facing
+	if ship.is_body_in_device_fov(device, aim) and aim.distance_to(muzzle) > 1.0:
+		direction = (aim - muzzle).normalized()
+	var missile := PlayerMissile.new()
+	missile.type = device["missile_type"]
+	missile.target = target if target != _test_enemy else null
+	missile.damage = float(device.get("damage", 0.0)) * float(MissileCatalog.info(missile.type)["damage"])
+	missile.max_distance = float(device.get("range", 9000.0))
+	missile.ignore = _test_enemy
+	add_child(missile)
+	missile.global_position = muzzle
+	missile.launch(direction, ship.velocity)
 
 
 func _spawn_projectiles(instance_id: int, aim: Vector2) -> void:
@@ -3414,7 +3440,7 @@ func _update_combat_panels() -> void:
 		var shoot_dir: Vector2 = ship.device_local_facing(device)
 		if aim != null and ship.is_body_in_device_fov(device, aim.global_position):
 			shoot_dir = ship.to_local(aim.global_position) - ship.device_local_origin(device)
-		weapons.append({
+		var row := {
 			"blocked": ship.is_shot_blocked(device, shoot_dir),
 			"id": int(device.get("instance_id", -1)),
 			"module_id": device.get("id", &""),
@@ -3422,10 +3448,37 @@ func _update_combat_panels() -> void:
 			"reload": left / reload_time,
 			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
 			"auto": combat.auto_fire.has(int(device.get("instance_id", -1))),
-		})
+		}
+		if device.get("id", &"") == ship.LAUNCHER_ID:
+			_add_launcher_state(row)
+		weapons.append(row)
 	weapons.append_array(combat.radar_rows())
 	ship.active_weapons = combat.auto_fire
 	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon, combat.is_locked())
+
+
+## A Rocket Launcher's rack slot: its magazine (type, loaded, the long reload
+## as the slot's `reload`) and the missile types it can switch to - every
+## type the hold has (all of them in god mode), the loaded one always.
+func _add_launcher_state(row: Dictionary) -> void:
+	var state: Dictionary = ship.launcher_state(int(row["id"]))
+	var type: StringName = state["type"]
+	var info: Dictionary = MissileCatalog.info(type)
+	var reloading: bool = float(state["reload"]) > 0.0
+	row["reload"] = float(state["reload"]) / ship.MAGAZINE_RELOAD if reloading else float(state["gap"]) / ship.SALVO_GAP
+	row["missile"] = {
+		"type": type, "name": info["name"], "short": info["short"], "color": info["color"],
+		"loaded": int(state["loaded"]), "capacity": ship.MAGAZINE, "reloading": reloading,
+		"stock": MissileCatalog.stock(type),
+	}
+	var options: Array = []
+	for id: StringName in MissileCatalog.ids():
+		var stock: int = MissileCatalog.stock(id)
+		if stock == 0 and id != type:
+			continue
+		var option: Dictionary = MissileCatalog.info(id)
+		options.append({"type": id, "name": option["name"], "color": option["color"], "count": stock})
+	row["missile_options"] = options
 
 
 ## The hull reached 0: the ship is rebuilt, full, in orbit round the home

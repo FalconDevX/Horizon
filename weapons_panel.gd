@@ -2,22 +2,27 @@ extends Control
 ## The module rack, EVE-style: every gun a round slot in the top row (keys
 ## 1-9 pick them, in this order), the radars in the row below, offset half a
 ## slot. Each slot shows the module's art in a circle; its rim tells the state
-## - green ready, amber reloading (a dark clock-hand sweep covers what is
-## left of the reload), cyan switched on (click or 1-9) - blinking while
-## there is no lock to fire at - grey without power -
+## - green ready, amber reloading (an amber bar runs round the rim as the
+## reload fills, a glint circling it), cyan switched on (click or 1-9) -
+## blinking while there is no lock to fire at - grey without power -
 ## a red dot when the target is in its cone, amber when its own ship is in
 ## the line of fire. A radar's rim is green; scanning, a green beam turns in
-## it. The hovered slot's name and state are written above the rack.
+## it. A Rocket Launcher shows its magazine as pips along the foot, in the
+## loaded missile's colour. The hovered slot's name and state are written
+## above the rack.
 ##
 ## Click a gun (or press its key 1-9) to switch it on or off, EVE-style: on,
 ## it fires by itself at the locked target, or waits for a lock; it is also
-## picked for manual fire (LMB fires, RMB turns a turret). Click a radar (or press R) to scan. Drag a gun along
-## the row to reorder. No panel is drawn behind the slots. Fed each frame
-## by solar_system.gd with set_state().
+## picked for manual fire (LMB fires, RMB turns a turret). Right-click a
+## Rocket Launcher to pick its missiles from a list over the slot. Click a
+## radar (or press R) to scan. Drag a gun along the row to reorder. No panel
+## is drawn behind the slots. Fed each frame by solar_system.gd with
+## set_state().
 
 signal weapon_picked(instance_id: int)
 signal order_changed(instance_ids: Array)
 signal radar_scan_requested(instance_id: int)
+signal missile_type_picked(instance_id: int, type: StringName)
 
 const PAD := 10.0
 const HEADER := 22.0
@@ -48,6 +53,15 @@ var _dragging := false
 var _mouse := Vector2.ZERO
 ## Module id -> its art (or null when there is none).
 var _icons: Dictionary = {}
+## The launcher whose missile list is open (slot index), or -1.
+var _picker: int = -1
+## The list row under the mouse, or -1.
+var _picker_hover: int = -1
+
+const PICKER_WIDTH := 200.0
+const PICKER_ROW := 24.0
+const PICKER_HEADER := 20.0
+const PICKER_PAD := 6.0
 
 
 func _ready() -> void:
@@ -63,6 +77,8 @@ func set_state(weapons: Array, powered: bool, selected: int, locked: bool = fals
 	_powered = powered
 	_selected = selected
 	_locked = locked
+	if _picker >= _weapons.size() or (_picker >= 0 and not _weapons[_picker].has("missile_options")):
+		_close_picker()
 	# One row of guns, a second only when radars are fitted; the rack keeps
 	# its bottom edge and grows upward.
 	var rows: int = 2 if _gun_count() < _weapons.size() else 1
@@ -72,10 +88,59 @@ func set_state(weapons: Array, powered: bool, selected: int, locked: bool = fals
 	queue_redraw()
 
 
-## No panel behind the rack: only the slots take the mouse, the gaps
-## between them let clicks through to the world.
+## No panel behind the rack: only the slots (and an open missile list) take
+## the mouse, the gaps between them let clicks through to the world.
 func _has_point(point: Vector2) -> bool:
-	return _dragging or _slot_at(point) >= 0
+	return _dragging or _slot_at(point) >= 0 or _picker_rect().has_point(point)
+
+
+## Whether the mouse is on the rack now - RMB there is not turret aiming.
+func holds_mouse() -> bool:
+	return is_visible_in_tree() and _has_point(get_local_mouse_position())
+
+
+## The open missile list's options, or [] when none is open.
+func _picker_options() -> Array:
+	if _picker < 0 or _picker >= _weapons.size():
+		return []
+	return _weapons[_picker].get("missile_options", [])
+
+
+## Where the missile list stands: over its slot, growing upward.
+func _picker_rect() -> Rect2:
+	if _picker < 0 or _picker >= _weapons.size():
+		return Rect2()
+	var rows: int = maxi(_picker_options().size(), 1)
+	var height: float = PICKER_HEADER + rows * PICKER_ROW + PICKER_PAD * 2.0
+	var c: Vector2 = _slot_center(_picker)
+	return Rect2(Vector2(c.x - SLOT * 0.5, c.y - SLOT * 0.5 - 8.0 - height), Vector2(PICKER_WIDTH, height))
+
+
+func _picker_row_at(point: Vector2) -> int:
+	var rect: Rect2 = _picker_rect()
+	if not rect.has_point(point):
+		return -1
+	var row: int = floori((point.y - rect.position.y - PICKER_PAD - PICKER_HEADER) / PICKER_ROW)
+	return row if row >= 0 and row < _picker_options().size() else -1
+
+
+func _close_picker() -> void:
+	_picker = -1
+	_picker_hover = -1
+	queue_redraw()
+
+
+## A click anywhere off the open list (or Esc) closes it.
+func _input(event: InputEvent) -> void:
+	if _picker < 0:
+		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_close_picker()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.pressed:
+		var local: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+		if not _picker_rect().has_point(local) and _slot_at(local) != _picker:
+			_close_picker()
 
 
 func _gun_count() -> int:
@@ -107,9 +172,33 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_mouse = event.position
 		_hover = _slot_at(event.position)
+		_picker_hover = _picker_row_at(event.position)
 		if _press >= 0 and not _dragging and _mouse.distance_to(_press_pos) > DRAG_THRESHOLD:
 			_dragging = not _weapons[_press].get("radar", false)
 		queue_redraw()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed:
+			# RMB on a launcher opens (or closes) its missile list.
+			var slot: int = _slot_at(event.position)
+			if slot >= 0 and _weapons[slot].has("missile_options"):
+				if _picker == slot:
+					_close_picker()
+				else:
+					_picker = slot
+					_picker_hover = -1
+					queue_redraw()
+			elif _picker >= 0:
+				_close_picker()
+		accept_event()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and _picker >= 0 \
+			and _picker_rect().has_point(event.position):
+		if not event.pressed:
+			var row: int = _picker_row_at(event.position)
+			if row >= 0:
+				var option: Dictionary = _picker_options()[row]
+				missile_type_picked.emit(int(_weapons[_picker]["id"]), option["type"])
+				_close_picker()
+		accept_event()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_press = _slot_at(event.position)
@@ -178,6 +267,8 @@ func _draw() -> void:
 			_draw_gun_slot(font, _slot_center(i), w, i, i < 9 and i < guns)
 	if _dragging and _press >= 0:
 		_draw_gun_slot(font, _mouse, _weapons[_press], _press, false)
+	if _picker >= 0:
+		_draw_picker(font)
 
 
 ## The hovered slot, for the caption: name and state.
@@ -187,6 +278,14 @@ func _describe(w: Dictionary) -> String:
 		if float(w.get("scan", 0.0)) > 0.0:
 			return title + "  SCANNING"
 		return title + ("  RECHARGING" if float(w.get("reload", 0.0)) > 0.0 else "  READY")
+	if w.has("missile"):
+		var m: Dictionary = w["missile"]
+		var load_text: String = "%s %d/%d" % [String(m["name"]).to_upper(), int(m["loaded"]), int(m["capacity"])]
+		if m["reloading"]:
+			load_text += "  RELOADING"
+		elif int(m["loaded"]) == 0 and int(m["stock"]) == 0:
+			load_text += "  NO MISSILES"
+		return title + "  " + load_text + ("  ON" if w.get("auto", false) else "")
 	if w.get("auto", false):
 		return title + ("  ACTIVE" if _locked else "  ON, NO LOCK")
 	if w.get("blocked", false):
@@ -212,8 +311,14 @@ func _draw_gun_slot(font: Font, c: Vector2, w: Dictionary, index: int, show_key:
 		rim = COLOR_RELOAD
 	_draw_slot_base(c, r, w, index)
 	if reload > 0.0:
-		_draw_sweep(c, r - 2.0, reload, Color(0.0, 0.0, 0.0, 0.62))
-	draw_arc(c, r - 1.0, 0.0, TAU, 40, rim, 2.5 if picked or w.get("auto", false) else 1.6, true)
+		# Dimmed while it reloads; the bar round the rim fills as it goes.
+		draw_circle(c, r - 2.0, Color(0.0, 0.0, 0.0, 0.35))
+		draw_arc(c, r - 1.0, 0.0, TAU, 40, Color(rim, 0.35), 1.6, true)
+		_draw_progress_ring(c, r - 1.0, 1.0 - reload, COLOR_RELOAD)
+	else:
+		draw_arc(c, r - 1.0, 0.0, TAU, 40, rim, 2.5 if picked or w.get("auto", false) else 1.6, true)
+	if w.has("missile"):
+		_draw_magazine(c, r, w["missile"])
 	# Target in the cone / own ship in the line of fire.
 	if w.get("blocked", false):
 		draw_circle(c + Vector2(r * 0.72, -r * 0.72), 3.5, COLOR_RELOAD)
@@ -237,10 +342,13 @@ func _draw_radar_slot(_font: Font, c: Vector2, w: Dictionary, index: int) -> voi
 			draw_colored_polygon(PackedVector2Array([
 				c, c + Vector2.from_angle(a0) * (r - 2.0), c + Vector2.from_angle(a1) * (r - 2.0),
 			]), Color(COLOR_RADAR, 0.35 * (1.0 - k / 6.0)))
-	elif reload > 0.0:
-		_draw_sweep(c, r - 2.0, reload, Color(0.0, 0.0, 0.0, 0.62))
 	var rim: Color = COLOR_OFF if not _powered else (COLOR_RELOAD if reload > 0.0 and scan <= 0.0 else COLOR_RADAR)
-	draw_arc(c, r - 1.0, 0.0, TAU, 40, rim, 2.4 if scan > 0.0 else 1.6, true)
+	if reload > 0.0 and scan <= 0.0:
+		draw_circle(c, r - 2.0, Color(0.0, 0.0, 0.0, 0.35))
+		draw_arc(c, r - 1.0, 0.0, TAU, 40, Color(rim, 0.35), 1.6, true)
+		_draw_progress_ring(c, r - 1.0, 1.0 - reload, COLOR_RELOAD)
+	else:
+		draw_arc(c, r - 1.0, 0.0, TAU, 40, rim, 2.4 if scan > 0.0 else 1.6, true)
 
 
 func _draw_slot_base(c: Vector2, r: float, w: Dictionary, index: int) -> void:
@@ -256,11 +364,61 @@ func _draw_slot_base(c: Vector2, r: float, w: Dictionary, index: int) -> void:
 		draw_texture_rect(icon, Rect2(c - drawn * 0.5, drawn), false, Color(1, 1, 1, 1.0 if _powered else 0.45))
 
 
-## A clock-hand sweep over `share` of the circle, from the top clockwise.
-func _draw_sweep(c: Vector2, r: float, share: float, colour: Color) -> void:
-	var steps: int = maxi(int(40 * share), 2)
-	var points := PackedVector2Array([c])
-	for k in steps + 1:
-		var a: float = -PI * 0.5 + TAU * share * float(k) / steps
-		points.append(c + Vector2.from_angle(a) * r)
-	draw_colored_polygon(points, colour)
+## A reload bar round the rim: `done` (0..1) of it filled from the top,
+## clockwise, a bright head at its tip and a glint circling the whole ring
+## so a slow reload still shows it is working.
+func _draw_progress_ring(c: Vector2, r: float, done: float, colour: Color) -> void:
+	done = clampf(done, 0.0, 1.0)
+	var start: float = -PI * 0.5
+	if done > 0.0:
+		draw_arc(c, r, start, start + TAU * done, maxi(int(48 * done), 2), colour, 3.0, true)
+		draw_circle(c + Vector2.from_angle(start + TAU * done) * r, 2.2, Color(1.0, 0.95, 0.8))
+	var spin: float = start + fposmod(Time.get_ticks_msec() / 1000.0 * TAU / 1.4, TAU)
+	draw_arc(c, r, spin, spin + 0.55, 8, Color(colour, 0.55), 2.0, true)
+
+
+## A launcher's magazine: a pip per missile it holds along the slot's foot,
+## lit in the loaded type's colour, hollow when spent.
+func _draw_magazine(c: Vector2, r: float, m: Dictionary) -> void:
+	var capacity: int = int(m["capacity"])
+	var colour: Color = m["color"]
+	for k in capacity:
+		var at := c + Vector2((float(k) - (capacity - 1) * 0.5) * 8.0, r - 6.0)
+		draw_circle(at, 3.2, Color(0.02, 0.03, 0.05, 0.9))
+		if k < int(m["loaded"]):
+			draw_circle(at, 2.4, colour)
+		else:
+			draw_arc(at, 2.4, 0.0, TAU, 10, Color(colour, 0.5), 1.0, true)
+
+
+## The open missile list over a launcher: every type it can load, with how
+## many the hold has (∞ in god mode); the loaded type is marked.
+func _draw_picker(font: Font) -> void:
+	var rect: Rect2 = _picker_rect()
+	var options: Array = _picker_options()
+	var current: StringName = (_weapons[_picker].get("missile", {}) as Dictionary).get("type", &"")
+	draw_rect(rect, Color(0.03, 0.05, 0.08, 0.96))
+	draw_rect(rect, Color(HudPanelStyle.COLOR_CYAN, 0.6), false, 1.0)
+	draw_string(font, rect.position + Vector2(PICKER_PAD + 2.0, PICKER_PAD + 12.0), "MISSILES", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HudPanelStyle.COLOR_TEXT_MUTED)
+	if options.is_empty():
+		draw_string(font, rect.position + Vector2(PICKER_PAD + 2.0, PICKER_PAD + PICKER_HEADER + 15.0), "None in the hold", HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - PICKER_PAD * 2.0, 11, HudPanelStyle.COLOR_AMBER)
+		return
+	for i in options.size():
+		var option: Dictionary = options[i]
+		var row := Rect2(
+			rect.position + Vector2(PICKER_PAD, PICKER_PAD + PICKER_HEADER + i * PICKER_ROW),
+			Vector2(rect.size.x - PICKER_PAD * 2.0, PICKER_ROW - 2.0)
+		)
+		var is_current: bool = option["type"] == current
+		if i == _picker_hover:
+			draw_rect(row, Color(1.0, 1.0, 1.0, 0.08))
+		if is_current:
+			draw_rect(row, Color(HudPanelStyle.COLOR_CYAN, 0.12))
+			draw_rect(Rect2(row.position, Vector2(2.0, row.size.y)), HudPanelStyle.COLOR_CYAN)
+		MissileCatalog.draw_icon(self, row.position + Vector2(18.0, row.size.y * 0.5), 24.0, option["type"])
+		draw_string(font, row.position + Vector2(36.0, row.size.y * 0.5 + 4.0), String(option["name"]), HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 80.0, 11,
+			HudPanelStyle.COLOR_CYAN if is_current else HudPanelStyle.COLOR_TEXT_PRIMARY)
+		var count: int = int(option["count"])
+		var count_text: String = "∞" if count < 0 else "×%d" % count
+		draw_string(font, row.position + Vector2(0.0, row.size.y * 0.5 + 4.0), count_text, HORIZONTAL_ALIGNMENT_RIGHT, row.size.x - 4.0, 11,
+			HudPanelStyle.COLOR_TEXT_SECONDARY if count != 0 else HudPanelStyle.COLOR_AMBER)

@@ -22,7 +22,7 @@ static var _holder: Node = null
 static func icon(id: StringName) -> Texture2D:
 	if _icons.has(id) and is_instance_valid(_icons[id]):
 		return (_icons[id] as SubViewport).get_texture()
-	if not ResourceDeposits.TYPES.has(id):
+	if not ResourceDeposits.TYPES.has(id) and not MissileCatalog.has(id):
 		return null
 	var stage: Dictionary = make_stage(id, ICON_PIXELS)
 	var viewport: SubViewport = stage["viewport"]
@@ -39,10 +39,14 @@ static func icon(id: StringName) -> Texture2D:
 
 ## The type's name as the game shows it.
 static func display_name(id: StringName) -> String:
+	if MissileCatalog.has(id):
+		return MissileCatalog.info(id)["name"]
 	return ResourceDeposits.TYPES.get(id, {}).get("name", String(id).capitalize())
 
 
 static func color(id: StringName) -> Color:
+	if MissileCatalog.has(id):
+		return MissileCatalog.info(id)["color"]
 	return ResourceDeposits.TYPES.get(id, {}).get("color", Color.WHITE)
 
 
@@ -54,6 +58,8 @@ static func make_stage(id: StringName, pixels: int) -> Dictionary:
 	viewport.transparent_bg = true
 	viewport.msaa_3d = Viewport.MSAA_4X
 	viewport.size = Vector2i(pixels, pixels)
+	if MissileCatalog.has(id):
+		return _missile_stage(viewport, id, pixels)
 
 	var root := Node3D.new()
 	viewport.add_child(root)
@@ -82,6 +88,19 @@ static func make_stage(id: StringName, pixels: int) -> Dictionary:
 	# A little from above and in front. Set directly: look_at needs the tree.
 	var eye := Vector3(0.0, 1.6, 4.0) * 10.0
 	camera.transform = Transform3D(Basis.looking_at(-eye, Vector3.UP), eye)
+	return {"viewport": viewport, "pivot": pivot}
+
+
+## A missile has no model: drawn flat, nose up and to the right. The pivot
+## (turned by callers that spin models) is an empty stand-in.
+static func _missile_stage(viewport: SubViewport, id: StringName, pixels: int) -> Dictionary:
+	var art := Node2D.new()
+	art.position = Vector2(pixels, pixels) * 0.5
+	art.rotation = -PI * 0.25
+	art.draw.connect(func() -> void: MissileCatalog.draw_icon(art, Vector2.ZERO, pixels * 0.8, id))
+	viewport.add_child(art)
+	var pivot := Node3D.new()
+	viewport.add_child(pivot)
 	return {"viewport": viewport, "pivot": pivot}
 
 

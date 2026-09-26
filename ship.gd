@@ -46,6 +46,16 @@ var powered := true
 var _since_hit: float = 999.0
 ## instance_id -> seconds left before that weapon can fire again.
 var _weapon_cooldowns: Dictionary = {}
+## Rocket launchers (instance_id -> {type, loaded, reload, gap}): the missile
+## type chosen (MissileCatalog; RMB on its slot in the module rack), how many
+## are in the magazine (up to MAGAZINE), seconds left of the long reload that
+## refills it from the hold, and of the short pause between two launches.
+## Not touched by refill(), so god mode keeps the reload too.
+var launchers: Dictionary = {}
+const LAUNCHER_ID := &"weapon_rockets"
+const MAGAZINE := 2
+const MAGAZINE_RELOAD := 14.0
+const SALVO_GAP := 0.45
 
 ## The weapon picked in the weapons panel (instance id, -1 for none): LMB
 ## fires it, and RMB turns it toward the cursor if it sits on a turret.
@@ -318,6 +328,7 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 		_weapon_cooldowns[id] = float(_weapon_cooldowns[id]) - dt
 		if float(_weapon_cooldowns[id]) <= 0.0:
 			_weapon_cooldowns.erase(id)
+	_update_launchers(dt)
 	if landed:
 		warp_fuel = minf(warp_fuel + WARP_FUEL_CAPACITY * GROUND_REFILL_FRACTION * dt, WARP_FUEL_CAPACITY)
 	if is_boosting() and not PlayerProgress.god_mode:
@@ -549,6 +560,70 @@ func is_body_in_device_fov(device: Dictionary, body_pos: Vector2) -> bool:
 	return FovUtil.has_clear_los(local_origin, to_local, hull_rects, ignore_rects)
 
 
+## A rocket launcher's magazine (see `launchers`), made on first ask: the
+## first missile type the hold has (any in god mode), loaded at once.
+func launcher_state(id: int) -> Dictionary:
+	if not launchers.has(id):
+		var first: StringName = MissileCatalog.DEFAULT
+		if MissileCatalog.stock(first) == 0:
+			for other: StringName in MissileCatalog.ids():
+				if MissileCatalog.stock(other) != 0:
+					first = other
+					break
+		launchers[id] = {"type": first, "loaded": _take_missiles(first, MAGAZINE), "reload": 0.0, "gap": 0.0}
+	return launchers[id]
+
+
+## Takes up to `want` missiles of `type` out of the hold (any number in god
+## mode): how many it got.
+func _take_missiles(type: StringName, want: int) -> int:
+	var stock: int = MissileCatalog.stock(type)
+	if stock < 0:
+		return want
+	var got: int = mini(want, stock)
+	if got > 0:
+		PlayerProgress.inventory.remove(type, got)
+	return got
+
+
+## Switches a launcher to another missile type: what is in the magazine goes
+## back into the hold and the new type loads over the long reload.
+func set_missile_type(id: int, type: StringName) -> void:
+	if not MissileCatalog.has(type):
+		return
+	var state: Dictionary = launcher_state(id)
+	if state["type"] == type:
+		return
+	if int(state["loaded"]) > 0 and MissileCatalog.stock(state["type"]) >= 0:
+		PlayerProgress.inventory.add(state["type"], int(state["loaded"]))
+	state["type"] = type
+	state["loaded"] = 0
+	state["reload"] = MAGAZINE_RELOAD if MissileCatalog.stock(type) != 0 else 0.0
+
+
+## Launchers reloading: an empty magazine refills over MAGAZINE_RELOAD from
+## the hold - it starts as soon as there are missiles of its type to load.
+func _update_launchers(dt: float) -> void:
+	var fitted: Dictionary = {}
+	for device: Dictionary in fov_devices:
+		if device.get("id", &"") != LAUNCHER_ID:
+			continue
+		var id: int = int(device.get("instance_id", -1))
+		fitted[id] = true
+		var state: Dictionary = launcher_state(id)
+		state["gap"] = maxf(float(state["gap"]) - dt, 0.0)
+		if float(state["reload"]) > 0.0:
+			state["reload"] = float(state["reload"]) - dt
+			if float(state["reload"]) <= 0.0:
+				state["reload"] = 0.0
+				state["loaded"] = _take_missiles(state["type"], MAGAZINE)
+		elif int(state["loaded"]) == 0 and MissileCatalog.stock(state["type"]) != 0:
+			state["reload"] = MAGAZINE_RELOAD
+	for id: int in launchers.keys():
+		if not fitted.has(id):
+			launchers.erase(id)
+
+
 ## Fires every loaded weapon whose cone holds `world_pos`, if there is the
 ## power for it; each shot costs energy and starts that weapon's reload.
 ## Returns the devices that fired (their `damage` is what the target takes).
@@ -569,6 +644,11 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 			continue
 		if _weapon_cooldowns.has(id):
 			continue
+		var launcher: bool = device.get("id", &"") == LAUNCHER_ID
+		if launcher:
+			var magazine: Dictionary = launcher_state(id)
+			if int(magazine["loaded"]) <= 0 or float(magazine["gap"]) > 0.0:
+				continue
 		# Holds fire (costing nothing) while its own ship is in the way.
 		if is_shot_blocked(device, to_local(world_pos) - device_local_origin(device)):
 			continue
@@ -577,8 +657,18 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 			if energy < cost:
 				continue
 			energy -= cost
-		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
 		weapon_fire_msec[id] = Time.get_ticks_msec()
+		if launcher:
+			# One missile off the magazine; the last one starts the long reload.
+			var magazine: Dictionary = launcher_state(id)
+			magazine["loaded"] = int(magazine["loaded"]) - 1
+			magazine["gap"] = SALVO_GAP
+			if int(magazine["loaded"]) <= 0 and MissileCatalog.stock(magazine["type"]) != 0:
+				magazine["reload"] = MAGAZINE_RELOAD
+			shots.append(device.merged({"missile_type": magazine["type"]}))
+			fired = true
+			continue
+		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
 		shots.append(device)
 		if device.get("id", &"") == SNIPER_ID:
 			# Its long beam is spawned by solar_system.gd (SniperBeam).

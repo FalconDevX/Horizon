@@ -62,7 +62,7 @@ static func item_info(id: StringName) -> Dictionary:
 	return {
 		"name": ResourceIcons.display_name(id),
 		"color": ResourceIcons.color(id),
-		"kind": "Resource",
+		"kind": "Missile" if MissileCatalog.has(id) else "Resource",
 	}
 
 
