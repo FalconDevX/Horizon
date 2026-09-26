@@ -19,7 +19,6 @@ enum FloorType {
 @export var grid_size: Vector2i = Vector2i(5, 5)
 @export var base_durability: float = 100.0
 @export var base_mass: float = 50.0
-@export var capacity: int = 20
 @export var description: String = ""
 @export var custom_texture: Texture2D = null ## Fixed art asset drawn instead of the procedural grid texture.
 @export var interior_texture: Texture2D = null ## Overrides custom_texture on the build grid once the hull is placed (inventory icon still uses custom_texture).
@@ -53,7 +52,6 @@ static func make_light() -> HullData:
 	h.grid_size = Vector2i(5, 5)
 	h.base_durability = 80.0
 	h.base_mass = 30.0
-	h.capacity = 12
 	h.description = "Light hull, 5x5 - all deck; main engines go on its left."
 	h.custom_texture = load("res://textures/hulls/hull_core.png")
 	h.interior_texture = load("res://textures/hulls/hull_light_interior.png")
@@ -67,7 +65,6 @@ static func make_standard() -> HullData:
 	h.grid_size = Vector2i(7, 6)
 	h.base_durability = 120.0
 	h.base_mass = 55.0
-	h.capacity = 24
 	h.description = "Standard hull, 7x6 - all deck; main engines go on its left."
 	h.custom_texture = load("res://textures/hulls/hull_standard.png")
 	h.interior_texture = load("res://textures/hulls/hull_standard_interior.png")
@@ -81,7 +78,6 @@ static func make_heavy() -> HullData:
 	h.grid_size = Vector2i(14, 7)
 	h.base_durability = 200.0
 	h.base_mass = 90.0
-	h.capacity = 40
 	h.description = "Heavy hull, 14x7 - all deck; main engines go on its left."
 	h.custom_texture = load("res://textures/hulls/hull_heavy.png")
 	h.interior_texture = load("res://textures/hulls/hull_heavy_interior.png")

@@ -21,8 +21,6 @@ var shield_strength: float = 0.0
 var damage: float = 0.0
 var repair_rate: float = 0.0
 var module_count: int = 0
-var occupied_cells: int = 0
-var capacity: int = 0
 var max_heat: float = 0.0 ## Highest engine overheat limit among engines
 var hulls_linked: bool = true
 ## Ship-wide: ≥1 RCS on each outer side except the main-engine side.
@@ -48,8 +46,6 @@ func to_dictionary() -> Dictionary:
 		"damage": damage,
 		"repair_rate": repair_rate,
 		"module_count": module_count,
-		"occupied_cells": occupied_cells,
-		"capacity": capacity,
 		"max_heat": max_heat,
 		"net_energy": energy_generation - energy_consumption,
 		"thrust_to_weight": thrust / maxf(mass, 0.001),
@@ -77,8 +73,6 @@ func duplicate_stats() -> ShipStats:
 	copy.damage = damage
 	copy.repair_rate = repair_rate
 	copy.module_count = module_count
-	copy.occupied_cells = occupied_cells
-	copy.capacity = capacity
 	copy.max_heat = max_heat
 	copy.hulls_linked = hulls_linked
 	copy.rcs_sides_ok = rcs_sides_ok
