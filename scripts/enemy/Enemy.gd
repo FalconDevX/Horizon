@@ -221,8 +221,6 @@ func _handle_orbit(delta: float) -> void:
 	global_position = planet_pos + Vector2.from_angle(orbit_angle) * orbit_radius
 	rotation = orbit_angle + PI * 0.5 * signf(orbit_omega if orbit_omega != 0.0 else 1.0)
 	_throttle = 0.55
-	if deploy_fighters:
-		_try_deploy_fighter()
 
 
 ## Break orbit: chase the player and use guns / specials.
