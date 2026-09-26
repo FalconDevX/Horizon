@@ -571,6 +571,10 @@ func _stats(body: Node2D, look: Node2D = null) -> Array:
 		rows.append(["Cloud cover", "~%d%%" % roundi(params["clouds"] * 100.0)])
 
 	rows.append(["Atmosphere", look.get("atmosphere")])
+	var body_name: String = body.get("body_name")
+	if PlanetRoster.TIERS.has(body_name):
+		rows.append(["Rarity", PlanetRoster.TIER_NAMES[PlanetRoster.tier(body_name)]])
+		rows.append(["Threat", PlanetRoster.DIFFICULTY_NAMES[PlanetRoster.difficulty(body_name)]])
 	return rows
 
 

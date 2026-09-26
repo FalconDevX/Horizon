@@ -1,15 +1,22 @@
 class_name PlanetGuards
 extends RefCounted
-## Spawns hostile craft in circular orbits around planets. Worlds with any
-## T3 deposit get the elite roster (Cruiser / Mothership / Minelayer /
-## Black hole); everything else gets the basic craft.
+## Spawns hostile craft in circular orbits around planets, by each planet's
+## difficulty (PlanetRoster.DIFFICULTY, 1 low .. 4 extreme - see GUARDS): the
+## easy worlds get a few light craft, the hard ones the elite roster
+## (Cruiser / Mothership / Minelayer / Black hole) on top of basic escorts.
 ##
 ## `system_depth` is the discovery order of the star system (0 = first
 ## visited). Each later system gets EXTRA_PER_SYSTEM more guards than the
 ## one before, spread across its planets.
 
-const BASIC_COUNT := Vector2i(2, 4)
-const ELITE_COUNT := Vector2i(2, 3)
+## Per difficulty: how many basic craft (from `basic`) and how many elite
+## (EnemyCatalog.ELITE_IDS) orbit a planet.
+const GUARDS := {
+	1: {"basic": Vector2i(1, 2), "elite": Vector2i(0, 0), "pool": ["basic", "kamikaze"]},
+	2: {"basic": Vector2i(2, 4), "elite": Vector2i(0, 0), "pool": ["basic", "tank", "sniper", "kamikaze"]},
+	3: {"basic": Vector2i(2, 3), "elite": Vector2i(1, 1), "pool": ["basic", "tank", "sniper", "kamikaze"]},
+	4: {"basic": Vector2i(1, 2), "elite": Vector2i(2, 3), "pool": ["basic", "tank", "sniper", "kamikaze"]},
+}
 ## Extra hostile craft for the whole system per discovery step.
 const EXTRA_PER_SYSTEM := 3
 ## Orbit altitude as a multiple of the planet's radius, plus a flat pad so
@@ -70,10 +77,8 @@ static func spawn_planet(
 	gravity_constant: float,
 	extra_count: int = 0
 ) -> Array[Enemy]:
-	var deposits: Array = planet.get("resource_deposits")
-	var elite: bool = ResourceDeposits.has_tier(deposits, 3)
-	var pool: Array[String] = EnemyCatalog.ELITE_IDS if elite else EnemyCatalog.BASIC_IDS
-	var count_range: Vector2i = ELITE_COUNT if elite else BASIC_COUNT
+	var difficulty: int = PlanetRoster.difficulty(String(planet.get("body_name")))
+	var recipe: Dictionary = GUARDS.get(difficulty, GUARDS[1])
 
 	var rng := RandomNumberGenerator.new()
 	# Stable per planet / world so a reload of the same seed keeps the same
@@ -87,14 +92,22 @@ static func spawn_planet(
 	var base_omega: float = sqrt(mu / maxf(base_orbit * base_orbit * base_orbit, 1.0))
 	base_omega = clampf(base_omega, 0.015, 0.28)
 
-	var count: int = rng.randi_range(count_range.x, count_range.y) + maxi(0, extra_count)
+	# Elites first, then basic craft - the system's extra guards join the
+	# basic ones.
+	var ids: Array[String] = []
+	for _i in rng.randi_range(recipe["elite"].x, recipe["elite"].y):
+		ids.append(EnemyCatalog.ELITE_IDS[rng.randi() % EnemyCatalog.ELITE_IDS.size()])
+	var basic_pool: Array = recipe["pool"]
+	for _i in rng.randi_range(recipe["basic"].x, recipe["basic"].y) + maxi(0, extra_count):
+		ids.append(basic_pool[rng.randi() % basic_pool.size()])
+	var count: int = ids.size()
 	var alert_range: float = maxf(
 		base_orbit * ALERT_ORBIT_FACTOR,
 		body_radius * ALERT_RADIUS_FACTOR
 	) + ALERT_PAD
 	var spawned: Array[Enemy] = []
 	for i in count:
-		var enemy_id: String = pool[rng.randi() % pool.size()]
+		var enemy_id: String = ids[i]
 		var scene: PackedScene = EnemyCatalog.scene_for(enemy_id)
 		if scene == null:
 			continue

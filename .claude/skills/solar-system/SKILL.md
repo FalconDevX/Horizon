@@ -120,11 +120,15 @@ radius or orbit - a quick script over `solar_system.tscn` computing
 
 `scripts/data/PlanetRoster.gd` (`class_name PlanetRoster`): every system is the same 20
 scene planets, and `PlanetRoster.roll(world_seed)` (deterministic) picks which are there -
-each by its rarity tier (`TIERS`, 1 common .. 5 rare, `TIER_CHANCE` 0.72 / 0.3 / 0.2 /
-0.08 / 0.02), topped up or trimmed to `COUNT` 6-10, always one giant (`GIANTS`: Oruvel or
+each by its rarity tier (`TIERS`, 1 common .. 5 rare, `TIER_CHANCE` 0.68 / 0.31 / 0.21 /
+0.085 / 0.022), topped up or trimmed to `COUNT` 7-11, always one giant (`GIANTS`: Oruvel or
 Taurvane). Planets not in `TIERS` (Erebus) are always there and do not count. Measured
-over 20 000 systems: tier 1 ~75%, 2 ~32%, 3 ~21%, 4 ~9%, 5 ~2%; 6 planets 46%, 7 22%,
-8 17%, 9 10%, 10 6%.
+over 20 000 systems: tier 1 ~72-76%, 2 ~34%, 3 ~23%, 4 ~10%, 5 ~3%; 7 planets 56%,
+8 19%, 9 13%, 10 7%, 11 4%. `DIFFICULTY` (1 low .. 4 extreme, `DIFFICULTY_NAMES`) is
+separate from rarity and picks the planet's guards: `PlanetGuards.GUARDS` - 1: 1-2 of
+basic/kamikaze; 2: 2-4 of basic/tank/sniper/kamikaze; 3: 2-3 of those + 1 elite; 4: 1-2 +
+2-3 elite (`EnemyCatalog.ELITE_IDS`); the system-depth extras join the basic ones. The
+log shows Rarity and Threat rows on a planet's page.
 
 Absent planets are **not generated**: `solar_system.gd` `_enter_tree` sets each planet's
 `present` before the planets' own `_ready`, which then skips the bake and deposits;
@@ -761,7 +765,7 @@ the body's current variant, so finds carry across systems per variant.
 - Resource `tier` (TYPES): 1 common (scrap, silver, gold, ice/pink crystal), 2 uncommon
   (sky stone, bone, moonbloom, frozen moonbloom), 3 rare (toxic ore, gold pillar, hel,
   ice wurm), 4 special (slime jelly, silver spheres), 5 wildcard (egg); scenery 0.
-  `PlanetGuards` gives worlds with any tier >= 3 deposit the elite roster. Wind crystals
+  Guards no longer follow resource tiers (see the roster's `DIFFICULTY`). Wind crystals
   were folded into sky stones.
 - Spawn key `per_feature` (Vector2i): that many round every sigil of the world
   instead of `count` per world (`_place_per_feature`, `_near()`); `snow_hump`
