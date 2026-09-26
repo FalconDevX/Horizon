@@ -26,6 +26,8 @@ var starfield_brightness: float = 0.5
 var camera_smoothing: bool = true
 var camera_zoom_speed: float = 1.2
 var camera_pan_speed: float = 1.0
+## Runs the step-by-step tutorial (tutorial_panel.gd) on every new game.
+var show_tutorial: bool = true
 
 # Debug
 ## Unlocks the whole tech tree and catalog and lets the hyperdrive fire
@@ -150,6 +152,7 @@ func save_settings() -> void:
 	cfg.set_value("gameplay", "camera_smoothing", camera_smoothing)
 	cfg.set_value("gameplay", "camera_zoom_speed", camera_zoom_speed)
 	cfg.set_value("gameplay", "camera_pan_speed", camera_pan_speed)
+	cfg.set_value("gameplay", "show_tutorial", show_tutorial)
 
 	cfg.set_value("debug", "god_mode", god_mode)
 
@@ -179,6 +182,7 @@ func load_settings() -> void:
 		camera_smoothing = cfg.get_value("gameplay", "camera_smoothing", true)
 		camera_zoom_speed = cfg.get_value("gameplay", "camera_zoom_speed", 1.2)
 		camera_pan_speed = cfg.get_value("gameplay", "camera_pan_speed", 1.0)
+		show_tutorial = cfg.get_value("gameplay", "show_tutorial", true)
 
 		god_mode = cfg.get_value("debug", "god_mode", false)
 

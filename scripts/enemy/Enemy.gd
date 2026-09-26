@@ -236,10 +236,7 @@ func _orbit_attack(delta: float, player: Node2D) -> void:
 		_throttle = 0.0
 		return
 
-	var desired: float = (player.global_position - global_position).angle()
-	var diff: float = wrapf(desired - rotation, -PI, PI)
-	rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
-	_throttle = 1.0
+	_steer_combat(delta, player)
 	position += Vector2.RIGHT.rotated(rotation) * _speed_vs_player(player) * _throttle * delta
 
 	if deploy_fighters:
@@ -285,10 +282,9 @@ func _handle_input(delta: float) -> void:
 func _handle_ai(delta: float) -> void:
 	var target := _chase_target() if ai_seek_ship else null
 	if target != null:
-		var desired: float = (target.global_position - global_position).angle()
-		var diff: float = wrapf(desired - rotation, -PI, PI)
-		rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
-	_throttle = 1.0
+		_steer_combat(delta, target)
+	else:
+		_throttle = 1.0
 	var speed: float = _speed_vs_player(target) if target != null else move_speed
 	position += Vector2.RIGHT.rotated(rotation) * speed * _throttle * delta
 	if deploy_fighters:
@@ -297,6 +293,25 @@ func _handle_ai(delta: float) -> void:
 		_try_lay_mine()
 	elif can_fire:
 		_try_fire()
+
+
+## Face the player. Kamikaze charge in; everyone else holds at half weapon range.
+func _steer_combat(delta: float, player: Node2D) -> void:
+	var to_player: Vector2 = player.global_position - global_position
+	var desired: float = to_player.angle()
+	var diff: float = wrapf(desired - rotation, -PI, PI)
+	rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
+	if explodes_on_hit:
+		_throttle = 1.0
+		return
+	var hold: float = laser_range * 0.5
+	var dist: float = to_player.length()
+	if dist > hold * 1.08:
+		_throttle = 1.0
+	elif dist < hold * 0.92:
+		_throttle = -0.7
+	else:
+		_throttle = 0.0
 
 
 ## At least `SPEED_VS_PLAYER` × the player's current speed, never below this
@@ -313,6 +328,14 @@ func _speed_vs_player(player: Node2D) -> float:
 func _try_fire() -> void:
 	if not can_fire or _fire_timer > 0.0:
 		return
+	# AI only shoots when the player is inside weapon reach.
+	if not player_controlled:
+		var target := _chase_target()
+		if target == null:
+			return
+		var reach2: float = laser_range * laser_range
+		if global_position.distance_squared_to(target.global_position) > reach2:
+			return
 	_fire_timer = fire_cooldown
 	fire_laser()
 
