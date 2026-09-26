@@ -323,6 +323,9 @@ var resource_deposits: Array = []
 ## settings from `world`, as it has no owner.
 var preview_only := false
 var world: Node = null
+## False while this system does not have the planet (PlanetRoster): hidden,
+## parked far out, with no SOI (solar_system.gd get_soi_radius).
+var present := true
 ## Seeds of deposits already collected in this world (seed -> true). Placement
 ## skips them, so a system the player comes back to stays picked clean; the
 ## game sets it before rebuild_surface() on a jump.
@@ -1182,6 +1185,15 @@ func get_world_chaos() -> float:
 
 ## Read from the scene root, which owns every body in solar_system.tscn.
 ## A body with no owner reads `world` instead (a catalog stand-in), or gets the fallback.
+## Shows or hides the planet as the system's roster says - its 2D drawing
+## and its 3D look alike.
+func set_present(value: bool) -> void:
+	present = value
+	visible = value
+	if _anchor_3d != null:
+		_anchor_3d.visible = value and not preview_only
+
+
 func _world_setting(setting: StringName, fallback: Variant) -> Variant:
 	var source: Node = owner if owner != null else world
 	if source == null:

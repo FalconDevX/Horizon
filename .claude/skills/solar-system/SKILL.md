@@ -116,6 +116,27 @@ clears Erebus's SOI by ~1.8 M. Recheck every gap (and the belts) after touching 
 radius or orbit - a quick script over `solar_system.tscn` computing
 `max(d * (0.4 m / 1000)^0.4, 5 r)` per body does it.
 
+### Planet roster (which planets a system has)
+
+`scripts/data/PlanetRoster.gd` (`class_name PlanetRoster`): every system is the same 20
+scene planets, and `PlanetRoster.roll(world_seed)` (deterministic) picks which are there -
+each by its rarity tier (`TIERS`, 1 common .. 5 rare, `TIER_CHANCE` 0.72 / 0.3 / 0.2 /
+0.08 / 0.02), topped up or trimmed to `COUNT` 6-10, always one giant (`GIANTS`: Oruvel or
+Taurvane). Planets not in `TIERS` (Erebus) are always there and do not count. Measured
+over 20 000 systems: tier 1 ~75%, 2 ~32%, 3 ~21%, 4 ~9%, 5 ~2%; 6 planets 46%, 7 22%,
+8 17%, 9 10%, 10 6%.
+
+`solar_system.gd` `_apply_roster(rng)` (in `_ready` and `set_world_seed`) places the ones
+there on their scene orbit radius (`orbit_radii`) at a random angle and parks the rest at
+`PARK_RADIUS` + i * `PARK_SPACING`, calling `CelestialBody.set_present()` (hides 2D and 3D);
+`planet_present[i]` mirrors it. `_show_roster()` hides their orbit lines (also honoured by
+the "show orbit lines" setting) and rebuilds `autopilot_selectable_bodies`. An absent
+planet has no SOI (`get_soi_radius` returns 0), cannot be landed on or charted, and the
+arrival after a jump only picks present planets. `home_planet_index()` is Coralyss when
+present, else the first present non-giant planet (start, respawn, charted-from-start).
+The log lists absent planets as "Not in this system" (`_draw_absent_text`), named once
+any of their variants has been seen, cards still clickable.
+
 ### Constraints when touching the planet set
 
 - `HOME_PLANET_INDEX := 1` indexes `planets` **by scene child order**. The ship spawns
@@ -177,7 +198,7 @@ exist. A body with `surface_blob_count == 0` (the sun) keeps the old flat `draw_
 - **Seeds.** `surface_seed` is only a planet's *local* seed. Everything — blob rolls,
   terrain colours, the elevation bake, the shaders' `seed_offset` — reads
   `generation_seed = PlanetSurface.planet_seed(world_seed, surface_seed)`, set at the
-  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 1461402483),
+  top of `_ready()`. `world_seed` is an export on the scene root (`solar_system.gd`, default 857931493),
   read through `owner` in `get_world_seed()` because planets `_ready` before the root.
   Changing the script default of `surface_seed` does nothing - every planet overrides
   it in the scene. `set_world_seed(value)` clears `PlanetTerrain`'s bake cache and
