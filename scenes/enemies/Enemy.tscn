@@ -6,3 +6,4 @@
 script = ExtResource("1_enemy")
 title = "Basic"
 kind_id = "basic"
+move_speed = 210.0

@@ -329,15 +329,14 @@ func burn_warp_fuel(distance: float) -> void:
 
 ## One step of the ship's systems: fuel burned by the engines, energy made
 ## and drawn, shields recharging, repairs, weapons reloading. `engine_output`
-## is the main engine's share of full power right now; `landed` refills.
+## is the main engine's share of full power right now; `landed` recharges
+## energy (fuel is not refilled on the ground).
 func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 	for id: int in _weapon_cooldowns.keys():
 		_weapon_cooldowns[id] = float(_weapon_cooldowns[id]) - dt
 		if float(_weapon_cooldowns[id]) <= 0.0:
 			_weapon_cooldowns.erase(id)
 	_update_launchers(dt)
-	if landed:
-		warp_fuel = minf(warp_fuel + WARP_FUEL_CAPACITY * GROUND_REFILL_FRACTION * dt, WARP_FUEL_CAPACITY)
 	if is_boosting() and not PlayerProgress.god_mode:
 		warp_fuel = maxf(warp_fuel - BOOST_WARP_FUEL * dt, 0.0)
 	if not resources_enabled:
@@ -362,7 +361,6 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 		powered = net >= 0.0
 
 	if landed:
-		fuel = minf(fuel + fuel_capacity * GROUND_REFILL_FRACTION * dt, fuel_capacity)
 		energy = minf(energy + energy_capacity * GROUND_REFILL_FRACTION * dt, energy_capacity)
 		powered = true
 

@@ -393,7 +393,8 @@ func _handle_ai(delta: float) -> void:
 ## Face the player. Kamikaze charge in; everyone else holds at half weapon range.
 func _steer_combat(delta: float, player: Node2D) -> void:
 	var to_player: Vector2 = player.global_position - global_position
-	var desired: float = to_player.angle()
+	# Gunships point the nose where a shot would meet the ship, not where it is.
+	var desired: float = to_player.angle() if explodes_on_hit else (_lead_point(player) - global_position).angle()
 	var diff: float = wrapf(desired - rotation, -PI, PI)
 	rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
 	if explodes_on_hit:
@@ -431,8 +432,66 @@ func _try_fire() -> void:
 		var reach2: float = laser_range * laser_range
 		if global_position.distance_squared_to(target.global_position) > reach2:
 			return
+		# Only pull the trigger when the shot, fired along the nose, would
+		# actually meet the ship where it will be - not at a ship running away.
+		if not _shot_would_hit(target):
+			return
 	_fire_timer = fire_cooldown
 	fire_laser()
+
+
+## The target's velocity in world space (zero if it has none).
+func _target_velocity(target: Node2D) -> Vector2:
+	var velocity: Variant = target.get("velocity")
+	return velocity as Vector2 if typeof(velocity) == TYPE_VECTOR2 else Vector2.ZERO
+
+
+## Where a bolt fired now would meet `target` flying straight on, or its
+## current position when no bolt can catch it.
+func _lead_point(target: Node2D) -> Vector2:
+	if beam_mode:
+		return target.global_position
+	var r: Vector2 = target.global_position - global_position
+	var v: Vector2 = _target_velocity(target)
+	# |r + v t| = laser_speed * t  ->  a t^2 + b t + c = 0
+	var a: float = v.length_squared() - laser_speed * laser_speed
+	var b: float = 2.0 * r.dot(v)
+	var c: float = r.length_squared()
+	var t: float = -1.0
+	if absf(a) < 0.0001:
+		if b < 0.0:
+			t = -c / b
+	else:
+		var disc: float = b * b - 4.0 * a * c
+		if disc >= 0.0:
+			var root: float = sqrt(disc)
+			var t1: float = (-b - root) / (2.0 * a)
+			var t2: float = (-b + root) / (2.0 * a)
+			t = minf(t1, t2) if minf(t1, t2) > 0.0 else maxf(t1, t2)
+	if t <= 0.0:
+		return target.global_position
+	return target.global_position + v * t
+
+
+## Whether a shot fired along the nose right now would pass within the
+## target's hit radius (bolts: the target moving on at its current velocity,
+## over the bolt's lifetime; beams: the target where it is, an instant hit).
+func _shot_would_hit(target: Node2D) -> bool:
+	var dir := Vector2.RIGHT.rotated(rotation)
+	var r: Vector2 = target.global_position - global_position
+	var radius: float = float(target.get("collision_radius")) if target.get("collision_radius") != null else 8.0
+	# A little slack for the muzzles sitting off the centre line.
+	var tolerance: float = radius + collision_radius * 0.5
+	if beam_mode:
+		var along: float = r.dot(dir)
+		return along > 0.0 and along <= laser_range and absf(r.cross(dir)) <= tolerance
+	# Target relative to the bolt: r + (v - dir * speed) t, closest over the lifetime.
+	var rel_v: Vector2 = _target_velocity(target) - dir * laser_speed
+	var lifetime: float = laser_range / laser_speed
+	var t: float = 0.0
+	if rel_v.length_squared() > 0.0001:
+		t = clampf(-r.dot(rel_v) / rel_v.length_squared(), 0.0, lifetime)
+	return (r + rel_v * t).length() <= tolerance
 
 
 func fire_laser() -> void:
