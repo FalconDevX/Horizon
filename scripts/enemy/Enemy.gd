@@ -35,7 +35,6 @@ const PROVOKED_CHASE := 15.0
 @export var title: String = "Enemy"
 ## Catalog id for the flat map/HUD glyph (shape + colour).
 @export var kind_id: String = "basic"
-@export var ship_texture: Texture2D = preload("res://textures/enemies/enemy_basic.png")
 @export var visual_length: float = 26.0
 @export var move_speed: float = 160.0
 ## Hostile chase: always at least this many times the player's current speed.
@@ -216,6 +215,55 @@ func begin_orbit(
 	if anchor != null:
 		global_position = anchor.global_position + Vector2.from_angle(angle) * radius
 		rotation = angle + PI * 0.5 * signf(omega if omega != 0.0 else 1.0)
+
+
+## What a save keeps of this craft. The planet it guards is stored by the
+## caller (by index); everything else is here.
+func save_state() -> Dictionary:
+	return {
+		"kind": kind_id,
+		"position": global_position,
+		"rotation": rotation,
+		"max_health": max_health,
+		"damage": _damage_taken,
+		"player_controlled": player_controlled,
+		"ai_forward": ai_forward,
+		"ai_seek_ship": ai_seek_ship,
+		"orbiting": _orbiting,
+		"orbit": [orbit_radius, orbit_angle, orbit_omega, orbit_alert_range],
+		"alerted": _alerted,
+		"returning": _returning,
+		"provoked": _provoked_left,
+		"emp": _emp_left,
+		"bh_time": _bh_active_time,
+	}
+
+
+## Puts a saved craft back; `anchor` is its guarded planet, or null.
+func load_state(state: Dictionary, anchor: Node2D) -> void:
+	max_health = float(state.get("max_health", max_health))
+	_damage_taken = float(state.get("damage", 0.0))
+	player_controlled = bool(state.get("player_controlled", false))
+	ai_forward = bool(state.get("ai_forward", false))
+	ai_seek_ship = bool(state.get("ai_seek_ship", false))
+	var orbit: Array = state.get("orbit", [0.0, 0.0, 0.0, 0.0])
+	if bool(state.get("orbiting", false)) and anchor != null:
+		begin_orbit(anchor, orbit[0], orbit[1], orbit[2], orbit[3])
+	else:
+		orbit_anchor = anchor
+		orbit_radius = orbit[0]
+		orbit_angle = orbit[1]
+		orbit_omega = orbit[2]
+		orbit_alert_range = orbit[3]
+	_alerted = bool(state.get("alerted", false))
+	_returning = bool(state.get("returning", false))
+	_provoked_left = float(state.get("provoked", 0.0))
+	_emp_left = float(state.get("emp", 0.0))
+	_bh_active_time = float(state.get("bh_time", 0.0))
+	if _alerted:
+		_alert_time = ALERT_DELAY
+	global_position = state.get("position", global_position)
+	rotation = float(state.get("rotation", rotation))
 
 
 func _process(delta: float) -> void:
@@ -780,11 +828,9 @@ func _find_player_ship() -> Node2D:
 	return parent.get_node_or_null("Ship") as Node2D
 
 
+## The square the craft occupies: muzzles, pods and engine exits are fractions of it.
 func _get_draw_size() -> Vector2:
-	if ship_texture == null:
-		return Vector2(visual_length, visual_length)
-	var texture_size: Vector2 = ship_texture.get_size()
-	return Vector2(visual_length * texture_size.x / texture_size.y, visual_length)
+	return Vector2(visual_length, visual_length)
 
 
 func _draw() -> void:
@@ -806,13 +852,9 @@ func _draw() -> void:
 		_draw_type_label()
 		return
 
-	if ship_texture == null:
-		_draw_health_bar()
-		return
+	# Up close the same glyph as on the map, grown to the craft's size.
 	var draw_size := _get_draw_size()
-	draw_set_transform(Vector2.ZERO, PI * 0.5, Vector2.ONE)
-	draw_texture_rect(ship_texture, Rect2(-draw_size * 0.5, draw_size), false)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	EnemyCatalog.draw_glyph(self, Vector2.ZERO, visual_length * 0.5, kind_id, true)
 
 	if _throttle > 0.05:
 		for exit in engine_exits:

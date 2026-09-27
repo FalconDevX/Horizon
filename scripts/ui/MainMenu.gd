@@ -364,7 +364,6 @@ func _launch_game() -> void:
 	# fill the bar as the planets generate. (A threaded load of the scene
 	# fails on the scripts' preloads, so the load itself stays blocking.)
 	_loading = LoadingScreen.new()
-	_loading.status_text = "Loading"
 	get_tree().root.add_child(_loading)
 	await get_tree().process_frame
 	await get_tree().process_frame

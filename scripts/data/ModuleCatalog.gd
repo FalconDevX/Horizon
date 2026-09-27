@@ -208,6 +208,7 @@ static func utilities() -> Array[ModuleData]:
 
 	var solar := _base("Solar Panels", &"util_solar", ModuleData.Category.UTILITY, 3.0, 8.0, 0.0, _shape_2x1())
 	solar.energy_generation = 10.0
+	solar.mounts_outside = true
 	_use_art(solar, "util_solar")
 
 	var fabricator := _base("Fabricator", &"util_fabricator", ModuleData.Category.UTILITY, 14.0, 30.0, 12.0, _shape_2x2())

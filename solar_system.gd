@@ -211,6 +211,11 @@ var _planet_guards_pending: bool = false
 var _enemy_waves_spawned: int = 0
 ## Live craft from the latest wave(s); pruned as they die.
 var _wave_enemies: Array[Enemy] = []
+## Hostile craft from a loaded save, put back once the loading screen is gone
+## (in place of a fresh guard spawn). Null when there is nothing to restore.
+var _saved_enemies: Variant = null
+## The ship was destroyed: nothing more is saved or played (see _game_over).
+var _is_game_over: bool = false
 var _clock_wave_label: Label = null
 var trajectory_status := "ORBIT"
 var trajectory_target := ""
@@ -1307,6 +1312,8 @@ func _arrive_in_system(system_seed: int) -> void:
 
 
 func _ready() -> void:
+	# The window's close button saves first (see _notification).
+	get_tree().set_auto_accept_quit(false)
 	# Moved every frame in _process (after the ship's interpolated pose), so
 	# it must not be interpolated between physics ticks itself.
 	camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
@@ -1383,12 +1390,15 @@ func _ready() -> void:
 	if loading_screen == null:
 		loading_screen = LoadingScreen.new()
 		add_child(loading_screen)
-	loading_screen.status_text = "Generating planets"
 	loading_screen.target_progress = LoadingScreen.SCENE_SHARE
 	loading_screen.track_bodies(celestial_bodies)
 	loading_screen.finished.connect(func() -> void:
 		loading_screen = null
-		_spawn_planet_guards()
+		if _saved_enemies != null:
+			_restore_enemies(_saved_enemies)
+			_saved_enemies = null
+		else:
+			_spawn_planet_guards()
 	)
 
 	var home: Node2D = planets[home_planet_index()]
@@ -1616,11 +1626,54 @@ func build_save_data() -> Dictionary:
 		"warp_fuel": ship.warp_fuel,
 		"fabricator": fabricator.to_dict(),
 		"enemy_waves_spawned": _enemy_waves_spawned,
+		"enemies": _capture_enemies(),
 	}
+
+
+## Every hostile craft in flight: guards (with the planet they patrol), wave
+## hunters and launched fighters. The sandbox test ship is left out.
+func _capture_enemies() -> Array:
+	var result: Array = []
+	for child in get_children():
+		var enemy := child as Enemy
+		if enemy == null or enemy == _test_enemy or not enemy.is_alive() or enemy.is_queued_for_deletion():
+			continue
+		var state: Dictionary = enemy.save_state()
+		state["anchor"] = planets.find(enemy.orbit_anchor) if enemy.orbit_anchor != null else -1
+		state["group"] = "guard" if _planet_guards.has(enemy) else ("wave" if _wave_enemies.has(enemy) else "free")
+		result.append(state)
+	return result
+
+
+## Puts back the craft _capture_enemies() saved.
+func _restore_enemies(states: Array) -> void:
+	_clear_planet_guards()
+	_clear_wave_enemies()
+	for state: Dictionary in states:
+		var enemy_id: String = str(state.get("kind", "basic"))
+		var scene: PackedScene = EnemyCatalog.scene_for(enemy_id)
+		if scene == null:
+			continue
+		var enemy := scene.instantiate() as Enemy
+		if enemy == null:
+			continue
+		EnemyCatalog.configure(enemy, enemy_id)
+		add_child(enemy)
+		var anchor_index: int = int(state.get("anchor", -1))
+		var anchor: Node2D = planets[anchor_index] if anchor_index >= 0 and anchor_index < planets.size() else null
+		enemy.load_state(state, anchor)
+		match str(state.get("group", "free")):
+			"guard":
+				_planet_guards.append(enemy)
+			"wave":
+				_wave_enemies.append(enemy)
+	_update_wave_label()
 
 
 ## Saves into this session's slot (pause menu), with a notice.
 func save_game() -> void:
+	if _is_game_over:
+		return
 	if hyperspace_jump != null or loading_screen != null:
 		music_toast.show_message("CAN'T SAVE DURING A JUMP")
 		return
@@ -1647,6 +1700,9 @@ func _apply_pending_save() -> void:
 		_enemy_waves_spawned = int(data["enemy_waves_spawned"])
 	else:
 		_enemy_waves_spawned = EnemyWavesScript.waves_due(sim_time, CLOCK_HOURS_PER_SIM_SECOND)
+	# Older saves lack the craft: the guards then spawn fresh as on a new game.
+	if data.has("enemies"):
+		_saved_enemies = data["enemies"]
 
 	var planet_states: Array = data.get("planets", [])
 	for i in mini(planet_states.size(), physics_planets.size()):
@@ -1921,6 +1977,8 @@ func get_relative_position_precise(from_body: Node2D, to_body: Node2D) -> Vector
 
 
 func _exit_tree() -> void:
+	# Back in the menu the close button just quits.
+	get_tree().set_auto_accept_quit(true)
 	if trajectory_task_id != -1:
 		WorkerThreadPool.wait_for_task_completion(trajectory_task_id)
 
@@ -3755,29 +3813,24 @@ func _add_launcher_state(row: Dictionary) -> void:
 	row["missile_options"] = options
 
 
-## The hull reached 0: the ship is rebuilt, full, in orbit round the home
-## planet of this system - the hold and everything learned are kept.
-func _respawn_destroyed_ship() -> void:
+## The hull reached 0: game over. The world stops behind the GAME OVER
+## screen, the run's save is deleted so it cannot be carried on, and the
+## only way out is the main menu.
+func _game_over() -> void:
+	if _is_game_over:
+		return
+	_is_game_over = true
 	play_ship_explosion_sound()
-	if landed_body != null:
-		take_off()
-	cancel_warp()
-	var index: int = home_planet_index()
-	var home: Node2D = planets[index]
-	var body: PhysicsBody = physics_planets[index]
-	var distance: float = 4000.0
-	var along := Vector2(0.0, 1.0)
-	set_ship_state(
-		Vector2(body.x, body.y) + Vector2(distance, 0.0),
-		Vector2(body.vx, body.vy) + along * sqrt(mu_planets[index] / distance)
+	_explosion_player.process_mode = Node.PROCESS_MODE_ALWAYS
+	if not SaveGame.current_slot.is_empty():
+		SaveGame.delete(SaveGame.current_slot)
+	var screen := GameOverScreen.new()
+	add_child(screen)
+	screen.menu_requested.connect(func() -> void:
+		get_tree().paused = false
+		get_tree().change_scene_to_file("res://scenes/menu/MainMenu.tscn")
 	)
-	ship.reset_physics_interpolation()
-	ship.refill()
-	camera_follow_ship = true
-	camera_follow_body = null
-	camera.position = ship.position
-	_restart_trajectory_prediction()
-	music_toast.show_message("SHIP DESTROYED     Rebuilt in orbit of %s" % String(home.get("body_name")).to_upper())
+	get_tree().paused = true
 
 
 ## Holds the ship on the planet's centre, moving with it.
@@ -3823,6 +3876,10 @@ func _watch_alt(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		_alt_alone = false
+	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
+		# Closing the window saves the game, the same as leaving to the menu.
+		save_game()
+		get_tree().quit()
 
 
 func toggle_orbit_overlays() -> void:
@@ -4054,7 +4111,7 @@ func simulation_step(dt: float) -> void:
 		engine_output = ship.throttle
 	ship.update_resources(dt, engine_output, landed_body != null)
 	if ship.is_destroyed():
-		_respawn_destroyed_ship()
+		_game_over()
 		return
 
 	var landed: bool = landed_body != null

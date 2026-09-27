@@ -24,6 +24,9 @@ const FADE_RATE := 6.0
 const DONE_HOLD := 0.9
 ## The closing card stays up this long (or until clicked).
 const OUTRO_TIME := 12.0
+## Each card is read out from here: <card title as a slug>.wav, made by
+## tools/generate_tutorial_voice.py. A card without a file stays silent.
+const VOICE_DIR := "res://sounds/tutorial/"
 
 var game: Node = null
 
@@ -40,6 +43,7 @@ var _skip_section_rect := Rect2()
 var _skip_rect := Rect2()
 var _next_rect := Rect2()
 var _alpha := 0.0
+var _voice: AudioStreamPlayer = null
 
 
 func setup(game_node: Node) -> void:
@@ -270,6 +274,21 @@ func _begin_step() -> void:
 	_done_time = -1.0
 	_skip_armed = ""
 	_layout()
+	_speak(_steps[_index]["title"])
+
+
+## Reads a card out, cutting off the one before.
+func _speak(title: String) -> void:
+	if _voice == null:
+		_voice = AudioStreamPlayer.new()
+		_voice.bus = &"SFX"
+		add_child(_voice)
+	_voice.stop()
+	var slug: String = RegEx.create_from_string("[^a-z0-9]+").sub(title.to_lower(), "_", true).strip_edges()
+	var path: String = VOICE_DIR + slug.trim_prefix("_").trim_suffix("_") + ".wav"
+	if ResourceLoader.exists(path):
+		_voice.stream = load(path)
+		_voice.play()
 
 
 func _process(delta: float) -> void:
@@ -332,6 +351,10 @@ func _go_to(index: int) -> void:
 		_done_time = -1.0
 		_skip_armed = ""
 		_layout()
+		_speak("Tutorial complete")
+		# The closing card stays up at least until it has been read out.
+		if _voice.playing:
+			_outro_time = maxf(OUTRO_TIME, _voice.stream.get_length() + 1.5)
 	else:
 		_begin_step()
 

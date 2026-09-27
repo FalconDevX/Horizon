@@ -570,7 +570,9 @@ func _update_hint(module: ModuleData, rotation: int) -> void:
 			ModuleData.Category.ENGINE:
 				floor_hint = "open space touching a hull's left side"
 			_:
-				if module.is_deck_equipment():
+				if module.mounts_outside:
+					floor_hint = "deck, or outside on the truss next to deck"
+				elif module.is_deck_equipment():
 					floor_hint = "inside hull (deck)"
 		var fov_hint := ""
 		if module.has_fov():

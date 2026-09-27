@@ -1,12 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
-[ext_resource type="Texture2D" path="res://textures/enemies/enemy_mothership.png" id="2_tex"]
 [ext_resource type="PackedScene" path="res://scenes/enemies/EnemyFast.tscn" id="3_fast"]
 
 [node name="EnemyMothership" type="Node2D"]
 script = ExtResource("1_enemy")
-ship_texture = ExtResource("2_tex")
 title = "Mothership"
 kind_id = "mothership"
 visual_length = 58.0

@@ -56,6 +56,9 @@ enum Category {
 @export var fuel_capacity: float = 0.0
 @export var energy_generation: float = 0.0
 @export var repair_rate: float = 0.0
+## Also builds outside the hull (solar panels): on the truss ring or a truss
+## beam, held by a cell next to deck or on a beam - besides deck, as usual.
+@export var mounts_outside: bool = false
 
 @export_group("Shield")
 @export var shield_strength: float = 0.0

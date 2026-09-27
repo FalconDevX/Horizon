@@ -877,7 +877,7 @@ func _draw_enemy_list(font: Font) -> void:
 		)
 
 
-## Ship art + contact glyph in the middle view (no 3D viewport on this tab).
+## Contact glyph, large, in the middle view (no 3D viewport on this tab).
 func _draw_enemy_preview(font: Font) -> void:
 	if _enemies.is_empty():
 		return
@@ -888,17 +888,9 @@ func _draw_enemy_preview(font: Font) -> void:
 	draw_rect(view.grow(-1.0), Color(0.04, 0.05, 0.07, 0.92))
 	draw_rect(Rect2(view.position, Vector2(view.size.x, 3.0)), color)
 
-	var tex: Texture2D = entry.get("texture") as Texture2D
 	var pad: float = 36.0
 	var max_side: float = minf(view.size.x, view.size.y) - pad * 2.0
-	if tex != null:
-		var tex_size: Vector2 = tex.get_size()
-		var scale: float = max_side / maxf(tex_size.x, tex_size.y)
-		var draw_size: Vector2 = tex_size * scale
-		var at: Vector2 = view.get_center() - draw_size * 0.5
-		draw_texture_rect(tex, Rect2(at, draw_size), false)
-	else:
-		EnemyCatalog.draw_glyph(self, view.get_center(), max_side * 0.28, enemy_id, false)
+	EnemyCatalog.draw_glyph(self, view.get_center(), max_side * 0.28, enemy_id, false)
 
 	EnemyCatalog.draw_glyph(self, view.position + Vector2(28.0, 28.0), 14.0, enemy_id, false)
 	draw_string(

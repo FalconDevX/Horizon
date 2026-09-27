@@ -16,6 +16,8 @@ extends Node2D
 ##     may not face the ship: no hull or cockpit straight ahead of its muzzle.
 ##   - Ship-wide: ≥1 RCS on each outer side except the left (main-engine) side.
 ##   - Truss itself: empty cells within WEAPON_MOUNT_DEPTH of a hull or truss beam.
+##   - Outside gear (ModuleData.mounts_outside - solar panels): on deck, or wholly
+##     outside on the truss ring / beams with one cell held like a gun's mount.
 ##   - TRUSS beams go on the truss ring (so they can chain outward); weapons may stand on them.
 ##   - Moving a hull keeps its attached modules (cargo).
 
@@ -394,7 +396,9 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 					and is_deck_adjacent_truss_cell(cell)
 				)
 			if data.is_deck_equipment():
-				return _equipment_floor_ok(data, cell) and get_equipment_at(cell) == null
+				if get_equipment_at(cell) != null:
+					return false
+				return _equipment_floor_ok(data, cell) or (data.mounts_outside and _outside_cell_ok(cell))
 			return false
 
 
@@ -444,7 +448,35 @@ func can_place(
 		if not _cells_behind_hull(cells, ignore_instance_id):
 			return false
 
+	if data.mounts_outside and not _all_on_deck(data, cells):
+		# Outside: no cell on deck, and one held to the ship.
+		var held := false
+		for cell: Vector2i in cells:
+			if _equipment_floor_ok(data, cell):
+				return false
+			held = held or _weapon_anchor(cell, ignore_instance_id)
+		if not held:
+			return false
+
 	return true
+
+
+func _all_on_deck(data: ModuleData, cells: Array[Vector2i]) -> bool:
+	for cell: Vector2i in cells:
+		if not _equipment_floor_ok(data, cell):
+			return false
+	return true
+
+
+## A cell outside the hull that outside gear may use: the empty truss ring or
+## a truss beam.
+func _outside_cell_ok(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
+	if is_truss_beam_cell(cell, ignore_instance_id):
+		return true
+	var s := get_structure_at(cell)
+	if s != null and s.instance_id != ignore_instance_id:
+		return false
+	return is_weapon_mount_cell(cell, ignore_instance_id)
 
 
 ## Like can_place, but also validates cargo that moves with a hull.
@@ -500,6 +532,8 @@ func can_place_hull_with_cargo(
 							return false
 					elif c_data.is_deck_equipment():
 						if not hull_cells.has(cell):
+							if c_data.mounts_outside and _cell_in_weapon_truss(cell, hull_cells):
+								continue
 							return false
 						var local_floor := world_delta_to_local(cell - origin, rotation, hull_module.hull_data)
 						if not _equipment_floor_type_ok(
@@ -879,7 +913,7 @@ func _collect_cargo_for_hull(hull: PlacedModule) -> Array:
 				belongs = true
 				break
 			# Weapons / RCS on deck-adjacent truss of this hull.
-			if m.data.category == ModuleData.Category.WEAPON or m.data.is_rcs_engine():
+			if m.data.category == ModuleData.Category.WEAPON or m.data.is_rcs_engine() or m.data.mounts_outside:
 				for d: Vector2i in _DIRS:
 					var n := cell + d
 					if not hull_cells.has(n):
@@ -921,7 +955,9 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 
 	# Interior modules share the hull's cells (structure + equipment layers).
 	if data.is_deck_equipment():
-		return _equipment_floor_ok(data, cell)
+		if _equipment_floor_ok(data, cell):
+			return true
+		return data.mounts_outside and _outside_cell_ok(cell, ignore_instance_id)
 
 	# Weapons may sit on a truss beam or a hull's gun edge; otherwise not on structure.
 	if data.category == ModuleData.Category.WEAPON:

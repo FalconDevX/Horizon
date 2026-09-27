@@ -34,7 +34,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Basic",
 			"role": "Patrol craft",
 			"roster": "basic",
-			"texture": preload("res://textures/enemies/enemy_basic.png"),
 			"scene": preload("res://scenes/enemies/Enemy.tscn"),
 			"description": "The workhorse of planetary defence. Light, cheap, and common on worlds without rare deposits. It flies a circular rail until a ship comes close, then breaks orbit to chase and fire twin forward lasers.",
 			"facts": [
@@ -47,7 +46,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Tank",
 			"role": "Heavy gunship",
 			"roster": "basic",
-			"texture": preload("res://textures/enemies/enemy_tank.png"),
 			"scene": preload("res://scenes/enemies/EnemyTank.tscn"),
 			"description": "A slow, broad-hulled gunship built to absorb fire and return it with a heavy forward cannon. Turns poorly, but each bolt hits harder and travels farther than a Basic's twin guns.",
 			"facts": [
@@ -60,7 +58,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Sniper",
 			"role": "Long-range beam",
 			"roster": "basic",
-			"texture": preload("res://textures/enemies/enemy_sniper.png"),
 			"scene": preload("res://scenes/enemies/EnemySniper.tscn"),
 			"description": "A spindly beam platform. It barely moves, but when it fires the shot is instant across extreme range - a yellow diamond on the radar means you are already in its corridor.",
 			"facts": [
@@ -73,7 +70,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Kamikaze",
 			"role": "Ram drone",
 			"roster": "basic",
-			"texture": preload("res://textures/enemies/enemy_kamikaze.png"),
 			"scene": preload("res://scenes/enemies/EnemyKamikaze.tscn"),
 			"description": "An unarmed dart that exists to collide. It detonates on hull contact or the first hit it takes, trading its own frame for a burst of contact damage.",
 			"facts": [
@@ -86,7 +82,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Fast",
 			"role": "Interceptor",
 			"roster": "fighter",
-			"texture": preload("res://textures/enemies/enemy_fast.png"),
 			"scene": preload("res://scenes/enemies/EnemyFast.tscn"),
 			"description": "A mothership-launched interceptor: light, agile, and armed with very high-velocity bolts. It does not orbit with planet guards on its own - carriers deploy it once the patrol is alerted.",
 			"facts": [
@@ -99,7 +94,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Cruiser",
 			"role": "Capital escort",
 			"roster": "elite",
-			"texture": preload("res://textures/enemies/enemy_cruiser.png"),
 			"scene": preload("res://scenes/enemies/EnemyCruiser.tscn"),
 			"description": "A multi-battery escort found on worlds rich in tier-3 deposits. Twin forward guns and broadside mounts make it dangerous from several angles at once.",
 			"facts": [
@@ -112,7 +106,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Mothership",
 			"role": "Carrier",
 			"roster": "elite",
-			"texture": preload("res://textures/enemies/enemy_mothership.png"),
 			"scene": preload("res://scenes/enemies/EnemyMothership.tscn"),
 			"description": "A lumbering carrier that holds orbit until approached, then breaks to chase while launching Fast interceptors. It has no forward guns of its own - the threat is the swarm it feeds.",
 			"facts": [
@@ -125,7 +118,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Minelayer",
 			"role": "Area denial",
 			"roster": "elite",
-			"texture": preload("res://textures/enemies/enemy_minelayer.png"),
 			"scene": preload("res://scenes/enemies/EnemyMinelayer.tscn"),
 			"description": "Drops lingering damage fields instead of shooting. Each mine is a glowing hazard zone that burns anything that drifts through it for several seconds.",
 			"facts": [
@@ -138,7 +130,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Black hole",
 			"role": "Anomaly weapon",
 			"roster": "elite",
-			"texture": preload("res://textures/enemies/enemy_black_hole.png"),
 			"scene": preload("res://scenes/enemies/EnemyBlackHole.tscn"),
 			"description": "A hostile craft that opens a short-lived gravity well. While armed it pulls ships, bolts and mines inward, then detonates in a wide blast when the fuse runs out.",
 			"facts": [
@@ -151,7 +142,6 @@ static func all_enemies() -> Array[Dictionary]:
 			"title": "Frigate",
 			"role": "Missile boat",
 			"roster": "elite",
-			"texture": preload("res://textures/enemies/enemy_frigate.png"),
 			"scene": preload("res://scenes/enemies/EnemyFrigate.tscn"),
 			"description": "A heavy missile boat with three launchers: a pod on each flank and a pair in the bow that take turns. It opens fire from far beyond gun range, one salvo of three homing missiles at a time, then reloads for a long while.",
 			"facts": [
@@ -250,16 +240,13 @@ static func combat_stats(enemy_id: String) -> Dictionary:
 	return stats
 
 
-## Apply catalog title / kind id (and texture, if the scene left it blank).
+## Apply catalog title / kind id.
 static func configure(enemy: Enemy, enemy_id: String) -> void:
 	var entry: Dictionary = entry_for(enemy_id)
 	if entry.is_empty() or enemy == null:
 		return
 	enemy.kind_id = enemy_id
 	enemy.title = str(entry.get("title", enemy.title))
-	var tex: Texture2D = entry.get("texture") as Texture2D
-	if tex != null and enemy.ship_texture == null:
-		enemy.ship_texture = tex
 
 
 ## Flat HUD / map glyph. `nose_right` true = sharp end along +X (ship local);

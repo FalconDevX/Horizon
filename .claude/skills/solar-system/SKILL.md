@@ -697,7 +697,7 @@ running frame:
   dragging onto a cell moves or swaps (`_move_rack_module`), and `weapon_order` (keys
   1-9) follows the grid's reading order. Reloading slots show a progress ring.
 - **Frigate** (`frigate`, elite roster, `scenes/enemies/EnemyFrigate.tscn`,
-  `textures/enemies/enemy_frigate.png` rotated nose-up from the board art): `Enemy`
+  "pods" glyph): `Enemy`
   `missile_mode` - every `fire_cooldown` (9 s), with the player within
   `missile_launch_range`, a salvo of one `EnemyMissile` per launcher group
   (`missile_launchers` / `missile_launch_dirs` / `missile_groups`: flank pods 0 and 1,

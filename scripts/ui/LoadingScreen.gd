@@ -1,6 +1,6 @@
 class_name LoadingScreen
 extends CanvasLayer
-## Full-screen loading overlay: the title art with a progress bar underneath.
+## Full-screen loading overlay: the title art with a bare progress bar underneath.
 ##
 ## Two stages share one bar. The main menu puts it up on the scene tree's root
 ## before loading solar_system.tscn (the first SCENE_SHARE of the bar); being
@@ -32,7 +32,6 @@ const BAR_BOTTOM_MARGIN := 42.0
 ## The screen currently up, if any.
 static var current: LoadingScreen = null
 
-var status_text := "Loading"
 ## 0..1, where the bar is heading. Set it, or hand planets to track_bodies().
 var target_progress := 0.0
 
@@ -45,7 +44,6 @@ var _bodies: Array = []
 
 var _root: Control
 var _bar: Control
-var _label: Label
 
 
 func _init() -> void:
@@ -86,20 +84,6 @@ func _ready() -> void:
 	_bar.draw.connect(_draw_bar)
 	_root.add_child(_bar)
 
-	_label = Label.new()
-	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_label.add_theme_font_override("font", HudPanelStyle.get_font())
-	_label.add_theme_font_size_override("font_size", 13)
-	_label.add_theme_color_override("font_color", HudPanelStyle.COLOR_TEXT_SECONDARY)
-	_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_label.offset_left = -BAR_WIDTH * 0.5
-	_label.offset_right = BAR_WIDTH * 0.5
-	_label.offset_top = -BAR_BOTTOM_MARGIN - 34.0
-	_label.offset_bottom = -BAR_BOTTOM_MARGIN - 12.0
-	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(_label)
-	_update_label()
-
 
 ## Fill the rest of the bar (after the scene share) as these bodies finish
 ## building their surfaces (CelestialBody.is_surface_ready()).
@@ -122,10 +106,8 @@ func _process(delta: float) -> void:
 				ready_count += 1
 		bodies_ready = ready_count == _bodies.size()
 		target_progress = lerpf(SCENE_SHARE, 1.0, float(ready_count) / _bodies.size())
-		status_text = "Generating planets  %d / %d" % [ready_count, _bodies.size()]
 
 	_shown = move_toward(_shown, target_progress, FILL_SPEED * delta)
-	_update_label()
 	_bar.queue_redraw()
 
 	if _bodies.is_empty() or not bodies_ready or _shown < 1.0 or _elapsed < MIN_TIME:
@@ -133,7 +115,6 @@ func _process(delta: float) -> void:
 
 	if _hold < HOLD_TIME:
 		_hold += delta
-		status_text = "Ready"
 		return
 
 	_fade += delta
@@ -144,11 +125,6 @@ func _process(delta: float) -> void:
 		_done = true
 		finished.emit()
 		queue_free()
-
-
-func _update_label() -> void:
-	if _label != null:
-		_label.text = "%s   %d%%" % [status_text.to_upper(), roundi(_shown * 100.0)]
 
 
 func _draw_bar() -> void:
