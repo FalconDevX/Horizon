@@ -65,7 +65,7 @@ const NODES := [
 		"note": "Mounting frame for guns, reaching further out from the hull."},
 	{"id": &"connectors", "title": "Connectors", "branch": Branch.STRUCTURE, "tier": 1,
 		"cost": {&"ice_crystal": 6, &"pink_crystal": 3}, "requires": [],
-		"modules": [&"connector_straight", &"connector_elbow", &"connector_t", &"connector_cross"]},
+		"modules": [&"connector_straight"]},
 	{"id": &"cockpit", "title": "Cockpit", "branch": Branch.STRUCTURE, "tier": 1,
 		"cost": {}, "requires": [], "modules": [&"cockpit"]},
 	{"id": &"hull_standard", "title": "Standard Hull", "branch": Branch.STRUCTURE, "tier": 2,

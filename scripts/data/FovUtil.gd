@@ -35,6 +35,18 @@ static func module_center_cell(origin: Vector2i, data: ModuleData, rotation: int
 	return Vector2(origin) + Vector2(bounds) * 0.5
 
 
+## Where a turret turns about: the middle of its first cell, the mount at the
+## back (the muzzle points away from it). A 1x1 gun turns about its middle.
+static func module_pivot_cell(origin: Vector2i, data: ModuleData, rotation: int) -> Vector2:
+	var center := module_center_cell(origin, data, rotation)
+	if data == null:
+		return center
+	var facing := local_facing(rotation)
+	var bounds := data.get_bounding_size(rotation)
+	var along := float(bounds.x) if absf(facing.x) > 0.5 else float(bounds.y)
+	return center - facing * (along * 0.5 - 0.5)
+
+
 ## LOS exits from the facing edge of the footprint (right side at rot 0).
 static func module_muzzle_cell(origin: Vector2i, data: ModuleData, rotation: int) -> Vector2:
 	var center := module_center_cell(origin, data, rotation)

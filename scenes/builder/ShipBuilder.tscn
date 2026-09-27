@@ -358,7 +358,9 @@ theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
 theme_override_font_sizes/font_size = 11
 text = "Wheel = zoom
 Middle-drag = pan
-Holding a module: wheel = rotate"
+Holding a module: wheel = rotate
+Ctrl+Z = undo
+Ctrl+Y = redo"
 
 [node name="InfoSeparator" type="HSeparator" parent="InfoPopup/InfoDialogPanel/InfoMargin/InfoVBox"]
 layout_mode = 2

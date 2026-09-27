@@ -36,7 +36,9 @@ var energy: float = 0.0
 var shield: float = 0.0
 var hull_hp: float = 0.0
 ## Warp drive fuel (solar_system.gd Q), every ship - the stock one included.
-## Burned per unit of distance flown in warp, refilled on a planet's surface.
+## Burned per unit of distance flown in warp, by the boost and by the
+## hyperdrive (GalaxyMap.jump_fuel); only the fabricator (F) refines more,
+## from hel.
 var warp_fuel: float = WARP_FUEL_CAPACITY
 ## Whether the ship has power: stored energy, or (with no batteries) as much
 ## generated as is drawn. Unpowered, radars go dark, weapons cannot fire and
@@ -52,9 +54,12 @@ var _weapon_cooldowns: Dictionary = {}
 ## refills it from the hold, and of the short pause between two launches.
 ## Not touched by refill(), so god mode keeps the reload too.
 var launchers: Dictionary = {}
-## The radar-locked enemy (solar_system.gd sets it every frame; null with no
-## lock). Launchers fire only at it.
-var missile_target: Node2D = null
+## The radar-locked enemies (solar_system.gd sets them every frame; empty
+## with no lock). Launchers fire only at one of them.
+var missile_targets: Array = []
+## RMB held after a press over the world, not a HUD panel (solar_system.gd
+## keeps it): the selected turret follows the cursor.
+var rmb_aim := false
 const LAUNCHER_ID := &"weapon_rockets"
 const MAGAZINE := 2
 const MAGAZINE_RELOAD := 14.0
@@ -299,8 +304,10 @@ func apply_module_stats(stats: Dictionary) -> void:
 	hull_hp = max_hull_hp * hull_share
 
 
-## Everything back to full (a respawn, or a fresh start).
-func refill() -> void:
+## Everything back to full (a respawn, or a fresh start). `reloads` false
+## leaves the guns' reloads running (god mode refills every frame - clearing
+## them there made every gun fire every frame).
+func refill(reloads: bool = true) -> void:
 	warp_fuel = WARP_FUEL_CAPACITY
 	fuel = fuel_capacity
 	energy = energy_capacity
@@ -309,7 +316,8 @@ func refill() -> void:
 	for module: Dictionary in built_visual.get("modules", []):
 		module_hp[int(module["id"])] = float(module["max_hp"])
 	_since_hit = 999.0
-	_weapon_cooldowns.clear()
+	if reloads:
+		_weapon_cooldowns.clear()
 
 
 ## Whether the engines can burn: always for the stock ship, else while there is fuel.
@@ -336,15 +344,13 @@ func update_resources(dt: float, engine_output: float, landed: bool) -> void:
 		if float(_weapon_cooldowns[id]) <= 0.0:
 			_weapon_cooldowns.erase(id)
 	_update_launchers(dt)
-	if landed:
-		warp_fuel = minf(warp_fuel + WARP_FUEL_CAPACITY * GROUND_REFILL_FRACTION * dt, WARP_FUEL_CAPACITY)
 	if is_boosting() and not PlayerProgress.god_mode:
 		warp_fuel = maxf(warp_fuel - BOOST_WARP_FUEL * dt, 0.0)
 	if not resources_enabled:
 		powered = true
 		return
 	if PlayerProgress.god_mode:
-		refill()
+		refill(false)
 		powered = true
 		return
 	_since_hit += dt
@@ -634,6 +640,14 @@ func _update_launchers(dt: float) -> void:
 ## Fires every loaded weapon whose cone holds `world_pos`, if there is the
 ## power for it; each shot costs energy and starts that weapon's reload.
 ## Returns the devices that fired (their `damage` is what the target takes).
+## The locked enemy standing at `world_pos` (a launcher's aim), or null.
+func locked_target_at(world_pos: Vector2) -> Node2D:
+	for enemy: Variant in missile_targets:
+		if is_instance_valid(enemy) and world_pos.distance_to((enemy as Node2D).global_position) <= 1.0:
+			return enemy
+	return null
+
+
 func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]:
 	var shots: Array[Dictionary] = []
 	if resources_enabled and not powered and not PlayerProgress.god_mode:
@@ -656,9 +670,8 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 			var magazine: Dictionary = launcher_state(id)
 			if int(magazine["loaded"]) <= 0 or float(magazine["gap"]) > 0.0:
 				continue
-			# Only ever at the locked target.
-			if missile_target == null or not is_instance_valid(missile_target) \
-					or world_pos.distance_to(missile_target.global_position) > 1.0:
+			# Only ever at a locked target.
+			if locked_target_at(world_pos) == null:
 				continue
 			# Each missile type has its own reach, within the launcher's.
 			if global_position.distance_to(world_pos) > float(MissileCatalog.info(magazine["type"])["range"]):
@@ -680,7 +693,6 @@ func fire_weapons_at(world_pos: Vector2, only_id: int = -1) -> Array[Dictionary]
 			if int(magazine["loaded"]) <= 0 and MissileCatalog.stock(magazine["type"]) != 0:
 				magazine["reload"] = MAGAZINE_RELOAD
 			shots.append(device.merged({"missile_type": magazine["type"]}))
-			fired = true
 			continue
 		_weapon_cooldowns[id] = maxf(float(device.get("reload_time", 0.0)), 0.05)
 		shots.append(device)
@@ -825,8 +837,15 @@ func get_manual_acceleration() -> Vector2:
 	return get_thrust_acceleration() + side * lateral
 
 
+## V. With the throttle locked (X) the assist is off whatever its switch
+## says: V then lets go of the lock and turns the assist on - one sound, the
+## assist's.
 func toggle_flight_assist() -> void:
-	flight_assist = not flight_assist
+	if throttle_locked:
+		throttle_locked = false
+		flight_assist = true
+	else:
+		flight_assist = not flight_assist
 	flight_assist_changed.emit(flight_assist)
 
 
@@ -999,7 +1018,7 @@ func _draw() -> void:
 				_draw_engine_flame(point)
 
 	# RMB aims the selected turret: a faint line from it to the cursor.
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not selected_device().is_empty():
+	if rmb_aim and not selected_device().is_empty():
 		var from: Vector2 = device_local_origin(selected_device())
 		draw_line(from, to_local(get_global_mouse_position()), Color(1.0, 1.0, 1.0, 0.3), 1.0)
 
@@ -1069,8 +1088,10 @@ func _draw_turrets() -> void:
 	for turret: Dictionary in built_visual.get("turrets", []):
 		var id: int = int(turret["id"])
 		var size_local: Vector2 = turret["size"]
-		draw_set_transform(turret["center"], float(turret_aim.get(id, 0.0)), Vector2.ONE)
-		draw_texture_rect(turret["texture"], Rect2(-size_local * 0.5, size_local), false)
+		var pivot: Vector2 = turret.get("pivot", turret["center"])
+		var center_from_pivot: Vector2 = (turret["center"] as Vector2) - pivot
+		draw_set_transform(pivot, float(turret_aim.get(id, 0.0)), Vector2.ONE)
+		draw_texture_rect(turret["texture"], Rect2(center_from_pivot - size_local * 0.5, size_local), false)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		if id == selected_weapon:
 			draw_arc(turret["center"], size_local.length() * 0.55, 0.0, TAU, 32, Color(0.85, 0.9, 1.0, 0.8), 0.25)

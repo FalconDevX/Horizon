@@ -13,6 +13,8 @@ extends RefCounted
 ## tech-tree node and module counts as unlocked while it is on. Nothing is
 ## written into `_unlocked`, so switching it off puts the real progress back.
 static var god_mode := false
+## Hel a new game starts with: a first warp-fuel top-up before the gas giants.
+const STARTER_HEL := 9
 
 static var inventory := Inventory.new()
 static var _unlocked: Dictionary = {}
@@ -26,6 +28,8 @@ static func ensure_initialized() -> void:
 	# A few standard missiles for the Rocket Launcher to start with (a saved
 	# game's hold replaces this in from_dict).
 	inventory.add(MissileCatalog.DEFAULT, MissileCatalog.STARTER_STOCK)
+	# And some hel for the fabricator (F) to refine into fuel.
+	inventory.add(&"hel", STARTER_HEL)
 	for node: Dictionary in TechTree.NODES:
 		if TechTree.unlock_cost(node).is_empty() and (node["requires"] as Array).is_empty():
 			_unlocked[node["id"]] = true

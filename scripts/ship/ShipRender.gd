@@ -68,6 +68,8 @@ static func compose(hull: ShipHull) -> Dictionary:
 				"id": m.instance_id,
 				"texture": art_texture,
 				"center": (Vector2(corner) + Vector2(bounds) * 0.5 - centroid) * unit,
+				# Turns about its first (mount) cell, not its middle.
+				"pivot": (FovUtil.module_pivot_cell(m.origin, m.data, m.rotation) - centroid) * unit,
 				"size": Vector2(bounds) * unit,
 			})
 			continue

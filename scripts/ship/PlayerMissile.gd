@@ -16,6 +16,7 @@ const BLAST_TIME := 0.7
 ## Screen px.
 const LENGTH := 16.0
 const TRAIL_POINTS := 14
+const SOUND_ROCKET_FLY := preload("res://sounds/rocket_fly.wav")
 
 var type: StringName = MissileCatalog.DEFAULT
 var target: Enemy = null
@@ -34,6 +35,7 @@ var _launch_velocity := Vector2.ZERO
 ## After it went off: seconds into its blast, or -1 while flying.
 var _blast_age: float = -1.0
 var _trail: PackedVector2Array = []
+var _flight_sound: AudioStreamPlayer = null
 
 
 func _init() -> void:
@@ -49,6 +51,33 @@ func launch(direction: Vector2, launch_velocity: Vector2) -> void:
 	_launch_velocity = launch_velocity
 	velocity = _launch_velocity + _heading * float(_info["speed"]) * 0.35
 	rotation = _heading.angle()
+	_start_flight_sound()
+
+
+func _start_flight_sound() -> void:
+	if _flight_sound == null:
+		_flight_sound = AudioStreamPlayer.new()
+		_flight_sound.name = "RocketFlightSound"
+		var stream: AudioStreamWAV = SOUND_ROCKET_FLY.duplicate()
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		_flight_sound.stream = stream
+		_flight_sound.bus = &"SFX"
+		_flight_sound.volume_db = -4.0
+		var pitch: float = 1.0
+		match type:
+			&"missile_interceptor":
+				pitch = 1.2
+			&"missile_hunter":
+				pitch = 0.85
+			&"missile_aoe":
+				pitch = 0.95
+			&"missile_emp":
+				pitch = 1.05
+			_:
+				pitch = 1.0
+		_flight_sound.pitch_scale = pitch * randf_range(0.97, 1.03)
+		add_child(_flight_sound)
+	_flight_sound.play()
 
 
 func _process(delta: float) -> void:
@@ -120,6 +149,10 @@ func _enemies() -> Array[Enemy]:
 ## fuse) hurts every enemy in its blast, the rest only the target - an EMP
 ## disables it. Out of range with no target left: just the flash.
 func _burst(at_target: bool) -> void:
+	if _flight_sound != null and is_instance_valid(_flight_sound):
+		_flight_sound.stop()
+	if get_parent() != null and get_parent().has_method("play_ship_explosion_sound"):
+		get_parent().call("play_ship_explosion_sound")
 	if at_target and target != null:
 		var victims: Array[Enemy] = [target]
 		if float(_info.get("fuse", 0.0)) > 0.0:

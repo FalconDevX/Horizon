@@ -23,7 +23,7 @@ const ZOOM_OPEN := 2.2
 ## How fast the view eases to where it is headed (per second).
 const VIEW_EASE := 12.0
 ## Galaxy radius in light years, for the rings and the scale bar.
-const RADIUS_LY := 50000.0
+const RADIUS_LY := GalaxyMap.RADIUS_LY
 const MARKER_RADIUS := 6.0
 const COLOR_ROUTE := Color(0.30, 0.78, 0.88, 0.55)
 const COLOR_GRID := Color(0.55, 0.7, 0.9, 0.13)
@@ -50,6 +50,8 @@ var _hover_center: bool = false
 var _hover_seed: int = 0
 var _has_hover: bool = false
 var _selected_seed: int = 0
+## The ship's warp fuel, tank points (solar_system.gd keeps it current).
+var warp_fuel: float = 100.0
 var _has_selected: bool = false
 var _hover_warp: bool = false
 ## Neighbouring galaxy under the cursor / picked, as an index into
@@ -236,7 +238,7 @@ func _to_screen(galaxy_pos: Vector2) -> Vector2:
 
 func _info_rect() -> Rect2:
 	var map: Rect2 = _map_rect()
-	return Rect2(map.position + Vector2(12.0, map.size.y - 124.0), Vector2(280.0, 112.0))
+	return Rect2(map.position + Vector2(12.0, map.size.y - 142.0), Vector2(280.0, 130.0))
 
 
 func _warp_rect() -> Rect2:
@@ -908,6 +910,14 @@ func _draw_info(font: Font) -> void:
 			font, x + Vector2(0.0, 96.0), "%s kly away" % _trim(snappedf(d / 1000.0, 0.1)),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, HudPanelStyle.COLOR_TEXT_SECONDARY
 		)
+	# What the jump would burn, and what would be left in the warp tank.
+	var cost: float = 0.0 if PlayerProgress.god_mode else GalaxyMap.jump_fuel(GalaxyMap.current_seed(), _selected_seed)
+	var after: float = warp_fuel - cost
+	_overlay.draw_string(
+		font, x + Vector2(0.0, 116.0),
+		("Fuel -%d%%, %d%% left" % [roundi(cost), roundi(after)]) if after >= 0.0 else "Fuel -%d%%, you have %d%%" % [roundi(cost), roundi(warp_fuel)],
+		HORIZONTAL_ALIGNMENT_LEFT, 168.0, 10, HudPanelStyle.COLOR_TEXT_SECONDARY if after >= 0.0 else Color(1.0, 0.4, 0.35)
+	)
 	var warp: Rect2 = _warp_rect()
 	if not _can_set_course():
 		_overlay.draw_rect(warp, Color(HudPanelStyle.COLOR_AMBER, 0.12))

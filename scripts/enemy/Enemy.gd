@@ -7,11 +7,12 @@ extends Node2D
 ## trajectory, not by simulating engine forces. Proper steering feel comes later.
 ##
 ## Special roles (set per scene): kamikaze ram, mothership fighter deploy,
-## minelayer damage fields, black-hole attract+fuse.
+## minelayer damage fields, black-hole attract+fuse, missile launchers.
 
 const LASER_BOLT_SCENE := preload("res://scenes/enemies/LaserBolt.tscn")
 const DAMAGE_ZONE_SCRIPT := preload("res://scripts/enemy/DamageZone.gd")
 const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
+const SOUND_EXPLOSION := preload("res://sounds/explosion.wav")
 ## Ignore the parked player ship for this long after spawn (kamikaze starts on
 ## top of it when picked from the E menu).
 const CONTACT_GRACE := 0.75
@@ -95,6 +96,25 @@ const SPEED_VS_PLAYER := 1.1
 @export var mine_lifetime: float = 14.0
 @export var mine_cooldown: float = 1.1
 
+## Missile launchers (the Frigate): instead of guns, a salvo of homing
+## EnemyMissiles every fire_cooldown, only while the player is within
+## missile_launch_range. Every launcher fires one missile a salvo,
+## missile_salvo_gap apart; points sharing a group are one launcher whose
+## pods take turns. Points are fractions of the nose-up art (like muzzles),
+## launch directions are in the same space ((0, -1) = out of the nose).
+@export var missile_mode: bool = false
+@export var missile_launchers: PackedVector2Array = PackedVector2Array()
+@export var missile_launch_dirs: PackedVector2Array = PackedVector2Array()
+@export var missile_groups: PackedInt32Array = PackedInt32Array()
+@export var missile_damage: float = 24.0
+@export var missile_speed: float = 2300.0
+@export var missile_turn: float = 1.6
+## How far a missile flies before it bursts.
+@export var missile_range: float = 22000.0
+## The player must be this close for a salvo.
+@export var missile_launch_range: float = 16000.0
+@export var missile_salvo_gap: float = 0.35
+
 ## Black hole: attract everything nearby, then detonate after the fuse.
 @export var black_hole_mode: bool = false
 @export var black_hole_radius: float = 520.0
@@ -146,6 +166,14 @@ var _returning: bool = false
 var _provoked_left: float = 0.0
 ## Seconds left knocked out by an EMP missile: no moving, no guns.
 var _emp_left: float = 0.0
+## Launcher point indices still to fire this salvo, and the time to the next.
+var _salvo: Array[int] = []
+var _salvo_timer: float = 0.0
+## Group -> how many salvos it has fired (picks the pod whose turn it is).
+var _group_shots: Dictionary = {}
+## Where it was last frame, for the velocity missiles leave with.
+var _last_position := Vector2.INF
+var _velocity := Vector2.ZERO
 
 
 func _init() -> void:
@@ -207,6 +235,10 @@ func _process(delta: float) -> void:
 		return
 	_fire_timer = maxf(0.0, _fire_timer - delta)
 	_ability_timer = maxf(0.0, _ability_timer - delta)
+	if _last_position != Vector2.INF and delta > 0.0:
+		_velocity = (global_position - _last_position) / delta
+	_last_position = global_position
+	_advance_salvo(delta)
 
 	if _orbiting:
 		_handle_orbit(delta)
@@ -423,6 +455,9 @@ func _speed_vs_player(player: Node2D) -> float:
 func _try_fire() -> void:
 	if not can_fire or _fire_timer > 0.0:
 		return
+	if missile_mode:
+		_try_missile_salvo()
+		return
 	# AI only shoots when the player is inside weapon reach.
 	if not player_controlled:
 		var target := _chase_target()
@@ -433,6 +468,59 @@ func _try_fire() -> void:
 			return
 	_fire_timer = fire_cooldown
 	fire_laser()
+
+
+## A salvo when the player is in reach: one launch per launcher (group),
+## the pods of a group taking turns.
+func _try_missile_salvo() -> void:
+	var player := _chase_target()
+	if player == null or not _salvo.is_empty():
+		return
+	if global_position.distance_to(player.global_position) > missile_launch_range:
+		return
+	_fire_timer = fire_cooldown
+	var pods: Dictionary = {}
+	for i in missile_launchers.size():
+		var group: int = missile_groups[i] if i < missile_groups.size() else i
+		if not pods.has(group):
+			pods[group] = []
+		(pods[group] as Array).append(i)
+	var groups: Array = pods.keys()
+	groups.sort()
+	for group: int in groups:
+		var members: Array = pods[group]
+		var shot: int = int(_group_shots.get(group, 0))
+		_group_shots[group] = shot + 1
+		_salvo.append(int(members[shot % members.size()]))
+	_salvo_timer = 0.0
+
+
+func _advance_salvo(delta: float) -> void:
+	if _salvo.is_empty():
+		return
+	_salvo_timer -= delta
+	if _salvo_timer > 0.0:
+		return
+	_salvo_timer = missile_salvo_gap
+	_launch_missile(_salvo.pop_front())
+
+
+func _launch_missile(index: int) -> void:
+	if get_parent() == null or index < 0 or index >= missile_launchers.size():
+		return
+	var draw_size := _get_draw_size()
+	var pod: Vector2 = global_position + _image_to_local(missile_launchers[index], draw_size).rotated(rotation)
+	var image_dir: Vector2 = missile_launch_dirs[index] if index < missile_launch_dirs.size() else Vector2(0.0, -1.0)
+	var missile := EnemyMissile.new()
+	missile.damage = missile_damage
+	missile.speed = missile_speed
+	missile.turn = missile_turn
+	missile.max_distance = missile_range
+	missile.ignore_enemy = self
+	get_parent().add_child(missile)
+	missile.global_position = pod
+	missile.launch(image_dir.rotated(PI * 0.5).rotated(rotation), _velocity)
+	_play_laser_sound()
 
 
 func fire_laser() -> void:
@@ -653,7 +741,7 @@ func _play_destroyed_sound() -> void:
 		root.call("play_target_destroyed_sound", self)
 		return
 	var player := AudioStreamPlayer.new()
-	player.stream = SOUND_TARGET_DESTROYED
+	player.stream = SOUND_EXPLOSION
 	player.bus = &"SFX"
 	player.finished.connect(player.queue_free)
 	tree.root.add_child(player)

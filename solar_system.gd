@@ -139,6 +139,7 @@ const WARP_PATH_COLOR := Color(0.62, 0.55, 1.0, 0.55)
 const SOUND_TARGET_OBSTRUCTED := preload("res://sounds/target--obstructed.wav")
 const SOUND_WARP_INITIATED := preload("res://sounds/warp-initiated.wav")
 const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
+const SOUND_EXPLOSION := preload("res://sounds/explosion.wav")
 const SOUND_WARP_DRIVE := preload("res://sounds/warp_drive.wav")
 const SOUND_FLIGHT_ASSIST_ENABLED := preload("res://sounds/flight-assistance--enabled.wav")
 const SOUND_FLIGHT_ASSIST_DISABLED := preload("res://sounds/flight-assistance--disabled.wav")
@@ -147,11 +148,13 @@ const SOUND_THRUST_UNLOCKED := preload("res://sounds/thrust--unlocked.wav")
 var _obstructed_player: AudioStreamPlayer
 var _warp_initiated_player: AudioStreamPlayer
 var _target_destroyed_player: AudioStreamPlayer
+var _explosion_player: AudioStreamPlayer
 var _warp_drive_player: AudioStreamPlayer
 var _flight_assist_player: AudioStreamPlayer
 var _thrust_lock_player: AudioStreamPlayer
 var _warp_drive_tween: Tween
 var _last_destroyed_sound_time: float = -10.0
+var _last_explosion_sound_time: float = -10.0
 
 var planets: Array[Node2D] = []
 var orbit_lines: Array[Line2D] = []
@@ -315,6 +318,10 @@ var _guards_were_attacking := false
 ## scene reloads and the tech tree spends from it.
 var inventory: Inventory = PlayerProgress.inventory
 var inventory_screen: Control
+## Refines hel into fuel in the background (scripts/ship/Fabricator.gd); its
+## window opens with F.
+var fabricator := Fabricator.new()
+var fabricator_window: FabricatorWindow
 var mu_sun := 0.0
 var mu_planets: PackedFloat64Array = []
 
@@ -401,6 +408,9 @@ func set_ship_state(new_position: Vector2, new_velocity: Vector2) -> void:
 ## menu or panel is open, so those keep ENTER for their own use.
 func _input(event: InputEvent) -> void:
 	_watch_alt(event)
+	# RMB let go anywhere ends the aim (the press only counts in the world).
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
+		ship.rmb_aim = false
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	if event.keycode != KEY_ENTER and event.keycode != KEY_KP_ENTER:
@@ -422,6 +432,10 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if loading_screen != null or hyperspace_jump != null:
 		return
+	# RMB aims (turret, ground drive) only when pressed over the world - a
+	# panel under the mouse keeps the click to itself.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		ship.rmb_aim = true
 	# The cargo hold and the planet catalog sit over everything and keep the
 	# keyboard to themselves.
 	if inventory_screen.visible:
@@ -471,6 +485,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 
+	# The fabricator does not hold the game: F / Esc close it, 1 and 2 queue
+	# a batch, every other key flies the ship as usual.
+	if fabricator_window.visible and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_F or event.keycode == KEY_ESCAPE:
+			fabricator_window.hide_window()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_1 or event.keycode == KEY_2:
+			fabricator_window.queue_batch(Fabricator.ORDER[0 if event.keycode == KEY_1 else 1])
+			get_viewport().set_input_as_handled()
+			return
+
 	# And the galaxy map.
 	if galaxy_map_window != null and galaxy_map_window.visible:
 		if event is InputEventKey and event.pressed and not event.echo and (
@@ -484,14 +510,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		event is InputEventKey
 		and event.pressed
 		and not event.echo
-		and event.keycode in [KEY_I, KEY_J, KEY_T, KEY_M]
+		and event.keycode in [KEY_I, KEY_J, KEY_T, KEY_M, KEY_F]
 		and (ship_builder_panel == null or not ship_builder_panel.visible)
 		and (pause_menu == null or not pause_menu.visible)
 		and (settings_menu == null or not settings_menu.visible)
 	):
 		# I - the cargo hold, J - the planetary log, T - the tech tree, M - the
-		# galaxy map.
+		# galaxy map, F - the fabricator.
 		match event.keycode:
+			KEY_F:
+				fabricator_window.open()
 			KEY_I:
 				inventory_screen.open()
 			KEY_J:
@@ -611,6 +639,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			_firing_held = false
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed and event.ctrl_pressed:
+			# Ctrl+LMB on a contact: lock on it, or let go of its lock.
+			var contact: Enemy = _contact_under_mouse()
+			if contact != null:
+				combat.toggle_lock(contact)
+				get_viewport().set_input_as_handled()
+				return
 			# Ctrl+LMB on a planet: lock (or drop) the warp target.
 			var warp_pick: Node2D = _body_under_mouse()
 			if warp_pick != null and planets.has(warp_pick):
@@ -748,7 +782,23 @@ func _play_warp_initiated_sound() -> void:
 	_warp_initiated_player.play()
 
 
+func play_ship_explosion_sound() -> void:
+	var now: float = float(Time.get_ticks_msec()) * 0.001
+	if now - _last_explosion_sound_time < 0.08:
+		return
+	_last_explosion_sound_time = now
+	if _explosion_player == null:
+		_explosion_player = AudioStreamPlayer.new()
+		_explosion_player.name = "ShipExplosionPlayer"
+		_explosion_player.stream = SOUND_EXPLOSION
+		_explosion_player.bus = &"SFX"
+		_explosion_player.max_polyphony = 4
+		add_child(_explosion_player)
+	_explosion_player.play()
+
+
 func play_target_destroyed_sound(enemy: Enemy = null) -> void:
+	play_ship_explosion_sound()
 	if enemy != null and enemy == _test_enemy:
 		return
 	var now: float = float(Time.get_ticks_msec()) * 0.001
@@ -846,11 +896,13 @@ func _warp_problem(body: Node2D) -> String:
 	return ""
 
 
-## Share of a full warp tank the jump to the locked target would burn now
-## (0 with no target).
+## Share of a full warp tank the jump to the locked target would burn now -
+## with no target, the hyperdrive jump to the course set (0 with neither).
 func _warp_cost_share() -> float:
-	if warp_target == null or PlayerProgress.god_mode:
+	if PlayerProgress.god_mode:
 		return 0.0
+	if warp_target == null:
+		return _hyper_fuel_cost() / ship.WARP_FUEL_CAPACITY
 	var index: int = planets.find(warp_target)
 	if index < 0:
 		return 0.0
@@ -1094,6 +1146,7 @@ func _update_warp_button() -> void:
 		panel.position.x, panel.position.y + panel.size.y + 10.0 + local_warp_button.size.y + 6.0
 	)
 	warp_button.visible = hyperspace_jump == null
+	galaxy_map_window.warp_fuel = ship.warp_fuel
 	if not GalaxyMap.has_target():
 		warp_button.set_state(false, "HYPER WARP", "No course set. Open the map (M)")
 		return
@@ -1101,11 +1154,44 @@ func _update_warp_button() -> void:
 	if landed_body != null:
 		warp_button.set_state(false, title, "Take off first")
 		return
+	var cost: float = _hyper_fuel_cost()
+	var left: float = ship.warp_fuel - cost
+	if left < 0.0:
+		warp_button.set_state(
+			false, title, "Needs %d%% warp fuel, you have %d%%. Refine hel (F)" % [ceili(cost), floori(ship.warp_fuel)]
+		)
+		return
 	var to_go: float = _warp_clearance() - ship.global_position.distance_to(sun.global_position)
 	if to_go > 0.0 and not PlayerProgress.god_mode:
 		warp_button.set_state(false, title, "Clear the outer belt: %s to go" % _short_distance(to_go))
 		return
-	warp_button.set_state(true, title, "Hyperdrive ready")
+	warp_button.set_state(true, title, "Fuel -%d%%, %d%% left after" % [roundi(cost), roundi(left)])
+
+
+## Warp tank points the hyperdrive jump to the course set would burn.
+func _hyper_fuel_cost() -> float:
+	if not GalaxyMap.has_target() or PlayerProgress.god_mode:
+		return 0.0
+	return GalaxyMap.jump_fuel(world_seed, GalaxyMap.target_seed())
+
+
+## Whether a Fabricator module is fitted (god mode: always).
+func has_fabricator() -> bool:
+	if PlayerProgress.god_mode:
+		return true
+	if _builder_controller == null or _builder_controller.get_hull() == null:
+		return false
+	for placed: PlacedModule in _builder_controller.get_hull().get_all_modules():
+		if placed.data.id == &"util_fabricator":
+			return true
+	return false
+
+
+func _on_fabricator_batch_done(recipe: StringName, amount: float) -> void:
+	if recipe == &"warp_fuel":
+		music_toast.show_message("REFINED: WARP FUEL +%d%%" % roundi(amount))
+	else:
+		music_toast.show_message("REFINED: ENGINE FUEL +%d" % roundi(amount))
 
 
 ## A whole number with thin thousands groups: 2 185 046.
@@ -1134,6 +1220,10 @@ func start_hyperspace_jump() -> void:
 		return
 	if ship.global_position.distance_to(sun.global_position) < _warp_clearance() and not PlayerProgress.god_mode:
 		return
+	var fuel_cost: float = _hyper_fuel_cost()
+	if ship.warp_fuel < fuel_cost:
+		return
+	ship.warp_fuel -= fuel_cost
 	cancel_warp()
 	camera_follow_ship = true
 	camera_follow_body = null
@@ -1318,14 +1408,14 @@ func _ready() -> void:
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
 	# The ship status schematic bottom right, the weapons left of it; the
-	# resource bars sit left of the centre gauges.
+	# resource bars sit in the bottom-left corner.
 	ship_blueprint_panel.setup(self)
 	ship_blueprint_panel.offset_left = -278.0
 	ship_blueprint_panel.offset_top = -448.0
-	resource_bars_panel.anchor_left = 0.5
-	resource_bars_panel.anchor_right = 0.5
-	resource_bars_panel.offset_left = -470.0
-	resource_bars_panel.offset_right = -230.0
+	resource_bars_panel.anchor_left = 0.0
+	resource_bars_panel.anchor_right = 0.0
+	resource_bars_panel.offset_left = 12.0
+	resource_bars_panel.offset_right = 252.0
 	resource_bars_panel.offset_top = -324.0
 	resource_bars_panel.offset_bottom = -28.0
 	orbit_info_button.pressed.connect(_on_orbit_info_pressed)
@@ -1334,6 +1424,11 @@ func _ready() -> void:
 	inventory_screen = preload("res://inventory_screen.gd").new()
 	$HUD.add_child(inventory_screen)
 	inventory_screen.setup(self, inventory)
+	fabricator_window = FabricatorWindow.new()
+	fabricator_window.name = "FabricatorWindow"
+	$HUD.add_child(fabricator_window)
+	fabricator_window.setup(self, fabricator)
+	fabricator.batch_done.connect(_on_fabricator_batch_done)
 	landing_prompt = preload("res://landing_prompt.gd").new()
 	$HUD.add_child(landing_prompt)
 	collect_prompt = preload("res://landing_prompt.gd").new("E", 1)
@@ -1519,6 +1614,7 @@ func build_save_data() -> Dictionary:
 		"hull": hull_modules,
 		"ship_resources": [ship.fuel, ship.energy, ship.shield, ship.hull_hp],
 		"warp_fuel": ship.warp_fuel,
+		"fabricator": fabricator.to_dict(),
 		"enemy_waves_spawned": _enemy_waves_spawned,
 	}
 
@@ -1588,6 +1684,7 @@ func _apply_pending_save() -> void:
 
 	_restore_hull(data.get("hull", []))
 	ship.warp_fuel = clampf(float(data.get("warp_fuel", ship.WARP_FUEL_CAPACITY)), 0.0, ship.WARP_FUEL_CAPACITY)
+	fabricator.from_dict(data.get("fabricator", {}))
 	var resources: Array = data.get("ship_resources", [])
 	if resources.size() >= 4 and ship.resources_enabled:
 		ship.fuel = minf(float(resources[0]), ship.fuel_capacity)
@@ -1614,21 +1711,22 @@ func _apply_pending_save() -> void:
 
 
 ## The ship a new game starts with: a light hull holding a fabricator,
-## generator, repair module, battery and proximity radar, a chemical engine
-## aft, a DEW laser on the ring, and the cockpit forward on a connector. [module id, cell,
-## rotation], laid out round the middle of the 40x40 yard.
+## generator, repair module, battery and proximity radar on its 4x4 deck, a
+## chemical engine aft, a DEW laser on the hull's gun edge, and the cockpit
+## forward on a connector. [module id, cell, rotation]; _build_starter_ship
+## centres it in the yard.
 const STARTER_SHIP := [
 	[&"hull_light", Vector2i(18, 18), 0],
 	[&"engine_chemical_s", Vector2i(17, 20), 0],
-	[&"util_fabricator", Vector2i(18, 20), 0],
-	[&"util_generator", Vector2i(20, 20), 0],
-	[&"util_repair", Vector2i(22, 20), 0],
-	[&"battery_s", Vector2i(22, 21), 0],
+	[&"util_fabricator", Vector2i(19, 19), 0],
+	[&"util_generator", Vector2i(21, 19), 0],
+	[&"util_repair", Vector2i(19, 21), 0],
+	[&"battery_s", Vector2i(20, 21), 0],
 	# A proximity radar, so the module rack has a scan from the start.
-	[&"radar_proximity", Vector2i(19, 22), 0],
+	[&"radar_proximity", Vector2i(21, 21), 0],
 	[&"weapon_laser", Vector2i(23, 19), 0],
-	[&"connector_straight", Vector2i(23, 21), 0],
-	[&"cockpit", Vector2i(24, 20), 0],
+	[&"connector_straight", Vector2i(24, 20), 0],
+	[&"cockpit", Vector2i(25, 20), 0],
 ]
 
 
@@ -1636,6 +1734,19 @@ func _build_starter_ship() -> void:
 	var saved: Array = []
 	for entry: Array in STARTER_SHIP:
 		saved.append({"id": entry[0], "origin": entry[1], "rotation": entry[2]})
+	_restore_hull(saved)
+	# Move it so it sits in the middle of the yard, whatever its footprint.
+	var hull: ShipHull = _builder_controller.get_hull() if _builder_controller != null else null
+	if hull == null:
+		return
+	var bounds: Rect2i = hull.get_occupied_bounds()
+	if bounds.size == Vector2i.ZERO:
+		return
+	var shift: Vector2i = (hull.get_grid_size() - bounds.size) / 2 - bounds.position
+	if shift == Vector2i.ZERO:
+		return
+	for entry: Dictionary in saved:
+		entry["origin"] = (entry["origin"] as Vector2i) + shift
 	_restore_hull(saved)
 
 
@@ -1691,6 +1802,8 @@ func _process(delta: float) -> void:
 	update_osculating_orbit_line()
 	if time_scale > 0.0 and loading_screen == null and hyperspace_jump == null:
 		combat.update(delta)
+	if time_scale > 0.0 and loading_screen == null:
+		fabricator.update(delta * time_scale, ship, has_fabricator())
 	update_hud()
 	_update_landing_prompt()
 	_update_guard_warning()
@@ -2418,6 +2531,21 @@ func _body_under_mouse() -> Node2D:
 	return best
 
 
+## The contact (combat's list) drawn under the mouse, if any - the nearest.
+func _contact_under_mouse() -> Enemy:
+	var point: Vector2 = get_global_mouse_position()
+	var pick_reach: float = BODY_PICK_SCREEN_RADIUS / camera_zoom
+	var best: Enemy = null
+	var best_distance: float = INF
+	for contact: Dictionary in combat.contacts():
+		var enemy: Enemy = contact["enemy"]
+		var distance: float = point.distance_to(enemy.global_position)
+		if distance <= enemy.visual_length * 0.8 + pick_reach and distance < best_distance:
+			best = enemy
+			best_distance = distance
+	return best
+
+
 ## Date and mission-day readout under the panel title.
 func _build_clock() -> void:
 	_clock_epoch_unix = Time.get_unix_time_from_datetime_dict(CLOCK_EPOCH)
@@ -2826,7 +2954,7 @@ func _refresh_time_scale() -> void:
 	# Enemies, their shots and the player's shots run on their own _process
 	# and know nothing of the sim clock: freeze them with it.
 	for child in get_children():
-		if child is Enemy or child is PlayerShot or child is LaserBolt or child is SniperBeam or child is DamageZone:
+		if child is Enemy or child is PlayerShot or child is LaserBolt or child is SniperBeam or child is DamageZone or child is EnemyMissile:
 			child.process_mode = Node.PROCESS_MODE_DISABLED if held else Node.PROCESS_MODE_INHERIT
 
 
@@ -3268,7 +3396,7 @@ func _drive_on_ground(dt: float) -> void:
 	)
 	if keys != Vector2.ZERO:
 		target = keys.normalized() * top_speed
-	elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+	elif ship.rmb_aim:
 		var to_cursor: Vector2 = ship.get_global_mouse_position() - ship.global_position
 		var distance: float = to_cursor.length()
 		if distance > 1.0:
@@ -3311,7 +3439,7 @@ func _update_weapon_control(delta: float) -> void:
 		_firing_held = false
 		return
 	# RMB on the module rack picks missiles, it does not swing the turret.
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not weapons_panel.holds_mouse():
+	if ship.rmb_aim and not weapons_panel.holds_mouse():
 		ship.aim_selected(ship.get_global_mouse_position(), delta)
 	if _firing_held and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_firing_held = false
@@ -3372,8 +3500,10 @@ func _spawn_weapon_shots(fired: Array[Dictionary], aim: Vector2, target: Enemy) 
 ## like the enemy sniper's, hitting every enemy along it. It rides along with
 ## the ship's muzzle while it fades.
 func _spawn_sniper_beam(device: Dictionary, aim: Vector2) -> void:
-	var muzzle: Vector2 = ship.device_world_origin(device)
+	# A turret's origin is its mount at the back: the beam leaves the muzzle.
+	var muzzle_reach: float = (device.get("local_origin", Vector2.ZERO) as Vector2).distance_to(device.get("center", device.get("local_origin", Vector2.ZERO)))
 	var direction: Vector2 = ship.device_world_facing(device)
+	var muzzle: Vector2 = ship.device_world_origin(device) + direction * muzzle_reach
 	if ship.is_body_in_device_fov(device, aim) and aim.distance_to(muzzle) > 1.0:
 		direction = (aim - muzzle).normalized()
 	var beam := SniperBeam.new()
@@ -3390,10 +3520,10 @@ func _spawn_sniper_beam(device: Dictionary, aim: Vector2) -> void:
 	beam.global_position = muzzle
 
 
-## One missile out of a Rocket Launcher, homing on the locked target (the
-## launcher fires at nothing else - ship.fire_weapons_at).
+## One missile out of a Rocket Launcher, homing on the locked target it was
+## fired at (the launcher fires at nothing else - ship.fire_weapons_at).
 func _spawn_missile(device: Dictionary, aim: Vector2, _target: Enemy) -> void:
-	var target: Enemy = ship.missile_target as Enemy
+	var target: Enemy = ship.locked_target_at(aim) as Enemy
 	var facing: Vector2 = ship.device_world_facing(device)
 	var origin: Vector2 = ship.device_world_origin(device)
 	var muzzle_reach: float = (device.get("local_origin", Vector2.ZERO) as Vector2).distance_to(device.get("center", device.get("local_origin", Vector2.ZERO)))
@@ -3480,7 +3610,7 @@ func _sensor_summary() -> String:
 ## Contacts and weapons panels, every frame.
 func _update_combat_panels() -> void:
 	targeted_enemy = combat.target
-	ship.missile_target = combat.target if combat.is_locked() else null
+	ship.missile_targets = combat.locked_enemies()
 	var contacts: Array = combat.contacts()
 	var status: String = ""
 	if combat.radar_devices().is_empty():
@@ -3499,18 +3629,25 @@ func _update_combat_panels() -> void:
 		# Rapid-fire guns (the DEW) show a steady full bar instead of a flicker.
 		if reload_time < RAPID_FIRE_RELOAD:
 			left = 0.0
-		# Where it would shoot now: at the aim if its cone covers it, else ahead.
+		# Where it would shoot now: at its own lock (else the aim) if its
+		# cone covers it, else ahead.
+		var id: int = int(device.get("instance_id", -1))
+		var gun_aim: Enemy = combat.gun_target(id)
+		if gun_aim == null:
+			gun_aim = aim
 		var shoot_dir: Vector2 = ship.device_local_facing(device)
-		if aim != null and ship.is_body_in_device_fov(device, aim.global_position):
-			shoot_dir = ship.to_local(aim.global_position) - ship.device_local_origin(device)
+		if gun_aim != null and ship.is_body_in_device_fov(device, gun_aim.global_position):
+			shoot_dir = ship.to_local(gun_aim.global_position) - ship.device_local_origin(device)
 		var row := {
 			"blocked": ship.is_shot_blocked(device, shoot_dir),
 			"id": int(device.get("instance_id", -1)),
 			"module_id": device.get("id", &""),
 			"title": device.get("title", "Weapon"),
 			"reload": left / reload_time,
-			"on_target": aim != null and ship.is_body_in_device_fov(device, aim.global_position),
-			"auto": combat.auto_fire.has(int(device.get("instance_id", -1))),
+			"on_target": gun_aim != null and ship.is_body_in_device_fov(device, gun_aim.global_position),
+			"auto": combat.auto_fire.has(id),
+			# Has a lock to fire at: its own when on, else the active one.
+			"locked": combat.gun_target(id) != null if combat.auto_fire.has(id) else combat.is_locked(),
 		}
 		if device.get("id", &"") == ship.LAUNCHER_ID:
 			_add_launcher_state(row)
@@ -3518,21 +3655,21 @@ func _update_combat_panels() -> void:
 	weapons.append_array(combat.radar_rows())
 	for row: Dictionary in weapons:
 		row["cell"] = ship.rack_cells.get(int(row["id"]), Vector2i.ZERO)
-	# The locked contact lists the guns on it: every one switched on in the
-	# rack (they fire at the lock), and whether the target is in its cone.
-	if combat.is_locked():
-		for contact: Dictionary in contacts:
-			if contact["enemy"] != combat.target:
+	# Every locked contact lists the guns working on it, and whether it is in
+	# each one's cone.
+	for contact: Dictionary in contacts:
+		if not contact.get("locked", false):
+			continue
+		var on_it: Array = []
+		for row: Dictionary in weapons:
+			if row.get("radar", false) or combat.gun_target(int(row["id"])) != contact["enemy"]:
 				continue
-			var on_it: Array = []
-			for row: Dictionary in weapons:
-				if row.get("auto", false):
-					on_it.append({
-						"module_id": row["module_id"], "title": row["title"],
-						"in_cone": row.get("on_target", false), "reload": row.get("reload", 0.0),
-						"color": (row["missile"] as Dictionary)["color"] if row.has("missile") else Color.WHITE,
-					})
-			contact["weapons"] = on_it
+			on_it.append({
+				"module_id": row["module_id"], "title": row["title"],
+				"in_cone": row.get("on_target", false), "reload": row.get("reload", 0.0),
+				"color": (row["missile"] as Dictionary)["color"] if row.has("missile") else Color.WHITE,
+			})
+		contact["weapons"] = on_it
 	enemy_contacts_panel.set_state(contacts, status, targeted_enemy, combat.is_locked())
 	ship.active_weapons = combat.auto_fire
 	weapons_panel.set_state(weapons, ship.powered, ship.selected_weapon, combat.is_locked())
@@ -3621,6 +3758,7 @@ func _add_launcher_state(row: Dictionary) -> void:
 ## The hull reached 0: the ship is rebuilt, full, in orbit round the home
 ## planet of this system - the hold and everything learned are kept.
 func _respawn_destroyed_ship() -> void:
+	play_ship_explosion_sound()
 	if landed_body != null:
 		take_off()
 	cancel_warp()

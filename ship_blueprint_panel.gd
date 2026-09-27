@@ -106,7 +106,6 @@ func _draw() -> void:
 	var aims: Dictionary = ship.get("turret_aim")
 	var picked: int = int(ship.get("selected_weapon"))
 	var combat: Node = _game.get("combat")
-	var locked: bool = combat != null and combat.call("is_locked")
 	var now: int = Time.get_ticks_msec()
 	var worst := 1.0
 	for module: Dictionary in modules:
@@ -143,6 +142,7 @@ func _draw() -> void:
 			_draw_glow(box, COLOR_FIRE, fire)
 		elif id == picked or active.has(id):
 			# Blinks while it waits for a lock, steady once it has one.
+			var locked: bool = combat != null and combat.call("gun_target", id) != null
 			_draw_glow(box, COLOR_ON, 0.7 if locked else 0.35 + 0.35 * sin(now * 0.008))
 	var hull_share: float = 1.0
 	if bool(ship.get("resources_enabled")) and float(ship.get("max_hull_hp")) > 0.0:

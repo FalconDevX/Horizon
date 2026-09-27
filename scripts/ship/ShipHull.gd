@@ -106,8 +106,8 @@ func get_fov_devices() -> Array[Dictionary]:
 			"scan_time": module.data.scan_time,
 			"energy": module.data.energy_consumption,
 			"turret_arc": module.data.turret_arc_deg,
-			# Where the turret turns about: the module's middle.
-			"center": (FovUtil.module_center_cell(module.origin, module.data, module.rotation) - centroid)
+			# Where the turret turns about: the middle of its first (mount) cell.
+			"center": (FovUtil.module_pivot_cell(module.origin, module.data, module.rotation) - centroid)
 				* FovUtil.WORLD_UNITS_PER_CELL,
 			"hull_rects": hull_rects,
 			"ignore_rects": ignore_rects,
@@ -283,14 +283,24 @@ func is_truss_beam_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
 
 
 ## Empty truss cell orthogonally adjacent to at least one DECK cell.
-## Used by corrective engines and weapons.
-func is_deck_adjacent_truss_cell(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
+## Used by corrective engines and weapons. A hull with a gun edge takes its
+## guns on that edge instead, so only RCS (`any_hull_floor`) count it.
+func is_deck_adjacent_truss_cell(cell: Vector2i, ignore_instance_id: int = -1, any_hull_floor: bool = true) -> bool:
 	if not is_weapon_mount_cell(cell, ignore_instance_id):
 		return false
 	for d: Vector2i in _DIRS:
-		if get_floor_type(cell + d) == HullData.FloorType.DECK:
+		var floor := get_floor_type(cell + d)
+		if floor == HullData.FloorType.DECK or (any_hull_floor and floor == HullData.FloorType.GUN_MOUNT):
 			return true
 	return false
+
+
+## A hull edge cell that holds guns only (the Light hull's ring).
+func is_gun_mount_floor(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
+	var s := get_structure_at(cell)
+	if s == null or s.instance_id == ignore_instance_id:
+		return false
+	return get_floor_type(cell) == HullData.FloorType.GUN_MOUNT
 
 
 ## How far ahead of a gun its line of fire is checked for the ship's own hull.
@@ -316,10 +326,19 @@ func _weapon_faces_ship(cells: Array[Vector2i], rotation: int, ignore_instance_i
 	return false
 
 
-## A weapon cell that holds the gun to the ship: on a truss beam, or an empty
-## truss cell right next to DECK.
+## A gun's first cell, at the back: the one it stands and turns on.
+static func weapon_mount_cell(data: ModuleData, origin: Vector2i, rotation: int) -> Vector2i:
+	return Vector2i(FovUtil.module_pivot_cell(origin, data, rotation).floor())
+
+
+## A weapon cell that holds the gun to the ship: on a truss beam, on a hull's
+## gun edge, or an empty truss cell right next to DECK.
 func _weapon_anchor(cell: Vector2i, ignore_instance_id: int = -1) -> bool:
-	return is_truss_beam_cell(cell, ignore_instance_id) or is_deck_adjacent_truss_cell(cell, ignore_instance_id)
+	return (
+		is_truss_beam_cell(cell, ignore_instance_id)
+		or is_gun_mount_floor(cell, ignore_instance_id)
+		or is_deck_adjacent_truss_cell(cell, ignore_instance_id, false)
+	)
 
 
 ## Deck-adjacent truss of a hull being relocated (floor not yet written).
@@ -328,7 +347,8 @@ static func _cell_is_deck_adjacent_truss_on_hull(
 	hull_cells: Dictionary,
 	hull_origin: Vector2i,
 	hull_rotation: int,
-	hull: HullData
+	hull: HullData,
+	any_hull_floor: bool = true
 ) -> bool:
 	if hull_cells.has(cell):
 		return false
@@ -339,7 +359,8 @@ static func _cell_is_deck_adjacent_truss_on_hull(
 		if not hull_cells.has(n):
 			continue
 		var local := world_delta_to_local(n - hull_origin, hull_rotation, hull)
-		if hull.get_local_floor(local) == HullData.FloorType.DECK:
+		var floor := hull.get_local_floor(local)
+		if floor == HullData.FloorType.DECK or (any_hull_floor and floor == HullData.FloorType.GUN_MOUNT):
 			return true
 	return false
 
@@ -359,7 +380,7 @@ func is_floor_compatible(data: ModuleData, cell: Vector2i) -> bool:
 		ModuleData.Category.WEAPON:
 			if get_equipment_at(cell) != null:
 				return false
-			if is_truss_beam_cell(cell):
+			if is_truss_beam_cell(cell) or is_gun_mount_floor(cell):
 				return true
 			return is_weapon_mount_cell(cell)
 		_:
@@ -412,7 +433,9 @@ func can_place(
 				return false
 
 	if data.category == ModuleData.Category.WEAPON:
-		if not cells.any(func(cell: Vector2i) -> bool: return _weapon_anchor(cell, ignore_instance_id)):
+		# The gun stands on its first cell (the mount it turns about), so that
+		# one must be held: on a truss, a gun edge or next to deck.
+		if not _weapon_anchor(weapon_mount_cell(data, origin, rotation), ignore_instance_id):
 			return false
 		if _weapon_faces_ship(cells, rotation, ignore_instance_id):
 			return false
@@ -458,8 +481,12 @@ func can_place_hull_with_cargo(
 				return false
 			match c_data.category:
 				ModuleData.Category.WEAPON:
-					# On the moved hull's ring; anchoring is checked for the whole gun below.
-					if hull_cells.has(cell) or not _cell_in_weapon_truss(cell, hull_cells):
+					# On the moved hull's gun edge or ring; anchoring is checked for the whole gun below.
+					if hull_cells.has(cell):
+						var local_gun := world_delta_to_local(cell - origin, rotation, hull_module.hull_data)
+						if hull_module.hull_data.get_local_floor(local_gun) != HullData.FloorType.GUN_MOUNT:
+							return false
+					elif not _cell_in_weapon_truss(cell, hull_cells):
 						return false
 				_:
 					if c_data.is_main_engine():
@@ -485,8 +512,9 @@ func can_place_hull_with_cargo(
 			if not _cells_left_of(c_data.get_occupied_cells(world_origin, c_rot), hull_cells):
 				return false
 		if c_data.category == ModuleData.Category.WEAPON:
-			if not cells.any(func(cell: Vector2i) -> bool:
-				return _cell_is_deck_adjacent_truss_on_hull(cell, hull_cells, origin, rotation, hull_module.hull_data)
+			var mount := weapon_mount_cell(c_data, world_origin, c_rot)
+			if not hull_cells.has(mount) and not _cell_is_deck_adjacent_truss_on_hull(
+				mount, hull_cells, origin, rotation, hull_module.hull_data, false
 			):
 				return false
 	return true
@@ -602,6 +630,32 @@ func damage_module(instance_id: int, amount: float) -> void:
 		var destroyed := placed
 		detach_module(instance_id)
 		module_destroyed.emit(destroyed)
+
+
+## Everything placed right now, for put_back() to return to later.
+func snapshot() -> Dictionary:
+	return {
+		"structure": _structure.duplicate(),
+		"equipment": _equipment.duplicate(),
+		"modules": _modules.duplicate(),
+		"next_id": _next_instance_id,
+	}
+
+
+## Undo every change since snapshot() was taken.
+func put_back(saved: Dictionary) -> void:
+	if saved.is_empty():
+		return
+	var removed: Array = _modules.values()
+	_structure = (saved["structure"] as Dictionary).duplicate()
+	_equipment = (saved["equipment"] as Dictionary).duplicate()
+	_modules = (saved["modules"] as Dictionary).duplicate()
+	_next_instance_id = maxi(_next_instance_id, int(saved["next_id"]))
+	_recalculate_stats()
+	for placed: PlacedModule in removed:
+		module_detached.emit(placed)
+	for placed: PlacedModule in _modules.values():
+		module_attached.emit(placed)
 
 
 func clear_modules() -> void:
@@ -830,7 +884,7 @@ func _collect_cargo_for_hull(hull: PlacedModule) -> Array:
 					var n := cell + d
 					if not hull_cells.has(n):
 						continue
-					if get_floor_type(n) == HullData.FloorType.DECK:
+					if HullData.is_hull_floor(get_floor_type(n)):
 						belongs = true
 						break
 			# Main engines hanging off this hull's left face.
@@ -869,9 +923,9 @@ func _cell_free_for(data: ModuleData, cell: Vector2i, ignore_instance_id: int) -
 	if data.is_deck_equipment():
 		return _equipment_floor_ok(data, cell)
 
-	# Weapons may sit on a truss beam (structure); otherwise not on structure.
+	# Weapons may sit on a truss beam or a hull's gun edge; otherwise not on structure.
 	if data.category == ModuleData.Category.WEAPON:
-		if is_truss_beam_cell(cell, ignore_instance_id):
+		if is_truss_beam_cell(cell, ignore_instance_id) or is_gun_mount_floor(cell, ignore_instance_id):
 			return true
 		var sw := get_structure_at(cell)
 		if sw != null and sw.instance_id != ignore_instance_id:

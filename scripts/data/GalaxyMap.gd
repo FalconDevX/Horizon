@@ -20,6 +20,14 @@ const ARM_TWIST := 3.4
 const CORE_RADIUS := 0.12
 ## How many systems the galaxy offers besides the ones already visited.
 const SYSTEM_COUNT := 160
+## The galaxy's radius in light years (the map's scale).
+const RADIUS_LY := 50000.0
+## Hyperdrive fuel a jump burns, in points of a full warp tank
+## (ship.WARP_FUEL_CAPACITY = 100): HYPER_FUEL_BASE to open the tunnel, plus
+## HYPER_FUEL_PER_KLY per thousand light years. A near neighbour (~3.5 kly)
+## takes ~40% of the tank; past ~14 kly a full tank is not enough.
+const HYPER_FUEL_BASE := 15.0
+const HYPER_FUEL_PER_KLY := 6.0
 
 ## Our own galaxy, as named on the map once it is zoomed out among its
 ## neighbours.
@@ -214,6 +222,12 @@ static func index_of(system_seed: int) -> int:
 		if int(_visits[i]["seed"]) == system_seed:
 			return i
 	return -1
+
+
+## Warp fuel (tank points) the jump from `from_seed` to `to_seed` burns.
+static func jump_fuel(from_seed: int, to_seed: int) -> float:
+	var kly: float = position_for(from_seed).distance_to(position_for(to_seed)) * RADIUS_LY / 1000.0
+	return HYPER_FUEL_BASE + HYPER_FUEL_PER_KLY * kly
 
 
 ## Where a system lies: on one of the spiral arms (a few near the core or

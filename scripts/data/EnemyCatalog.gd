@@ -6,7 +6,7 @@ extends RefCounted
 ## Ids that orbit ordinary worlds (no T3 deposits).
 const BASIC_IDS: Array[String] = ["basic", "tank", "sniper", "kamikaze"]
 ## Ids that orbit worlds with at least one T3 deposit.
-const ELITE_IDS: Array[String] = ["cruiser", "mothership", "minelayer", "black_hole"]
+const ELITE_IDS: Array[String] = ["cruiser", "mothership", "minelayer", "black_hole", "frigate"]
 
 ## Flat marker look per id: colour + glyph name (see draw_glyph), and the
 ## short code written next to it on the map and in the contacts panel.
@@ -20,6 +20,7 @@ const MARKERS := {
 	"mothership": {"color": Color(0.72, 0.35, 1.0), "glyph": "bar", "abbr": "MS"},
 	"minelayer": {"color": Color(0.25, 0.9, 0.45), "glyph": "ring", "abbr": "ML"},
 	"black_hole": {"color": Color(0.55, 0.4, 1.0), "glyph": "hole", "abbr": "BH"},
+	"frigate": {"color": Color(1.0, 0.25, 0.3), "glyph": "pods", "abbr": "FG"},
 }
 
 ## Cached combat numbers read once from each enemy scene.
@@ -145,6 +146,19 @@ static func all_enemies() -> Array[Dictionary]:
 				"The fuse only counts down while the well is active and near you.",
 			],
 		},
+		{
+			"id": "frigate",
+			"title": "Frigate",
+			"role": "Missile boat",
+			"roster": "elite",
+			"texture": preload("res://textures/enemies/enemy_frigate.png"),
+			"scene": preload("res://scenes/enemies/EnemyFrigate.tscn"),
+			"description": "A heavy missile boat with three launchers: a pod on each flank and a pair in the bow that take turns. It opens fire from far beyond gun range, one salvo of three homing missiles at a time, then reloads for a long while.",
+			"facts": [
+				"Red pod glyph on contacts. Elite roster only.",
+				"Its missiles turn slowly - break hard or boost to shake them off.",
+			],
+		},
 	]
 
 
@@ -215,6 +229,10 @@ static func combat_stats(enemy_id: String) -> Dictionary:
 		stats["armament"] = "Damage mines"
 		stats["damage"] = enemy.mine_dps
 		stats["range"] = enemy.mine_radius
+	elif enemy.missile_mode:
+		stats["armament"] = "Homing missiles"
+		stats["damage"] = enemy.missile_damage
+		stats["range"] = enemy.missile_launch_range
 	elif enemy.black_hole_mode:
 		stats["armament"] = "Gravity well + blast"
 		stats["damage"] = enemy.black_hole_blast_damage
@@ -285,6 +303,15 @@ static func draw_glyph(
 			ci.draw_circle(center, radius * 0.85, color)
 			ci.draw_circle(center, radius * 0.45, Color(0.05, 0.07, 0.1, 1.0))
 			ci.draw_circle(center + Vector2(0.0, -radius * 0.05).rotated(rot), radius * 0.18, color)
+		"pods":
+			# A hull with a launcher pod on each flank.
+			_draw_poly(ci, center, radius, color, rot, [
+				Vector2(0.0, -1.0), Vector2(0.3, -0.3), Vector2(0.3, 0.9), Vector2(-0.3, 0.9), Vector2(-0.3, -0.3),
+			])
+			for side: float in [-1.0, 1.0]:
+				_draw_poly(ci, center, radius, color, rot, [
+					Vector2(side * 0.45, 0.0), Vector2(side * 0.95, 0.0), Vector2(side * 0.95, 0.7), Vector2(side * 0.45, 0.7),
+				])
 		"hole":
 			ci.draw_arc(center, radius * 0.9, 0.0, TAU, 28, color, maxf(radius * 0.28, 2.0), true)
 			ci.draw_circle(center, radius * 0.28, Color(0.08, 0.04, 0.14, 1.0))

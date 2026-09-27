@@ -1,0 +1,32 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/Enemy.gd" id="1_enemy"]
+[ext_resource type="Texture2D" path="res://textures/enemies/enemy_frigate.png" id="2_tex"]
+[ext_resource type="AudioStream" path="res://sounds/laser_tank.wav" id="3_launch"]
+
+[node name="EnemyFrigate" type="Node2D"]
+script = ExtResource("1_enemy")
+ship_texture = ExtResource("2_tex")
+title = "Frigate"
+kind_id = "frigate"
+visual_length = 56.0
+max_health = 150.0
+move_speed = 110.0
+turn_speed = 1.5
+fire_cooldown = 9.0
+laser_sound = ExtResource("3_launch")
+laser_pitch = 0.5
+collision_radius = 20.0
+muzzles = PackedVector2Array()
+engine_exits = PackedVector2Array(0.254, 0.985, 0.493, 0.985, 0.733, 0.985)
+engine_half_width = 4.0
+missile_mode = true
+missile_launchers = PackedVector2Array(0.14, 0.675, 0.86, 0.675, 0.3, 0.19, 0.7, 0.19)
+missile_launch_dirs = PackedVector2Array(-1, 0, 1, 0, 0, -1, 0, -1)
+missile_groups = PackedInt32Array(0, 1, 2, 2)
+missile_damage = 24.0
+missile_speed = 2300.0
+missile_turn = 1.6
+missile_range = 22000.0
+missile_launch_range = 16000.0
+missile_salvo_gap = 0.35

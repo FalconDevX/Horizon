@@ -5,10 +5,11 @@ extends Control
 ## (LOCK 40% / LOCKED / TARGET, NO SCAN when no radar sweep has found it yet,
 ## TOO FAR beyond the radar's reach, or seconds since a sweep last saw it).
 ## Click a row to target it (again to let go); Ctrl+click to lock on (only a
-## scanned contact within the radar's reach) - with a
-## lock, guns switched on in the module rack fire at it on their own, and the
-## locked row shows them as small module icons (red rim: target in that gun's
-## cone; amber arc: reloading). The panel grows with the list. solar_system.gd
+## scanned contact within the radar's reach), Ctrl+click a locked row to let
+## go of the lock. Several contacts can be locked; the picked one is the
+## active lock, and guns switched on in the module rack go to it. Each locked
+## row shows the guns working on it as small module icons (red rim: target in
+## that gun's cone; amber arc: reloading). The panel grows with the list. solar_system.gd
 ## feeds it each frame with set_state().
 
 signal target_picked(enemy: Node2D)
@@ -42,7 +43,9 @@ func _ready() -> void:
 	_help = HelpPopup.new(PackedStringArray([
 		"Click a contact: target it (again: let go)",
 		"Ctrl+click a contact: lock on (scanned, in radar reach)",
-		"Click a gun in the module rack: on, it fires at the lock",
+		"Ctrl+click a locked contact: let go of the lock",
+		"Several locks at once: the picked one is the active lock",
+		"Click a gun: on at the active lock, again to move it or switch off",
 		"R: radar scan (radars reach far, planets hide enemies)",
 		"G: fire every gun at the target",
 	]))
@@ -129,10 +132,14 @@ func _draw() -> void:
 
 func _draw_row(font: Font, rect: Rect2, contact: Dictionary, index: int) -> void:
 	var picked: bool = contact["enemy"] == _target
+	var locked: bool = contact.get("locked", false)
 	if picked:
-		var mark: Color = COLOR_LOCKED if _locked else COLOR_TARGET
+		var mark: Color = COLOR_LOCKED if locked else COLOR_TARGET
 		draw_rect(rect, Color(mark, 0.16))
 		draw_rect(Rect2(rect.position, Vector2(3.0, rect.size.y)), mark)
+	elif locked:
+		draw_rect(rect, Color(COLOR_LOCKED, 0.07))
+		draw_rect(Rect2(rect.position, Vector2(2.0, rect.size.y)), Color(COLOR_LOCKED, 0.6))
 	elif index == _hover_row:
 		draw_rect(rect, Color(1.0, 1.0, 1.0, 0.05))
 	var kind_id: String = str(contact.get("kind_id", "basic"))

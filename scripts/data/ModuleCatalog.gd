@@ -29,17 +29,13 @@ static func hull_modules() -> Array[ModuleData]:
 	]
 
 
-## The four connector pieces from the board. They behave the same (a 1x1
-## bridge between hulls); the shape is the look.
+## The connector: a 1x2 (upright) bridge between hulls and the cockpit.
 static func connectors() -> Array[ModuleData]:
 	var list: Array[ModuleData] = []
 	for piece: Array in [
-		["Connector: Straight", &"connector_straight"],
-		["Connector: Elbow", &"connector_elbow"],
-		["Connector: T", &"connector_t"],
-		["Connector: Cross", &"connector_cross"],
+		["Connector: Straight", &"connector_straight", _shape_rect(1, 2)],
 	]:
-		var m := _base(piece[0], piece[1], ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, _shape_1x1())
+		var m := _base(piece[0], piece[1], ModuleData.Category.CONNECTOR, 2.0, 20.0, 0.0, piece[2])
 		_use_art(m, String(piece[1]))
 		list.append(m)
 	return list
@@ -58,7 +54,7 @@ static func trusses() -> Array[ModuleData]:
 
 static func cockpit() -> ModuleData:
 	# Stands in open space like a hull and joins one through a connector.
-	var m := _base("Cockpit", &"cockpit", ModuleData.Category.COCKPIT, 6.0, 30.0, 1.0, _shape_rect(3, 2))
+	var m := _base("Cockpit", &"cockpit", ModuleData.Category.COCKPIT, 6.0, 30.0, 1.0, _shape_rect(4, 2))
 	# A small tank of its own, so any ship with a cockpit can get moving.
 	m.fuel_capacity = 60.0
 	_use_art(m, "cockpit")
@@ -153,7 +149,10 @@ static func _engine_family(
 ## cruises at up to 2000 SU/s, so fights open much further out.
 const WEAPON_RANGE_SCALE := 3.0
 ## Weapons that stay fixed, firing straight ahead of their mount.
-const FIXED_WEAPONS: Array[StringName] = [&"weapon_sniper", &"weapon_drones"]
+const FIXED_WEAPONS: Array[StringName] = [&"weapon_drones"]
+## Every gun's reload relative to the seconds written below: fights are
+## slower, each shot counts for more.
+const RELOAD_SCALE := 1.75
 ## How far a turret turns, in all, about the way it was placed.
 const TURRET_ARC_DEG := 160.0
 
@@ -164,13 +163,13 @@ static func weapons() -> Array[ModuleData]:
 		_with_art(_weapon("Gauss Cannon", &"weapon_gauss", 35.0, 1.2, 0.85, 8.0, 5.0, 40.0, 1800.0, _shape_2x1())),
 		_with_art(_weapon("Railgun", &"weapon_railgun", 55.0, 2.0, 0.9, 12.0, 8.0, 22.0, 3400.0, _shape_2x1())),
 		# Red laser: modest spread within its preview cone and a longer reach.
-		# Energy 1: half a unit a shot, so a stock ship can hold the trigger down.
-		_with_art(_weapon("Laser DEW", &"weapon_laser", 5.0, 1.0, 0.95, 6.0, 1.0, 6.0, 4000.0, _shape_1x1())),
+		# Energy 1: half a unit a shot. A slow, steady beat of shots, not a stream.
+		_with_art(_weapon("Laser DEW", &"weapon_laser", 8.0, 2.0, 0.95, 6.0, 1.0, 6.0, 4000.0, _shape_1x1())),
 		# Slow blue balls: a long reload.
 		_with_art(_weapon("Particle Cannon", &"weapon_particle", 80.0, 7.0, 0.98, 10.0, 15.0, 55.0, 1500.0, _shape_3x1())),
 		# Long yellow beam (ship.gd SNIPER_ID): the longest reach by far, in a
-		# narrow cone, slow to reload.
-		_with_art(_weapon("Sniper Laser", &"weapon_sniper", 120.0, 12.0, 0.99, 14.0, 20.0, 6.0, 16000.0, _shape_line(4))),
+		# narrow cone, on a turret, slow to reload.
+		_with_art(_weapon("Sniper Laser", &"weapon_sniper", 120.0, 12.0, 0.99, 14.0, 20.0, 6.0, 24000.0, _shape_line(4))),
 		# From the board's star ratings (DMG / reload / accuracy): see _stars_weapon.
 		# Five quick heavy rounds a burst (PlayerShot "burst"), then a longer reload.
 		_with_art(_weapon("Revolver Cannon", &"weapon_revolver", 40.0, 3.0, 0.9, 9.0, 4.0, 30.0, 2000.0, _shape_2x1())),
@@ -179,7 +178,7 @@ static func weapons() -> Array[ModuleData]:
 		_stars_weapon("Rocket Launcher", &"weapon_rockets", 5, 1, 5, 12.0, 2.0, 25.0, 25000.0, _shape_2x1()),
 		_stars_weapon("Drone Bay", &"weapon_drones", 2, 3, 3, 6.0, 8.0, 90.0, 2500.0, _shape_1x1()),
 	]
-	# Everything but the sniper and the drone bay turns on a turret (the player aims the selected one with RMB in flight).
+	# Everything but the drone bay turns on a turret (the player aims the selected one with RMB in flight).
 	for m: ModuleData in list:
 		if not FIXED_WEAPONS.has(m.id):
 			m.turret_arc_deg = TURRET_ARC_DEG
@@ -548,7 +547,7 @@ static func _weapon(
 ) -> ModuleData:
 	var m := _base(title, id, ModuleData.Category.WEAPON, mass, 18.0, energy, shape)
 	m.damage = damage
-	m.reload_time = reload
+	m.reload_time = reload * RELOAD_SCALE
 	m.accuracy = accuracy
 	m.fov_angle_deg = fov_angle_deg
 	m.fov_range = fov_range * WEAPON_RANGE_SCALE

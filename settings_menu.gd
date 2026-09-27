@@ -591,7 +591,7 @@ func _draw_tab_shortcuts(top_y: float) -> void:
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "Z / C", "Hold prograde / retrograde")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "V", "Flight assist (arcade handling)")
 	y = _draw_clean_shortcut(col2_x + 14.0, y, "B / T", "Ship builder / tech tree")
-	y = _draw_clean_shortcut(col2_x + 14.0, y, "I / J / M", "Cargo / planet log / galaxy map")
+	y = _draw_clean_shortcut(col2_x + 14.0, y, "I / J / M / F", "Cargo / log / galaxy map / fabricator")
 
 	var y_cam: float = top_y + 270.0
 	_draw_section_header(Vector2(col2_x, y_cam), "Camera & Tracking", col_w)

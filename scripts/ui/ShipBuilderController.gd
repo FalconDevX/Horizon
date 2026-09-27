@@ -61,6 +61,18 @@ var _modules_by_category: Dictionary = {} ## ModuleData.Category → Array[Modul
 var _category_tabs: CategoryTabBar
 var _module_grid: GridContainer
 var _shown_category: int = -1
+## The hull as it stood when the yard opened: "exit without saving" returns to it.
+var _opened_with: Dictionary = {}
+
+## Ctrl+Z / Ctrl+Y: hull snapshots before each step, and the steps undone.
+## A step ends once the hand is empty, so picking a module up and setting it
+## down again is one move.
+const UNDO_LIMIT := 100
+var _undo: Array[Dictionary] = []
+var _redo: Array[Dictionary] = []
+var _committed: Dictionary = {}
+var _step_open := false
+var _restoring := false
 
 const GRID_H_SEPARATION := 8
 const SLOT_TARGET_WIDTH := 140.0
@@ -94,6 +106,8 @@ func _ready() -> void:
 	_stats_panel.bind_hull(_ship_hull)
 	_grid_ui.hold_changed.connect(_on_hold_changed)
 	_ship_hull.stats_changed.connect(_on_stats_changed)
+	_ship_hull.module_attached.connect(_on_hull_edited.unbind(1))
+	_ship_hull.module_detached.connect(_on_hull_edited.unbind(1))
 	_update_hint(null, 0)
 
 	if _bay_handle != null:
@@ -164,7 +178,74 @@ func _on_save_exit_pressed() -> void:
 
 func _on_discard_exit_pressed() -> void:
 	_hide_exit_confirm()
+	# Back to the ship as it was when the yard opened.
+	_grid_ui.clear_hold()
+	_put_back(_opened_with)
 	closed.emit()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not is_visible_in_tree():
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or not key.ctrl_pressed:
+		return
+	if key.keycode == KEY_Z and not key.shift_pressed:
+		undo()
+	elif key.keycode == KEY_Y or (key.keycode == KEY_Z and key.shift_pressed):
+		redo()
+	else:
+		return
+	get_viewport().set_input_as_handled()
+
+
+func undo() -> void:
+	_grid_ui.clear_hold()
+	if _step_open:
+		# Mid-move (or just dropped): put the module back where it was.
+		_step_open = false
+		_put_back(_committed)
+		return
+	if _undo.is_empty():
+		return
+	_redo.append(_committed)
+	_committed = _undo.pop_back()
+	_put_back(_committed)
+
+
+func redo() -> void:
+	if _redo.is_empty():
+		return
+	_grid_ui.clear_hold()
+	_try_commit()
+	_undo.append(_committed)
+	_committed = _redo.pop_back()
+	_put_back(_committed)
+
+
+func _put_back(saved: Dictionary) -> void:
+	_restoring = true
+	_ship_hull.put_back(saved)
+	_restoring = false
+
+
+func _on_hull_edited() -> void:
+	if _restoring or not visible:
+		return
+	_step_open = true
+	_try_commit.call_deferred()
+
+
+## Closes the open step once nothing is held any more.
+func _try_commit() -> void:
+	if not _step_open or _grid_ui.has_held_module():
+		return
+	_step_open = false
+	_undo.append(_committed)
+	if _undo.size() > UNDO_LIMIT:
+		_undo.pop_front()
+	_committed = _ship_hull.snapshot()
+	_redo.clear()
 
 
 func _show_info_popup() -> void:
@@ -418,6 +499,11 @@ func _hook_slot(slot: ModuleInventorySlot, module: ModuleData) -> void:
 func _on_visibility_changed() -> void:
 	if not visible:
 		return
+	_opened_with = _ship_hull.snapshot()
+	_committed = _opened_with
+	_undo.clear()
+	_redo.clear()
+	_step_open = false
 	if _shown_category >= 0:
 		_show_category(_shown_category as ModuleData.Category)
 	# The panel starts hidden, so the _ready centering ran with no layout:
@@ -431,6 +517,8 @@ func _on_inventory_module_selected(module: ModuleData) -> void:
 
 func _on_hold_changed(module: ModuleData, rotation: int) -> void:
 	_update_hint(module, rotation)
+	if module == null:
+		_try_commit.call_deferred()
 
 
 func _on_stats_changed(_stats: Dictionary) -> void:

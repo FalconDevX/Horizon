@@ -652,10 +652,18 @@ can be reached.
   `_warp_arrive_radius`). `warp_active` is true while on rails; the predictor is skipped.
 - `WarpFX` (`scripts/ui/WarpFX.gd` + `warp_lens.gdshader`) is a screen-space lensing /
   streak / shockwave pass on canvas layer 1 - the HUD is moved to layer 2 for it.
-- Warp fuel: `ship.warp_fuel` (every ship, 100 = `WARP_RANGE` 12 M SU), refilled while
-  landed, saved. Shown as the violet WARP bar on the resource panel with the jump's cost
+- Warp fuel: `ship.warp_fuel` (every ship, 100 = `WARP_RANGE` 12 M SU), no longer
+  refilled on the ground - only the fabricator makes more, saved. Shown as the violet WARP bar on the resource panel with the jump's cost
   blinking (`resource_bars_panel.set_warp`).
 - **HYPER WARP** is the old galaxy-map jump (`warp_button`, `start_hyperspace_jump`).
+  It burns `GalaxyMap.jump_fuel(from, to)` warp tank points (`HYPER_FUEL_BASE` 15 +
+  `HYPER_FUEL_PER_KLY` 6 per kly); the button and the map's info card show the cost and
+  what is left.
+- **Fabricator** (F, `scripts/ship/Fabricator.gd` + `scripts/ui/FabricatorWindow.gd`,
+  needs a `util_fabricator` module): refines hel from the hold in the background,
+  `RECIPES` engine fuel (1 hel, +30 fuel, 6 s) and warp fuel (3 hel, +10%, 12 s),
+  queue of `MAX_QUEUE`, hel taken when queued (refunded on cancel), saved. The window
+  does not hold the game; 1 / 2 queue. New games start with `PlayerProgress.STARTER_HEL`.
 
 ## Autopilot (removed)
 
@@ -670,12 +678,16 @@ intercept, target-orbit visuals, HUD panel - is kept verbatim in
 running frame:
 - Contacts: enemies within `passive_range()` (longest gun, at least 8000) with a clear
   line of sight (planets and the sun hide them, `is_occluded`), plus whatever a radar
-  scan swept; kept `CONTACT_HOLD` s.
+  scan swept; passive-only contacts kept `CONTACT_HOLD` s, radar-found ones until they die.
 - Radars are circular (360 deg, 60 k / 150 k / 400 k) with `scan_time` and `reload_time`
   (`ModuleData.scan_time`). A scan is fired by hand (weapons panel row, or R): a green
   beam turns round the ship, then the radar recharges.
 - Contacts panel (`enemy_contacts_panel.gd`): type glyph + code (`EnemyCatalog.MARKERS`
-  `abbr`), name, distance, status; click targets, Ctrl+click locks (`LOCK_TIME`).
+  `abbr`), name, distance, status; click targets, Ctrl+click locks (`LOCK_TIME`) or
+  unlocks (also Ctrl+LMB on the enemy in the world, `_contact_under_mouse`). Many locks
+  at once (`combat.locks`, enemy -> progress); the picked `target` is the active lock.
+  Each gun works on one lock (`combat.assigned`, `gun_target(id)`): clicking it switches
+  it on at the active lock, moves it there from another lock, or switches it off.
 - Module rack (`weapons_panel.gd`, EVE-style round slots): clicking a gun switches it
   on/off (`combat.auto_fire`); an active gun fires on every reload at the locked target
   when it is in its cone. With a lock every turret turns onto it (`ship.aim_device`).
@@ -684,6 +696,13 @@ running frame:
   `solar_system._layout_rack()` (new guns from the top row, radars from the second);
   dragging onto a cell moves or swaps (`_move_rack_module`), and `weapon_order` (keys
   1-9) follows the grid's reading order. Reloading slots show a progress ring.
+- **Frigate** (`frigate`, elite roster, `scenes/enemies/EnemyFrigate.tscn`,
+  `textures/enemies/enemy_frigate.png` rotated nose-up from the board art): `Enemy`
+  `missile_mode` - every `fire_cooldown` (9 s), with the player within
+  `missile_launch_range`, a salvo of one `EnemyMissile` per launcher group
+  (`missile_launchers` / `missile_launch_dirs` / `missile_groups`: flank pods 0 and 1,
+  the bow pair group 2 taking turns), `missile_salvo_gap` apart. `EnemyMissile` homes on
+  the ship at `turn` rad/s, `take_damage` on contact, bursts after `max_distance`.
 - **Missiles** (`MissileCatalog`, from the board: Standard, AOE, Interceptor, EMP,
   Hunter) are hold items. A Rocket Launcher (`ship.launchers`) holds `MAGAZINE` 2,
   `SALVO_GAP` between launches, then `MAGAZINE_RELOAD` 14 s refilling from the hold
@@ -693,7 +712,11 @@ running frame:
   starts with `STARTER_STOCK` standard missiles - there is no other source yet.
 - Weapon reaches are 3x (`ModuleCatalog.WEAPON_RANGE_SCALE`; the builder preview scale
   `FovUtil.BUILDER_SU_PER_CELL` went up with it), shots 2x faster
-  (`PlayerShot.SPEED_SCALE`); the player sniper fires a full-length `SniperBeam`.
+  (`PlayerShot.SPEED_SCALE`); the player sniper fires a full-length `SniperBeam` and
+  now turns on a turret (only the drone bay is in `FIXED_WEAPONS`). Every gun's reload
+  is `ModuleCatalog.RELOAD_SCALE` (1.75) x the table value.
+- RMB aiming reads `ship.rmb_aim`, set only when the press reaches `_unhandled_input`
+  (not over a HUD panel), cleared on release in `_input` - never poll the mouse button.
 
 ## Conventions
 
@@ -823,7 +846,9 @@ the body's current variant, so finds carry across systems per variant.
 `ModuleCatalog.engines()` builds 5 families (Chemical, Nuclear Thermal, Ion, Plasma,
 Fusion) x 3 sizes S/M/L = footprints 1x1/2x1/2x2, from star ratings
 (`_STAR_*` tables, `_ENGINE_SIZES` multipliers). Sprites are
-`textures/modules/engine_<type>_<1|2|3>.png` (nozzle pointing left, the aft side: main
+`textures/modules/engine_<type>_<1|2|3>.png` (128x128 / 256x128 / 256x256, painted art
+from Google Drive `Horizon/silniki 2d/<family>/<name> 1x1|2x1|2x2.png` - synced at
+`G:\My Drive` - mirrored so the nozzle points left, the aft side: main
 engines go in open space touching a hull's left face, grid -x, whatever the hull's rotation); an optional `..._plan.png` (`plan_texture`) is
 drawn over the footprint while a module is held. The inventory shows one engine family
 per row. Modules are placed click-to-hold (no drag-and-drop); `ShipGridUI` rotates

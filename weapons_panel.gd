@@ -15,7 +15,9 @@ extends Control
 ## above the rack.
 ##
 ## Click a gun (or press its key 1-9) to switch it on or off, EVE-style: on,
-## it fires by itself at the locked target, or waits for a lock; it is also
+## it fires by itself at the active lock (a gun works on one lock at a time;
+## clicked while on another lock it moves to the active one), or waits for a
+## lock; it is also
 ## picked for manual fire (LMB fires, RMB turns a turret). Right-click a
 ## Rocket Launcher to pick its missiles from a list over the slot. Click a
 ## radar (or press R) to scan. Drag any module onto another cell of the grid
@@ -322,11 +324,11 @@ func _describe(w: Dictionary) -> String:
 			load_text += "  RELOADING"
 		elif int(m["loaded"]) == 0 and int(m["stock"]) == 0:
 			load_text += "  NO MISSILES"
-		elif not _locked:
+		elif not w.get("locked", _locked):
 			load_text += "  NEEDS A LOCK"
 		return title + "  " + load_text + ("  ON" if w.get("auto", false) else "")
 	if w.get("auto", false):
-		return title + ("  ACTIVE" if _locked else "  ON, NO LOCK")
+		return title + ("  ACTIVE" if w.get("locked", _locked) else "  ON, NO LOCK")
 	if w.get("blocked", false):
 		return title + "  BLOCKED"
 	if float(w.get("reload", 0.0)) > 0.0:
@@ -341,7 +343,7 @@ func _draw_gun_slot(font: Font, c: Vector2, w: Dictionary, index: int, show_key:
 	var rim: Color = COLOR_READY
 	if not _powered:
 		rim = COLOR_OFF
-	elif w.get("auto", false) and not _locked:
+	elif w.get("auto", false) and not w.get("locked", _locked):
 		# On with nothing locked: blinks, waiting for a lock to fire at.
 		rim = Color(COLOR_PICKED, 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.008))
 	elif picked or w.get("auto", false):

@@ -10,18 +10,24 @@ extends Node2D
 ## fired by hand (weapons panel, or R): the radar's green beam turns round the
 ## ship SWEEP_TURN_TIME per turn for the radar's scan_time, marking every enemy
 ## it passes within its range - unless a planet or the sun is in the way -
-## then the radar recharges for its reload_time. A contact seen once is kept
-## (and tracked) for CONTACT_HOLD seconds.
+## then the radar recharges for its reload_time. A contact only the passive
+## sensors saw is kept (and tracked) for CONTACT_HOLD seconds; one a radar
+## sweep has found stays on the list (tracked) until it dies.
 ##
-## Lock. Ctrl+click a contact a radar sweep has found, within the radar's
-## reach: the lock builds over LOCK_TIME while the contact is held, then holds
-## until the contact is lost, leaves the radar's reach, or is let go. Enemies
-## only the passive sensors see cannot be locked.
+## Locks. Ctrl+click a contact a radar sweep has found, within the radar's
+## reach: the lock builds over LOCK_TIME, then holds until the contact dies,
+## leaves the radar's reach, or is Ctrl+clicked again. Any number of contacts
+## can be locked at once; the picked one (`target`) is the active lock.
+## Enemies only the passive sensors see cannot be locked.
 ##
-## Active modules. With a lock every turret turns onto the target. Clicking a
-## gun in the module rack switches it on or off (EVE-style): an active gun
-## fires every time it has reloaded and the locked target is in its cone. It
-## stays on with no lock, waiting for one.
+## Active modules. Every gun works on one lock at a time. Clicking a gun in
+## the module rack (EVE-style) switches it on at the active lock; clicking a
+## gun already on another lock moves it to the active one, clicking it again
+## switches it off. An active gun turns onto its lock and fires every time it
+## has reloaded and the lock is in its cone. A gun switched on with nothing
+## locked (or whose lock was lost) waits and takes the active lock once there
+## is one. Guns on a target that is destroyed switch off. Guns that are off
+## turn onto the active lock.
 
 const PASSIVE_RANGE_MIN := 8000.0
 const CONTACT_HOLD := 30.0
@@ -39,12 +45,14 @@ var _seen: Dictionary = {}
 ## Enemies a radar sweep has found (and not forgotten since) -> true.
 var _scanned: Dictionary = {}
 var _time: float = 0.0
+## The picked contact - the active lock, if it is locked.
 var target: Enemy = null
-## 0..1 while locking on `target`; 1 = locked; 0 with no lock under way.
-var lock_progress: float = 0.0
-var locking: bool = false
+## Enemy -> 0..1 lock progress (1 = locked).
+var locks: Dictionary = {}
 ## Weapon instance id -> true while it fires on its own.
 var auto_fire: Dictionary = {}
+## Weapon instance id -> the Enemy it works on (only guns switched on).
+var assigned: Dictionary = {}
 ## Radar instance id -> {scan: seconds left, cooldown: seconds left, angle}.
 var radars: Dictionary = {}
 
@@ -54,8 +62,30 @@ func _init() -> void:
 	z_index = -1
 
 
+## Whether the picked target is locked.
 func is_locked() -> bool:
-	return locking and lock_progress >= 1.0 and _alive(target)
+	return is_locked_on(target)
+
+
+func is_locked_on(enemy: Enemy) -> bool:
+	return _alive(enemy) and float(locks.get(enemy, 0.0)) >= 1.0
+
+
+## Every contact fully locked.
+func locked_enemies() -> Array[Enemy]:
+	var out: Array[Enemy] = []
+	for enemy in locks.keys():
+		if is_instance_valid(enemy) and is_locked_on(enemy):
+			out.append(enemy)
+	return out
+
+
+## The locked enemy gun `id` works on, or null (off, waiting, still locking).
+func gun_target(id: int) -> Enemy:
+	var enemy: Variant = assigned.get(id)
+	if not auto_fire.has(id) or not is_instance_valid(enemy) or not is_locked_on(enemy):
+		return null
+	return enemy
 
 
 static func _alive(enemy: Enemy) -> bool:
@@ -156,22 +186,30 @@ func update(delta: float) -> void:
 		if not ids.has(id):
 			radars.erase(id)
 
-	# Forget what has not been seen for too long.
+	# Forget what the passive sensors have not seen for too long. What a
+	# radar found stays until it dies.
 	for enemy in _seen.keys():
-		if not _alive(enemy) or _time - float(_seen[enemy]) > CONTACT_HOLD:
+		if not _alive(enemy) or (not _scanned.has(enemy) and _time - float(_seen[enemy]) > CONTACT_HOLD):
 			_seen.erase(enemy)
 			_scanned.erase(enemy)
+	for enemy in _scanned.keys():
+		if not _alive(enemy):
+			_scanned.erase(enemy)
 
-	# The lock builds while the target is held, and goes with it.
 	if target != null and (not _alive(target) or not _seen.has(target)):
 		set_target(null)
-	# Out of the radar's reach (or never scanned): the lock drops, the
-	# target stays picked.
-	if locking and target != null and not can_lock(target):
-		locking = false
-		lock_progress = 0.0
-	if locking and target != null:
-		lock_progress = minf(lock_progress + delta / LOCK_TIME, 1.0)
+	# Locks build together; one out of the radar's reach (or dead) drops.
+	for enemy in locks.keys():
+		if not _alive(enemy):
+			_unlock(enemy, true)
+		elif not can_lock(enemy):
+			_unlock(enemy)
+		else:
+			locks[enemy] = minf(float(locks[enemy]) + delta / LOCK_TIME, 1.0)
+	# Guns switched on with no lock of their own take the active one.
+	for id in auto_fire.keys():
+		if not locks.has(assigned.get(id)) and is_locked():
+			assigned[id] = target
 	_run_auto_fire(delta)
 	queue_redraw()
 
@@ -213,52 +251,87 @@ func scan_all() -> bool:
 	return any
 
 
+## Picks `enemy` as the target (the active lock if it is locked); locks
+## stay as they are.
 func set_target(enemy: Enemy) -> void:
-	if target != null and is_instance_valid(target):
-		target.targeted = false
+	var old: Enemy = target
 	target = enemy
-	locking = false
-	lock_progress = 0.0
-	if target != null:
-		target.targeted = true
+	_mark(old)
+	_mark(target)
 
 
-## Ctrl+click: lock on `enemy`, or let go of a lock on it.
+## Ctrl+click: lock on `enemy` (and pick it), or let go of a lock on it.
 func toggle_lock(enemy: Enemy) -> void:
-	if enemy == target and locking:
-		set_target(null)
+	if enemy == null:
 		return
-	if enemy != null and not can_lock(enemy):
+	if locks.has(enemy):
+		_unlock(enemy)
+		if enemy == target:
+			set_target(null)
 		return
+	if not can_lock(enemy):
+		return
+	locks[enemy] = 0.0
 	set_target(enemy)
-	locking = enemy != null
 
 
-## Click on a gun in the rack: switch it on (it fires at the locked target
-## on its own) or off.
+## Drops the lock on `enemy`; the guns on it wait for another - or, with
+## `destroyed` (the target is dead), switch off and are ready again.
+func _unlock(enemy: Enemy, destroyed: bool = false) -> void:
+	locks.erase(enemy)
+	for id in assigned.keys():
+		if assigned[id] != enemy:
+			continue
+		assigned.erase(id)
+		if destroyed:
+			auto_fire.erase(id)
+			if ship.selected_weapon == id:
+				ship.selected_weapon = -1
+	if is_instance_valid(enemy):
+		_mark(enemy)
+
+
+## Brackets on the picked target and every lock.
+func _mark(enemy: Enemy) -> void:
+	if enemy != null and is_instance_valid(enemy):
+		enemy.targeted = enemy == target or locks.has(enemy)
+
+
+## Click on a gun in the rack: switch it on at the active lock, move it
+## there from another lock, or switch it off.
 func toggle_auto_fire(id: int) -> void:
-	if auto_fire.has(id):
+	var active: Enemy = target if locks.has(target) else null
+	if auto_fire.has(id) and (active == null or assigned.get(id) == active):
 		auto_fire.erase(id)
-	else:
-		auto_fire[id] = true
-
-
-## With a lock, every turret (laser, revolver, ...) swings onto the target -
-## all but the picked one while the player aims it by hand (RMB) - and the
-## guns on AUTO fire whenever they can.
-func _run_auto_fire(delta: float) -> void:
-	if not is_locked():
+		assigned.erase(id)
 		return
-	var aim: Vector2 = target.global_position
-	var hand_aimed: int = ship.selected_weapon if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) else -1
+	auto_fire[id] = true
+	if active != null:
+		assigned[id] = active
+	else:
+		assigned.erase(id)
+
+
+## Every turret (laser, revolver, ...) swings onto its lock - the guns that
+## are off onto the active one - all but the picked one while the player
+## aims it by hand (RMB); the guns switched on fire whenever they can.
+func _run_auto_fire(delta: float) -> void:
+	var hand_aimed: int = ship.selected_weapon if ship.rmb_aim else -1
 	for device: Dictionary in ship.fov_devices:
 		if str(device.get("kind", "")) != "weapon":
 			continue
 		var id: int = int(device.get("instance_id", -1))
+		var on: Enemy = gun_target(id)
+		var aim_at: Enemy = on
+		if aim_at == null and not auto_fire.has(id) and is_locked():
+			aim_at = target
+		if aim_at == null:
+			continue
+		var aim: Vector2 = aim_at.global_position
 		if id != hand_aimed:
 			ship.aim_device(device, aim, delta)
-		if auto_fire.has(id) and ship.is_body_in_device_fov(device, aim):
-			game.call("_spawn_weapon_shots", ship.fire_weapons_at(aim, id), aim, target)
+		if on != null and ship.is_body_in_device_fov(device, aim):
+			game.call("_spawn_weapon_shots", ship.fire_weapons_at(aim, id), aim, on)
 
 
 ## Contacts panel rows, nearest first: {enemy, title, kind_id, distance, status}.
@@ -269,13 +342,13 @@ func contacts() -> Array:
 		if not _alive(enemy):
 			continue
 		var status: String = ""
-		if enemy == target:
-			if is_locked():
+		if locks.has(enemy):
+			if is_locked_on(enemy):
 				status = "LOCKED"
-			elif locking:
-				status = "LOCK %d%%" % roundi(lock_progress * 100.0)
 			else:
-				status = "TARGET"
+				status = "LOCK %d%%" % roundi(float(locks[enemy]) * 100.0)
+		elif enemy == target:
+			status = "TARGET"
 		elif not _scanned.has(enemy):
 			status = "NO SCAN"
 		elif here.distance_to(enemy.global_position) > lock_range():
@@ -286,6 +359,7 @@ func contacts() -> Array:
 		rows.append({
 			"enemy": enemy, "title": enemy.title, "kind_id": enemy.kind_id,
 			"distance": here.distance_to(enemy.global_position), "status": status,
+			"locked": is_locked_on(enemy),
 		})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])
 	return rows
@@ -333,5 +407,6 @@ func _draw() -> void:
 	for enemy in _seen.keys():
 		if _alive(enemy):
 			var age: float = _time - float(_seen[enemy])
-			var fade: float = clampf(1.0 - age / CONTACT_HOLD, 0.15, 1.0)
+			var floor_alpha: float = 0.35 if _scanned.has(enemy) else 0.15
+			var fade: float = clampf(1.0 - age / CONTACT_HOLD, floor_alpha, 1.0)
 			draw_circle(to_local(enemy.global_position), 4.0 * px, Color(SWEEP_COLOR, 0.8 * fade))

@@ -49,6 +49,10 @@ var _held_pick_rotation: int = 0
 
 var _module_sprites: Dictionary = {}
 var _texture_cache: Dictionary = {}
+## Cache keys of textures generated at the current cell size (not art):
+## redrawn once zooming settles.
+var _sized_keys: Dictionary = {}
+var _resize_textures_timer: Timer
 var _preview: Control ## draws green/red above sprites
 var _scroll_parent: PannableScrollContainer
 var _zoom: float = 1.0
@@ -216,9 +220,12 @@ func adjust_zoom(steps: int) -> void:
 	if ship_hull != null:
 		ship_hull.cell_size = cell_size
 
-	_texture_cache.clear()
+	# Only move and scale the sprites here - rebuilding them (and turning big
+	# art images) every wheel step made zooming stutter. Generated textures
+	# catch up with the new cell size once the wheel stops.
 	_sync_control_size()
-	_rebuild_all_sprites()
+	_layout_sprites()
+	_schedule_texture_resize()
 	queue_redraw()
 	if _preview != null:
 		_preview.queue_redraw()
@@ -527,6 +534,13 @@ func _draw() -> void:
 					if _held_module != null and _held_module.is_deck_equipment()
 					else deck_tint
 				)
+			HullData.FloorType.GUN_MOUNT:
+				# Guns only: lights up while a gun is held.
+				fill = (
+					Color(0.95, 0.6, 0.25, 0.32)
+					if _held_module != null and _held_module.category == ModuleData.Category.WEAPON
+					else mount_tint
+				)
 			HullData.FloorType.CONNECTOR:
 				fill = connector_tint
 			_:
@@ -640,7 +654,7 @@ func _draw_fov_preview() -> void:
 	if data.is_turret():
 		# The whole arc it can turn through, from the turret's middle, and
 		# the cone it fires in turned to where the sweep has it now.
-		var pivot_px := FovUtil.module_center_cell(origin, data, rotation) * cell_size
+		var pivot_px := FovUtil.module_pivot_cell(origin, data, rotation) * cell_size
 		var reach := FovUtil.builder_preview_length(data.fov_range, cell_size.x)
 		var arc_blocked: Dictionary = ship_hull.get_structure_blocker_cells() if ship_hull != null else {}
 		FovUtil.draw_cone(
@@ -690,7 +704,10 @@ func _process(_delta: float) -> void:
 		if not is_instance_valid(sprite):
 			continue
 		if turning != null and id == turning.instance_id:
-			sprite.pivot_offset = sprite.size * 0.5
+			# Turn about the first (mount) cell, as in flight.
+			sprite.pivot_offset = (
+				FovUtil.module_pivot_cell(turning.origin, turning.data, turning.rotation) - Vector2(turning.origin)
+			) * cell_size
 			sprite.rotation = _turret_sweep(turning.data)
 		elif sprite.rotation != 0.0:
 			sprite.rotation = 0.0
@@ -746,7 +763,7 @@ func _spawn_sprite(module: PlacedModule) -> void:
 	sprite.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	sprite.stretch_mode = TextureRect.STRETCH_SCALE
 	if module.data.category == ModuleData.Category.ENGINE:
-		# Engine art is square; the M footprint (2x1) is not - fit, don't squash.
+		# Engine art is drawn to its footprint (1x1, 2x1, 2x2); fit it, never squash.
 		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sprite.show_behind_parent = true
@@ -808,7 +825,52 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 			tex = data.texture
 
 	_texture_cache[key] = tex
+	if not _is_art(data):
+		_sized_keys[key] = true
 	return tex
+
+
+## Drawn pictures look the same at every zoom; everything else is generated
+## at the cell size.
+static func _is_art(data: ModuleData) -> bool:
+	if data.category == ModuleData.Category.HULL and data.hull_data != null:
+		return data.hull_data.interior_texture != null or data.hull_data.custom_texture != null
+	return data.texture != null and (
+		data.category == ModuleData.Category.ENGINE or not data.texture.resource_path.is_empty()
+	)
+
+
+func _layout_sprites() -> void:
+	if ship_hull == null:
+		return
+	for m: PlacedModule in ship_hull.get_all_modules():
+		var sprite := _module_sprites.get(m.instance_id) as Control
+		if sprite == null:
+			continue
+		sprite.position = Vector2(m.origin) * cell_size
+		sprite.size = Vector2(m.get_bounding_size()) * cell_size
+
+
+func _schedule_texture_resize() -> void:
+	if _resize_textures_timer == null:
+		_resize_textures_timer = Timer.new()
+		_resize_textures_timer.one_shot = true
+		_resize_textures_timer.wait_time = 0.25
+		_resize_textures_timer.timeout.connect(_resize_generated_textures)
+		add_child(_resize_textures_timer)
+	_resize_textures_timer.start()
+
+
+func _resize_generated_textures() -> void:
+	if _sized_keys.is_empty() or ship_hull == null:
+		return
+	for key: String in _sized_keys.keys():
+		_texture_cache.erase(key)
+	_sized_keys.clear()
+	for m: PlacedModule in ship_hull.get_all_modules():
+		var sprite := _module_sprites.get(m.instance_id) as TextureRect
+		if sprite != null and m.data != null and not _is_art(m.data):
+			sprite.texture = _texture_for(m.data, m.rotation)
 
 
 func _plan_texture_for(data: ModuleData, rotation: int) -> Texture2D:
