@@ -77,9 +77,10 @@ static func make_standard() -> HullData:
 	h.title = "Standard"
 	h.hull_type = HullType.STANDARD
 	h.grid_size = Vector2i(8, 6)
+	h.gun_ring = 1
 	h.base_durability = 120.0
 	h.base_mass = 55.0
-	h.description = "Standard hull, 8x6 - all deck; main engines go on its left."
+	h.description = "Standard hull, 8x6 - a 6x4 deck inside, guns only on the edge; main engines go on its left."
 	h.custom_texture = load("res://textures/hulls/hull_standard.png")
 	h.interior_texture = load("res://textures/hulls/hull_standard_interior.png")
 	return h
@@ -90,9 +91,10 @@ static func make_heavy() -> HullData:
 	h.title = "Heavy"
 	h.hull_type = HullType.HEAVY
 	h.grid_size = Vector2i(14, 8)
+	h.gun_ring = 1
 	h.base_durability = 200.0
 	h.base_mass = 90.0
-	h.description = "Heavy hull, 14x8 - all deck; main engines go on its left."
+	h.description = "Heavy hull, 14x8 - a 12x6 deck inside, guns only on the edge; main engines go on its left."
 	h.custom_texture = load("res://textures/hulls/hull_heavy.png")
 	h.interior_texture = load("res://textures/hulls/hull_heavy_interior.png")
 	return h

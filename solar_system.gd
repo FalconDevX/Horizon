@@ -1532,6 +1532,11 @@ func _ready() -> void:
 	pause_menu.settings_requested.connect(_on_pause_settings_requested)
 	pause_menu.exit_requested.connect(_on_pause_exit_requested)
 	ship_builder_panel.closed.connect(close_ship_builder)
+	# Only once the yard really closed (a ship that cannot fly keeps it open).
+	ship_builder_panel.save_requested.connect(func() -> void:
+		if not ship_builder_panel.visible:
+			save_game()
+	)
 	enemy_menu_panel.enemy_selected.connect(_on_enemy_selected)
 	_bind_ship_builder_to_ship()
 	if ResourceLoader.exists("res://textures/icons/settings.svg"):

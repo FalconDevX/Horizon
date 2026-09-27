@@ -815,12 +815,7 @@ func _texture_for(data: ModuleData, rotation: int) -> Texture2D:
 		# picture, not a generated tile - turn the picture.
 		tex = _rotated_texture(data.texture, rotation)
 	else:
-		tex = ModuleCatalog.make_shape_texture(
-			data.grid_shape,
-			data.category,
-			rotation,
-			int(cell_size.x)
-		)
+		tex = ModuleArt.make(data.id, data.category, data.grid_shape, rotation, int(cell_size.x))
 		if tex == null and data.texture != null:
 			tex = data.texture
 

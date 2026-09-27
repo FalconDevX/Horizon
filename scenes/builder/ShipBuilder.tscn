@@ -278,7 +278,7 @@ horizontal_alignment = 1
 layout_mode = 2
 theme_override_colors/font_color = Color(0.44, 0.5, 0.6, 1)
 theme_override_font_sizes/font_size = 10
-text = "Saving is not implemented yet."
+text = "Save & Exit keeps the new ship and saves the game."
 horizontal_alignment = 1
 
 [node name="DialogButtons" type="HBoxContainer" parent="ExitConfirm/DialogPanel/DialogMargin/DialogVBox"]
@@ -290,7 +290,7 @@ theme_override_constants/separation = 10
 unique_name_in_owner = true
 layout_mode = 2
 text = "Save & Exit"
-tooltip_text = "Placeholder - saving is not implemented yet"
+tooltip_text = "Keep the ship as built and save the game"
 
 [node name="DiscardExitButton" type="Button" parent="ExitConfirm/DialogPanel/DialogMargin/DialogVBox/DialogButtons"]
 unique_name_in_owner = true

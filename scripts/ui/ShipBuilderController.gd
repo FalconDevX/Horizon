@@ -3,6 +3,8 @@ extends Control
 ## Wires inventory, shipyard grid UI, stats panel, and resize handles.
 
 signal closed
+## Save & Exit: the game saves once the yard has closed.
+signal save_requested
 
 @onready var _ship_hull: ShipHull = %ShipHull
 @onready var _grid_ui: ShipGridUI = %ShipGridUI
@@ -169,11 +171,11 @@ func _on_scrim_gui_input(event: InputEvent) -> void:
 		_hide_exit_confirm()
 
 
+## Keeps the ship as built and saves the game with it.
 func _on_save_exit_pressed() -> void:
-	# Placeholder: no persistence layer yet, so this currently behaves like a
-	# normal exit. Wire real blueprint saving here once it exists.
 	_hide_exit_confirm()
 	closed.emit()
+	save_requested.emit()
 
 
 func _on_discard_exit_pressed() -> void:

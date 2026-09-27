@@ -183,8 +183,7 @@ func _draw_weapon_icon(c: Vector2, gun: Dictionary) -> void:
 	draw_circle(c, r, Color(0.03, 0.05, 0.08, 0.95))
 	var id := StringName(gun.get("module_id", ""))
 	if not _icons.has(id):
-		var path := "res://textures/modules/%s.png" % String(id)
-		_icons[id] = load(path) if ResourceLoader.exists(path) else null
+		_icons[id] = ModuleCatalog.texture_for(id)
 	var icon: Texture2D = _icons[id]
 	var in_cone: bool = gun.get("in_cone", false)
 	if icon != null:

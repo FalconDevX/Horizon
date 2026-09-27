@@ -254,8 +254,7 @@ func _drop(point: Vector2) -> void:
 
 func _icon(module_id: StringName) -> Texture2D:
 	if not _icons.has(module_id):
-		var path := "res://textures/modules/%s.png" % String(module_id)
-		_icons[module_id] = load(path) if ResourceLoader.exists(path) else null
+		_icons[module_id] = ModuleCatalog.texture_for(module_id)
 	return _icons[module_id]
 
 
