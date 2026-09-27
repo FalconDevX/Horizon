@@ -44,6 +44,9 @@ var _skip_rect := Rect2()
 var _next_rect := Rect2()
 var _alpha := 0.0
 var _voice: AudioStreamPlayer = null
+## Card title waiting to be read out once the loading screen (or a jump)
+## is gone; "" when nothing waits.
+var _voice_pending := ""
 
 
 func setup(game_node: Node) -> void:
@@ -277,8 +280,15 @@ func _begin_step() -> void:
 	_speak(_steps[_index]["title"])
 
 
-## Reads a card out, cutting off the one before.
+## Reads a card out, cutting off the one before - as soon as nothing covers
+## the screen (see _process).
 func _speak(title: String) -> void:
+	if _voice != null:
+		_voice.stop()
+	_voice_pending = title
+
+
+func _play_voice(title: String) -> void:
 	if _voice == null:
 		_voice = AudioStreamPlayer.new()
 		_voice.bus = &"SFX"
@@ -289,12 +299,18 @@ func _speak(title: String) -> void:
 	if ResourceLoader.exists(path):
 		_voice.stream = load(path)
 		_voice.play()
+		# The closing card stays up at least until it has been read out.
+		if _outro_time >= 0.0:
+			_outro_time = maxf(_outro_time, _voice.stream.get_length() + 1.5)
 
 
 func _process(delta: float) -> void:
 	if game == null:
 		return
 	var busy: bool = game.loading_screen != null or game.hyperspace_jump != null
+	if not busy and _voice_pending != "":
+		_play_voice(_voice_pending)
+		_voice_pending = ""
 	if _outro_time >= 0.0:
 		_outro_time -= delta
 		if _outro_time <= 0.0:
@@ -352,9 +368,6 @@ func _go_to(index: int) -> void:
 		_skip_armed = ""
 		_layout()
 		_speak("Tutorial complete")
-		# The closing card stays up at least until it has been read out.
-		if _voice.playing:
-			_outro_time = maxf(OUTRO_TIME, _voice.stream.get_length() + 1.5)
 	else:
 		_begin_step()
 
