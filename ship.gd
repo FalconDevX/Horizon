@@ -113,7 +113,7 @@ const MIN_SHIP_MASS := 1.0
 const MAIN_ENGINE_BOOST := 450.0
 ## Turning speed relative to rotation_speed.
 const TURN_RATE_SCALE := 1.1
-## The engines stop pushing forward past this speed relative to the SOI body
+## The engines stop adding speed past this speed relative to the SOI body
 ## (units/s). Gravity may still carry the ship faster; the warp drive
 ## (solar_system.gd) is the way to go further, faster.
 const CRUISE_SPEED_LIMIT := 2000.0
@@ -856,13 +856,21 @@ func get_thrust_acceleration() -> Vector2:
 	var direction := Vector2.RIGHT.rotated(rotation)
 	var boosting: bool = is_boosting()
 	var acceleration: float = thrust_force * throttle * (BOOST_THRUST if boosting else 1.0) / ship_mass
-	# Fades out over the last 5% below the speed limit, so the ship settles on
-	# it instead of stuttering across it.
+	var push: Vector2 = direction * acceleration
+	# The limit is on the whole speed, not just along the nose - otherwise a
+	# burn side-on to the motion keeps adding speed without end. Only the part
+	# of the push that speeds the ship up fades (over the last 5%, so it settles
+	# instead of stuttering); turning and slowing down still work at the limit.
 	var limit: float = CRUISE_SPEED_LIMIT * (BOOST_SPEED if boosting else 1.0)
-	var forward_speed: float = hold_reference_velocity.dot(direction)
-	acceleration *= clampf((limit - forward_speed) / (limit * 0.05), 0.0, 1.0)
+	var speed: float = hold_reference_velocity.length()
+	if speed > 1e-3:
+		var heading: Vector2 = hold_reference_velocity / speed
+		var along: float = push.dot(heading)
+		if along > 0.0:
+			var fade: float = clampf((limit - speed) / (limit * 0.05), 0.0, 1.0)
+			push -= heading * along * (1.0 - fade)
 
-	return direction * acceleration
+	return push
 
 
 func _process(delta: float) -> void:
