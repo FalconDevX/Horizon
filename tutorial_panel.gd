@@ -1,9 +1,10 @@
 extends Control
 
-## The new-game tutorial: one HUD card on the right, one step at a time. A
-## step is only passed by doing it - there is no Next button - and each one is
-## checked against the game's own state (solar_system.gd, the ship, combat)
-## every frame. The card hides while a full-screen window is open; checks keep
+## The new-game tutorial: one HUD card on the right, one step at a time. It
+## opens with a few info cards (the goal, how the game works), passed with
+## their NEXT button; every step after that is only passed by doing it, and
+## each one is checked against the game's own state (solar_system.gd, the
+## ship, combat) every frame. The card hides while a full-screen window is open; checks keep
 ## running underneath, so "open J, then close it" steps work. SKIP SECTION
 ## jumps to the next section, SKIP ALL ends it (each clicked twice). solar_system.gd adds it on a new game when
 ## SettingsManager.show_tutorial is on.
@@ -37,6 +38,7 @@ var _outro_time := -1.0
 var _skip_armed := ""
 var _skip_section_rect := Rect2()
 var _skip_rect := Rect2()
+var _next_rect := Rect2()
 var _alpha := 0.0
 
 
@@ -67,8 +69,33 @@ func _step(section: String, title: String, text: String, keys: Array, check: Cal
 	_steps.append({"section": section, "title": title, "text": text, "keys": keys, "check": check})
 
 
+## A card with nothing to do: its NEXT button passes it.
+func _info(section: String, title: String, text: String) -> void:
+	_steps.append({
+		"section": section, "title": title, "text": text, "keys": [], "info": true,
+		"check": func(_dt: float) -> bool: return false,
+	})
+
+
 func _build_steps() -> void:
 	var ship: Node2D = game.ship
+
+	# BASICS - read while the game waits paused.
+	_info("BASICS", "Welcome to Horizon",
+		"Your goal: explore the galaxy, chart its worlds and gather their resources, and turn them into a better ship - one strong enough to beat the guards and reach ever more distant, dangerous star systems."
+	)
+	_info("BASICS", "Real orbits",
+		"Everything here moves under gravity: planets circle the star, moons circle planets, and your ship falls round whatever it is near. You do not steer like a car - you fire the engine to change your orbit. The line ahead of the ship shows where it will go."
+	)
+	_info("BASICS", "How you progress",
+		"Land on planets and collect resources. Spend them in the tech tree to unlock modules, then fit those to your hull in the ship builder. Radar and guns deal with enemies. The warp drive hops between planets, hyper warp between star systems."
+	)
+	_step("BASICS", "Start time",
+		"The game starts paused - nothing moves until you say so. Press P or Space to start time, and again whenever you need to stop and think.",
+		["P", "SPACE"],
+		func(_dt: float) -> bool:
+			return not game._user_paused
+	)
 
 	# FLIGHT
 	_step("FLIGHT", "Turn the ship",
@@ -278,6 +305,9 @@ func _gui_input(event: InputEvent) -> void:
 	if _outro_time >= 0.0:
 		_close()
 		return
+	if _next_rect.has_point(event.position) and _done_time < 0.0:
+		_go_to(_index + 1)
+		return
 	var clicked := ""
 	if _skip_section_rect.has_point(event.position):
 		clicked = "section"
@@ -388,8 +418,18 @@ func _draw() -> void:
 	)
 	y += _text_height() + 8.0
 
-	# Key caps for the step.
-	if _outro_time < 0.0:
+	# Key caps for the step, or NEXT on an info card.
+	_next_rect = Rect2()
+	if _outro_time < 0.0 and _steps[_index].get("info", false):
+		_next_rect = Rect2(Vector2(PAD, y + 4.0), Vector2(96.0, 22.0))
+		draw_rect(_next_rect, HudPanelStyle.COLOR_CYAN_GLOW)
+		draw_rect(_next_rect, HudPanelStyle.COLOR_CYAN, false, 1.0)
+		draw_string(
+			font, _next_rect.position + Vector2(0.0, 15.0), "NEXT  >", HORIZONTAL_ALIGNMENT_CENTER,
+			_next_rect.size.x, 11, HudPanelStyle.COLOR_TEXT_PRIMARY
+		)
+		y += 34.0
+	elif _outro_time < 0.0:
 		var x: float = PAD
 		for key: String in _steps[_index]["keys"]:
 			var w: float = font.get_string_size(key, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0

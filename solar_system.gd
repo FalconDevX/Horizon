@@ -216,6 +216,9 @@ var trajectory_candidate_target := ""
 var trajectory_candidate_frames := 0
 var time_scale := 1.0
 var _user_paused := false
+## Orbit lines are redrawn after sim steps; this also draws them once while
+## the game starts paused (no steps yet).
+var _orbit_lines_stale := true
 ## Alt shows / hides the flight prediction, orbits and orbit gauges.
 var orbit_overlays_on := true
 ## Alt is held and nothing else was pressed with it (see _watch_alt).
@@ -302,6 +305,11 @@ var _landing_state: Dictionary = {}
 var landing_prompt: Control
 ## "E - collect" under the landing prompt, while the ship is over a deposit.
 var collect_prompt: Control
+## "HOSTILE PATROL - attack in N s" under the prompts (guard_warning.gd).
+var guard_warning: Control
+## Whether any planet guard was attacking last frame (to flash UNDER ATTACK
+## once when they break orbit).
+var _guards_were_attacking := false
 ## What the ship carries (collect_under_ship fills it); shown by
 ## inventory_screen, toggled with I. PlayerProgress owns it, so it outlives
 ## scene reloads and the tech tree spends from it.
@@ -1304,6 +1312,8 @@ func _ready() -> void:
 	)
 	ship.velocity = home.velocity + local_ship_velocity
 	ship.reset_physics_interpolation()
+	camera_follow_ship = true
+	camera.position = ship.position
 	physics_ship = PhysicsBody.new(ship)
 	ship.ship_clicked.connect(_on_ship_clicked)
 	ship_blueprint_panel.clicked.connect(_on_ship_clicked)
@@ -1328,6 +1338,8 @@ func _ready() -> void:
 	$HUD.add_child(landing_prompt)
 	collect_prompt = preload("res://landing_prompt.gd").new("E", 1)
 	$HUD.add_child(collect_prompt)
+	guard_warning = preload("res://guard_warning.gd").new()
+	$HUD.add_child(guard_warning)
 	_chart_known_bodies()
 	tech_tree_window = TechTreeWindow.new()
 	tech_tree_window.name = "TechTreeWindow"
@@ -1444,6 +1456,8 @@ func _ready() -> void:
 		if settings_mgr.show_tutorial:
 			_start_tutorial()
 	_apply_pending_save()
+	# Every game starts paused: P or Space sets time running.
+	set_time_scale(0.0)
 
 
 ## Puts up the step-by-step tutorial (new games only; see tutorial_panel.gd).
@@ -1679,6 +1693,7 @@ func _process(delta: float) -> void:
 		combat.update(delta)
 	update_hud()
 	_update_landing_prompt()
+	_update_guard_warning()
 	_update_warp(delta)
 	_update_warp_button()
 	_update_combat_panels()
@@ -3079,6 +3094,32 @@ func _find_landing_candidate() -> Node2D:
 	return best
 
 
+## Counts down the nearest guard attack on the HUD, and flashes UNDER ATTACK
+## when a patrol breaks orbit.
+func _update_guard_warning() -> void:
+	var soonest: float = -1.0
+	var attacking := false
+	for enemy: Enemy in _planet_guards:
+		if not is_instance_valid(enemy):
+			continue
+		if enemy.is_attacking():
+			attacking = true
+		var left: float = enemy.alert_countdown()
+		if left >= 0.0 and (soonest < 0.0 or left < soonest):
+			soonest = left
+	guard_warning.set_countdown(-1.0 if attacking else soonest, Enemy.ALERT_DELAY)
+	if attacking and not _guards_were_attacking:
+		guard_warning.flash_attack()
+	_guards_were_attacking = attacking
+
+
+## Opening fire inside a patrol's alert range makes it attack at once.
+func _provoke_guards_in_range() -> void:
+	for enemy: Enemy in _planet_guards:
+		if is_instance_valid(enemy) and enemy.player_in_alert_range():
+			enemy.provoke()
+
+
 func _update_landing_prompt() -> void:
 	if landed_body != null:
 		landing_prompt.show_prompt(
@@ -3308,6 +3349,8 @@ func _fire_selected_weapon() -> void:
 ## everything else flies as PlayerShot projectiles with that weapon's look -
 ## pellets, bursts and alternating barrels included.
 func _spawn_weapon_shots(fired: Array[Dictionary], aim: Vector2, target: Enemy) -> void:
+	if not fired.is_empty():
+		_provoke_guards_in_range()
 	for device: Dictionary in fired:
 		if device.get("id", &"") == ship.SNIPER_ID:
 			_spawn_sniper_beam(device, aim)
@@ -3826,6 +3869,8 @@ func _physics_process(delta: float) -> void:
 	if steps > 0:
 		for body: PhysicsBody in _active_physics_planets:
 			body.push_to_node()
+	if steps > 0 or _orbit_lines_stale:
+		_orbit_lines_stale = false
 		for i in range(planets.size()):
 			if planet_present[i]:
 				update_orbit_line(planets[i], orbit_lines[i], i)

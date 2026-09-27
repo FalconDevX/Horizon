@@ -17,6 +17,18 @@ const SOUND_TARGET_DESTROYED := preload("res://sounds/target--destroyed.wav")
 const CONTACT_GRACE := 0.75
 const EXPLOSION_DURATION := 1.1
 const BLACK_HOLE_EXPLOSION_DURATION := 1.6
+## Seconds the player must stay inside a guard's alert range before it
+## leaves its rail and attacks.
+const ALERT_DELAY := 5.0
+## An alerted guard gives up once the player is this many times the alert
+## range from the planet (squared: 1.45 = about 1.2x the range).
+const GIVE_UP_RANGE2 := 1.45
+## A guard that gave up flies home in at most about this many seconds, however
+## far the chase took it (never slower than move_speed).
+const RETURN_TIME := 6.0
+## A provoked guard (hit, or the player opened fire near its planet) attacks at
+## once and keeps chasing this long even with the player out of range.
+const PROVOKED_CHASE := 15.0
 
 ## Shown in the player's enemy contacts panel (set from EnemyCatalog on spawn).
 @export var title: String = "Enemy"
@@ -126,6 +138,12 @@ var orbit_alert_range: float = 0.0
 ## Leave the rail and chase while the player is near the guarded planet.
 var _alerted: bool = false
 var _orbiting: bool = false
+## Seconds the player has been in alert range while this craft still patrols.
+var _alert_time: float = 0.0
+## Gave up the chase: flying back to its rail (orbit_radius round the planet).
+var _returning: bool = false
+## Seconds left of the chase forced by provoke().
+var _provoked_left: float = 0.0
 ## Seconds left knocked out by an EMP missile: no moving, no guns.
 var _emp_left: float = 0.0
 
@@ -161,6 +179,9 @@ func begin_orbit(
 	orbit_alert_range = alert_range
 	_alerted = false
 	_orbiting = true
+	_alert_time = 0.0
+	_returning = false
+	_provoked_left = 0.0
 	_bh_active_time = 0.0
 	if deploy_fighters:
 		_ability_timer = _next_deploy_delay()
@@ -210,32 +231,98 @@ func _handle_orbit(delta: float) -> void:
 
 	var player := _chase_target()
 	var planet_pos: Vector2 = orbit_anchor.global_position
-	if player == null and _alerted:
-		# The player landed (or is gone): back onto a rail from here.
-		_alerted = false
-		var back: Vector2 = global_position - planet_pos
-		orbit_angle = back.angle()
-		orbit_radius = maxf(back.length(), orbit_radius * 0.5)
+	# Null while the player is landed (or gone): nothing to chase.
+	var in_range := false
 	if player != null and orbit_alert_range > 0.0:
 		var d2: float = planet_pos.distance_squared_to(player.global_position)
 		var alert2: float = orbit_alert_range * orbit_alert_range
-		if d2 <= alert2:
+		in_range = d2 <= (alert2 * GIVE_UP_RANGE2 if _alerted else alert2)
+	_provoked_left = maxf(_provoked_left - delta, 0.0)
+	if _provoked_left > 0.0 and player != null:
+		in_range = true
+
+	if _alerted and not in_range:
+		# Lost interest: fly home to the patrol rail.
+		_alerted = false
+		_returning = true
+		_alert_time = 0.0
+	elif not _alerted:
+		_alert_time = _alert_time + delta if in_range else 0.0
+		if _alert_time >= ALERT_DELAY:
 			_alerted = true
-		elif _alerted and d2 > alert2 * 1.45:
-			# Player left: settle back onto a circular rail from here.
-			_alerted = false
-			var offset: Vector2 = global_position - planet_pos
-			orbit_angle = offset.angle()
-			orbit_radius = maxf(offset.length(), orbit_radius * 0.5)
+			_returning = false
 
 	if _alerted:
 		_orbit_attack(delta, player)
+		return
+	if _returning:
+		_return_to_rail(delta, planet_pos)
 		return
 
 	orbit_angle += orbit_omega * delta
 	global_position = planet_pos + Vector2.from_angle(orbit_angle) * orbit_radius
 	rotation = orbit_angle + PI * 0.5 * signf(orbit_omega if orbit_omega != 0.0 else 1.0)
 	_throttle = 0.55
+
+
+## Wakes this guard at once - no ALERT_DELAY - for at least PROVOKED_CHASE.
+func provoke() -> void:
+	if not _orbiting or _exploding:
+		return
+	_alerted = true
+	_returning = false
+	_alert_time = ALERT_DELAY
+	_provoked_left = PROVOKED_CHASE
+
+
+## Provokes every guard orbiting the same planet as this one.
+func provoke_patrol() -> void:
+	if not _orbiting or orbit_anchor == null or get_parent() == null:
+		return
+	for child in get_parent().get_children():
+		if child is Enemy and (child as Enemy).orbit_anchor == orbit_anchor:
+			(child as Enemy).provoke()
+
+
+## True while the player (not landed) is inside this guard's alert range.
+func player_in_alert_range() -> bool:
+	if not _orbiting or orbit_anchor == null or not is_instance_valid(orbit_anchor) or orbit_alert_range <= 0.0:
+		return false
+	var player := _chase_target()
+	if player == null:
+		return false
+	return orbit_anchor.global_position.distance_squared_to(player.global_position) <= orbit_alert_range * orbit_alert_range
+
+
+## Seconds until this patrolling guard attacks, or -1 when it is not counting
+## down (player out of range, or already attacking).
+func alert_countdown() -> float:
+	if not _orbiting or _alerted or _exploding or _alert_time <= 0.0:
+		return -1.0
+	return maxf(ALERT_DELAY - _alert_time, 0.0)
+
+
+func is_attacking() -> bool:
+	return _orbiting and _alerted and not _exploding
+
+
+## Flies back to the point on its rail nearest to it, moving with the planet,
+## and takes up the patrol there.
+func _return_to_rail(delta: float, planet_pos: Vector2) -> void:
+	var offset: Vector2 = global_position - planet_pos
+	var home: Vector2 = offset.normalized() * orbit_radius if offset.length_squared() > 1.0 else Vector2.RIGHT * orbit_radius
+	var to_home: Vector2 = home - offset
+	var step: float = maxf(move_speed, to_home.length() / RETURN_TIME) * delta
+	if to_home.length() <= step:
+		orbit_angle = home.angle()
+		global_position = planet_pos + home
+		_returning = false
+		_throttle = 0.55
+		return
+	var diff: float = wrapf(to_home.angle() - rotation, -PI, PI)
+	rotation += clampf(diff, -turn_speed * delta, turn_speed * delta)
+	global_position = planet_pos + offset + to_home.normalized() * step
+	_throttle = 1.0
 
 
 ## Break orbit: chase the player and use guns / specials.
@@ -504,6 +591,7 @@ func _play_laser_sound() -> void:
 func take_hit(amount: float) -> void:
 	if _exploding or amount <= 0.0:
 		return
+	provoke_patrol()
 	if explodes_on_hit:
 		explode()
 		return
@@ -519,6 +607,7 @@ func take_hit(amount: float) -> void:
 func disable_for(seconds: float) -> void:
 	if _exploding:
 		return
+	provoke_patrol()
 	_emp_left = maxf(_emp_left, seconds)
 	queue_redraw()
 

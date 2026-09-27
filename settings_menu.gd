@@ -655,12 +655,21 @@ func _draw_tab_audio(top_y: float) -> void:
 	# Additional audio toggles
 	y += 42.0
 	var font: Font = HudPanelStyle.get_font()
-	draw_string(font, Vector2(label_x, y + 14.0), "HUD Music Toast Notifications", HORIZONTAL_ALIGNMENT_LEFT, 240.0, 11, COLOR_TEXT_SECONDARY)
-	_toggle_music_toast_rect = Rect2(label_x + 225.0, y + 2.0, 72.0, 22.0)
+	# One row: each label with its switch just past it, the text centred on
+	# the switch's height.
+	var switch_h := 22.0
+	var baseline: float = y + 2.0 + (switch_h + font.get_ascent(11) - font.get_descent(11)) * 0.5
+	var toast_label := "HUD Music Toast Notifications"
+	draw_string(font, Vector2(label_x, baseline), toast_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_SECONDARY)
+	var toast_w: float = font.get_string_size(toast_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+	_toggle_music_toast_rect = Rect2(label_x + toast_w + 12.0, y + 2.0, 72.0, switch_h)
 	_draw_switch(_toggle_music_toast_rect, settings.show_music_notifications, "ON", "OFF")
 
-	draw_string(font, Vector2(slider_x, y + 14.0), "Autoplay on Launch", HORIZONTAL_ALIGNMENT_LEFT, 240.0, 11, COLOR_TEXT_SECONDARY)
-	_toggle_autoplay_rect = Rect2(mute_x + 20.0, y + 2.0, 72.0, 22.0)
+	var autoplay_label := "Autoplay on Launch"
+	var autoplay_x: float = maxf(slider_x, _toggle_music_toast_rect.end.x + 32.0)
+	draw_string(font, Vector2(autoplay_x, baseline), autoplay_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_SECONDARY)
+	var autoplay_w: float = font.get_string_size(autoplay_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+	_toggle_autoplay_rect = Rect2(autoplay_x + autoplay_w + 12.0, y + 2.0, 72.0, switch_h)
 	_draw_switch(_toggle_autoplay_rect, settings.autoplay_music, "ON", "OFF")
 
 
